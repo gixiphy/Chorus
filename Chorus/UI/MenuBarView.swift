@@ -38,6 +38,23 @@ struct MenuBarView: View {
 
             Divider()
 
+            Text("音訊輸出")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if appState.audioManager.devices.isEmpty {
+                Text("找不到輸出裝置")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(appState.audioManager.devices) { device in
+                        VolumeSliderRow(device: device, manager: appState.audioManager)
+                    }
+                }
+            }
+
+            Divider()
+
             Button("結束 Chorus") {
                 NSApplication.shared.terminate(nil)
             }

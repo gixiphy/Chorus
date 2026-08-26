@@ -12,6 +12,7 @@ final class SettingsStore {
         static let forceSoftwareDimming = "chorus.display.forceSoftwareDimming"
         static let disableDDCRead = "chorus.display.disableDDCRead"
         static let lastBrightness = "chorus.display.lastBrightness"
+        static let lastVolume = "chorus.audio.lastVolume"
     }
 
     /// 強制軟體調光的顯示器 UUID。
@@ -29,11 +30,17 @@ final class SettingsStore {
         didSet { defaults.set(lastBrightness, forKey: Key.lastBrightness) }
     }
 
+    /// 各音訊裝置最後設定的音量（device UID → 0–1）；DDC 橋接裝置讀不到現值時用。
+    private var lastVolume: [String: Double] {
+        didSet { defaults.set(lastVolume, forKey: Key.lastVolume) }
+    }
+
     init(defaults: UserDefaults) {
         self.defaults = defaults
         forceSoftwareDimming = Set(defaults.stringArray(forKey: Key.forceSoftwareDimming) ?? [])
         disableDDCRead = Set(defaults.stringArray(forKey: Key.disableDDCRead) ?? [])
         lastBrightness = (defaults.dictionary(forKey: Key.lastBrightness) as? [String: Double]) ?? [:]
+        lastVolume = (defaults.dictionary(forKey: Key.lastVolume) as? [String: Double]) ?? [:]
     }
 
     func lastBrightness(for uuid: String) -> Double? {
@@ -42,5 +49,13 @@ final class SettingsStore {
 
     func setLastBrightness(_ value: Double, for uuid: String) {
         lastBrightness[uuid] = value
+    }
+
+    func lastVolume(for uid: String) -> Double? {
+        lastVolume[uid]
+    }
+
+    func setLastVolume(_ value: Double, for uid: String) {
+        lastVolume[uid] = value
     }
 }
