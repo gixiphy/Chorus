@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct ChorusApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var appState = AppState()
 
     var body: some Scene {
@@ -14,6 +15,14 @@ struct ChorusApp: App {
         Settings {
             SettingsView()
                 .environment(appState)
+        }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            AppStateRegistry.displayManager?.shutdown()
         }
     }
 }

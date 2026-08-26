@@ -24,9 +24,17 @@ struct MenuBarView: View {
 
             Divider()
 
-            Text("尚未載入任何裝置")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            if appState.displayManager.displays.isEmpty {
+                Text("找不到可控制的顯示器")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(appState.displayManager.displays) { display in
+                        DisplaySliderRow(model: display, manager: appState.displayManager)
+                    }
+                }
+            }
 
             Divider()
 
