@@ -35,6 +35,7 @@ targets:
         NSLocalNetworkUsageDescription: Chorus 會在區域網路上尋找你的其他 Mac，以同步亮度與音量。
         NSBonjourServices:
           - _chorus._tcp
+          - _chorus-pair._tcp
         ITSAppUsesNonExemptEncryption: false
     entitlements:
       path: Chorus/Support/Chorus.entitlements

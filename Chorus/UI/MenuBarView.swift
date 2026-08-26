@@ -55,6 +55,10 @@ struct MenuBarView: View {
 
             Divider()
 
+            PeersSection()
+
+            Divider()
+
             Button("結束 Chorus") {
                 NSApplication.shared.terminate(nil)
             }

@@ -8,12 +8,20 @@ struct InstanceConfig: Sendable {
 
     static let current = InstanceConfig(arguments: ProcessInfo.processInfo.arguments)
 
+    /// 同步 listener 的固定 port（未指定時自動分配並靠 Bonjour 發現）。
+    /// mDNS 被擋（AP client isolation、區域網路權限異常）時搭配手動端點使用。
+    let syncListenPort: UInt16?
+    /// 配對 listener 的固定 port。
+    let pairListenPort: UInt16?
+
     init(arguments: [String]) {
-        if let index = arguments.firstIndex(of: "--instance"), index + 1 < arguments.count {
-            name = arguments[index + 1]
-        } else {
-            name = nil
+        func value(after flag: String) -> String? {
+            guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else { return nil }
+            return arguments[index + 1]
         }
+        name = value(after: "--instance")
+        syncListenPort = value(after: "--listen-port").flatMap(UInt16.init)
+        pairListenPort = value(after: "--pair-port").flatMap(UInt16.init)
     }
 
     private static let baseIdentifier = Bundle.main.bundleIdentifier ?? "com.hermes.Chorus"

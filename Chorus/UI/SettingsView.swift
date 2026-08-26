@@ -15,6 +15,9 @@ struct SettingsView: View {
             Tab("顯示器", systemImage: "display") {
                 DisplaySettingsTab()
             }
+            Tab("同步", systemImage: "arrow.triangle.2.circlepath") {
+                SyncSettingsTab()
+            }
         }
         .frame(width: 460, height: 360)
         .environment(appState)
@@ -64,6 +67,38 @@ private struct DisplaySettingsTab: View {
         case .displayServices: "Apple 原生"
         case .gammaOnly: "軟體調光"
         }
+    }
+}
+
+private struct SyncSettingsTab: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        Form {
+            Section("已配對的裝置") {
+                if appState.pairedPeers.peers.isEmpty {
+                    Text("尚未配對任何裝置")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(appState.pairedPeers.peers) { peer in
+                    HStack {
+                        Text(peer.deviceName)
+                        Spacer()
+                        Text(peer.pairedAt, style: .date)
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                        Button(role: .destructive) {
+                            appState.pairedPeers.remove(peerID: peer.peerID)
+                            appState.sessionManager.restartAdvertiser()
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 
