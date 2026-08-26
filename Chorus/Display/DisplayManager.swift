@@ -18,6 +18,8 @@ final class DisplayManager {
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private var screenObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var pollerTask: Task<Void, Never>?
+    @ObservationIgnored weak var coordinator: ControlCoordinator?
 
     init(settings: SettingsStore) {
         self.settings = settings
@@ -30,6 +32,7 @@ final class DisplayManager {
             }
         }
         scheduleRefresh()
+        startBrightnessPoller()
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -101,8 +104,28 @@ final class DisplayManager {
         displays = models
     }
 
-    /// 使用者（或之後的同步引擎）設定亮度。value 0–1。
+    /// 使用者透過 UI 設定亮度（會廣播同步）。value 0–1。
     func setBrightness(_ value: Double, for model: DisplayModel) {
+        let clamped = min(max(value, 0), 1)
+        model.brightness = clamped
+        settings.setLastBrightness(clamped, for: model.uuid)
+        apply(model)
+        coordinator?.localBrightnessChanged(clamped)
+    }
+
+    /// 遠端同步套用：所有顯示器設為同一亮度。**不**觸發廣播。
+    func applySyncedBrightness(_ value: Double) {
+        let clamped = min(max(value, 0), 1)
+        for model in displays {
+            model.brightness = clamped
+            settings.setLastBrightness(clamped, for: model.uuid)
+            apply(model)
+        }
+    }
+
+    /// 遙控指定顯示器（UUID 不存在時 no-op）。**不**觸發廣播。
+    func applyBrightness(_ value: Double, toUUID uuid: String) {
+        guard let model = displays.first(where: { $0.uuid == uuid }) else { return }
         let clamped = min(max(value, 0), 1)
         model.brightness = clamped
         settings.setLastBrightness(clamped, for: model.uuid)
@@ -153,6 +176,29 @@ final class DisplayManager {
             break
         }
         return settings.lastBrightness(for: uuid) ?? 0.5
+    }
+
+    /// 偵測鍵盤亮度鍵等外部變更：輪詢 DisplayServices 顯示器的實際亮度，
+    /// 與 model 有落差時視為本地硬體變更 → 更新 UI 並廣播同步。
+    /// （遠端套用會先更新 model，因此不會被誤判成本地變更。）
+    private func startBrightnessPoller() {
+        pollerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                self?.pollBuiltinBrightness()
+            }
+        }
+    }
+
+    private func pollBuiltinBrightness() {
+        for model in displays where model.backend == .displayServices {
+            guard let actual = displayServices.brightness(for: model.id) else { continue }
+            if abs(actual - model.brightness) > 0.005 {
+                model.brightness = actual
+                settings.setLastBrightness(actual, for: model.uuid)
+                coordinator?.localBrightnessChanged(actual)
+            }
+        }
     }
 
     /// DDC 持續寫入失敗：降級為 gamma 軟體調光，讓 slider 立即恢復作用。

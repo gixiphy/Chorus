@@ -59,6 +59,16 @@ final class TestHooks {
             appState.pairing.confirmSAS()
         case "endPairing":
             appState.pairing.end()
+        case "setBrightness":
+            if let value = info["value"].flatMap(Double.init),
+               let display = appState.displayManager.displays.first {
+                appState.displayManager.setBrightness(value, for: display)
+            }
+        case "setVolume":
+            if let value = info["value"].flatMap(Double.init),
+               let device = appState.audioManager.defaultDevice {
+                appState.audioManager.setVolume(value, for: device)
+            }
         default:
             break
         }

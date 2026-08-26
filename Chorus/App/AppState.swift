@@ -12,6 +12,7 @@ final class AppState {
     let pairedPeers: PairedPeersStore
     let sessionManager: SyncSessionManager
     let pairing: PairingController
+    let coordinator: ControlCoordinator
 
     init(instance: InstanceConfig = .current) {
         self.instance = instance
@@ -25,6 +26,13 @@ final class AppState {
         )
         sessionManager = SyncSessionManager(instance: instance, pairedPeers: pairedPeers)
         pairing = PairingController(instance: instance, pairedPeers: pairedPeers, sessionManager: sessionManager)
+        coordinator = ControlCoordinator(
+            localPeerID: instance.peerID,
+            settings: settings,
+            sessionManager: sessionManager,
+            displayManager: displayManager,
+            audioManager: audioManager
+        )
         displayManager.start()
         audioManager.start()
         sessionManager.start()

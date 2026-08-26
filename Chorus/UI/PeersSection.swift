@@ -26,16 +26,21 @@ struct PeersSection: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(appState.pairedPeers.peers) { peer in
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(statusColor(peer.peerID))
-                            .frame(width: 7, height: 7)
-                        Text(peer.deviceName)
-                            .font(.callout)
-                        Spacer()
-                        Text(statusLabel(peer.peerID))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(statusColor(peer.peerID))
+                                .frame(width: 7, height: 7)
+                            Text(peer.deviceName)
+                                .font(.callout)
+                            Spacer()
+                            Text(statusLabel(peer.peerID))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if appState.sessionManager.connectionStates[peer.peerID] == .connected {
+                            PeerRemoteControls(peerID: peer.peerID)
+                        }
                     }
                 }
             }
@@ -56,5 +61,58 @@ struct PeersSection: View {
         case .connecting: "連線中"
         default: "離線"
         }
+    }
+}
+
+/// 遙控已連線 peer 的亮度與音量（送出絕對值 command）。
+private struct PeerRemoteControls: View {
+    @Environment(AppState.self) private var appState
+    let peerID: String
+
+    @State private var brightness = 0.5
+    @State private var volume = 0.5
+
+    private var brightnessBinding: Binding<Double> {
+        Binding {
+            brightness
+        } set: { value in
+            brightness = value
+            appState.coordinator.sendRemoteCommand(
+                to: peerID, key: .brightness(displayUUID: nil), value: value
+            )
+        }
+    }
+
+    private var volumeBinding: Binding<Double> {
+        Binding {
+            volume
+        } set: { value in
+            volume = value
+            appState.coordinator.sendRemoteCommand(
+                to: peerID, key: .volume(deviceUID: nil), value: value
+            )
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: "sun.max")
+                    .imageScale(.small)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                Slider(value: brightnessBinding, in: 0...1)
+                    .controlSize(.mini)
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "speaker.wave.2")
+                    .imageScale(.small)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                Slider(value: volumeBinding, in: 0...1)
+                    .controlSize(.mini)
+            }
+        }
+        .padding(.leading, 13)
     }
 }

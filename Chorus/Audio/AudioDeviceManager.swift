@@ -13,6 +13,7 @@ final class AudioDeviceManager {
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private weak var displayManager: DisplayManager?
     @ObservationIgnored private var consumeTask: Task<Void, Never>?
+    @ObservationIgnored weak var coordinator: ControlCoordinator?
 
     /// 我們自己剛寫入的值：snapshot 回報若與其相近則不覆蓋 UI（避免拖曳中跳動）。
     @ObservationIgnored private var recentLocalSets: [String: (value: Double, at: ContinuousClock.Instant)] = [:]
@@ -38,9 +39,45 @@ final class AudioDeviceManager {
 
     // MARK: - 控制
 
-    /// 使用者（或之後的同步引擎）設定音量。value 0–1。
+    /// 使用者透過 UI 設定音量（預設裝置會廣播同步）。value 0–1。
     func setVolume(_ value: Double, for device: AudioDeviceModel) {
         let clamped = min(max(value, 0), 1)
+        writeVolume(clamped, to: device)
+        if device.isDefault {
+            coordinator?.localVolumeChanged(clamped)
+        }
+    }
+
+    func setMuted(_ muted: Bool, for device: AudioDeviceModel) {
+        writeMute(muted, to: device)
+        if device.isDefault {
+            coordinator?.localMuteChanged(muted)
+        }
+    }
+
+    /// 遠端同步套用到預設裝置。**不**觸發廣播。
+    func applySyncedVolume(_ value: Double) {
+        guard let device = defaultDevice else { return }
+        writeVolume(min(max(value, 0), 1), to: device)
+    }
+
+    func applySyncedMute(_ muted: Bool) {
+        guard let device = defaultDevice else { return }
+        writeMute(muted, to: device)
+    }
+
+    /// 遙控指定裝置（UID 不存在時 no-op）。**不**觸發廣播。
+    func applyVolume(_ value: Double, toUID uid: String) {
+        guard let device = devices.first(where: { $0.uid == uid }) else { return }
+        writeVolume(min(max(value, 0), 1), to: device)
+    }
+
+    func applyMute(_ muted: Bool, toUID uid: String) {
+        guard let device = devices.first(where: { $0.uid == uid }) else { return }
+        writeMute(muted, to: device)
+    }
+
+    private func writeVolume(_ clamped: Double, to device: AudioDeviceModel) {
         device.volume = clamped
         recentLocalSets[device.uid] = (clamped, ContinuousClock.now)
         settings.setLastVolume(clamped, for: device.uid)
@@ -52,7 +89,7 @@ final class AudioDeviceManager {
         }
     }
 
-    func setMuted(_ muted: Bool, for device: AudioDeviceModel) {
+    private func writeMute(_ muted: Bool, to device: AudioDeviceModel) {
         device.muted = muted
         if device.hasMute {
             worker.setMute(device.id, muted: muted)
@@ -81,9 +118,19 @@ final class AudioDeviceManager {
             if let existing = devices.first(where: { $0.uid == info.uid }) {
                 existing.isDefault = isDefault
                 if !shouldPreserveLocalValue(uid: info.uid, reported: info.volume) {
+                    // 非本 App 寫入造成的變更（媒體鍵、其他 App）→ 視為本地硬體事件
+                    let changed = abs(existing.volume - info.volume) > 0.005
                     existing.volume = info.volume
+                    if changed, isDefault {
+                        coordinator?.localVolumeChanged(info.volume)
+                    }
                 }
-                existing.muted = info.muted
+                if existing.muted != info.muted {
+                    existing.muted = info.muted
+                    if isDefault {
+                        coordinator?.localMuteChanged(info.muted)
+                    }
+                }
                 updated.append(existing)
             } else {
                 let model = AudioDeviceModel(info: info, isDefault: isDefault)

@@ -1,3 +1,4 @@
+import AppKit
 import ChorusCore
 import Foundation
 import Network
@@ -26,6 +27,11 @@ final class SyncSessionManager {
     @ObservationIgnored private var latestEndpoints: [String: NWEndpoint] = [:]
     @ObservationIgnored private var dialTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var redialDelay: [String: Double] = [:]
+    @ObservationIgnored private var lastHeard: [String: ContinuousClock.Instant] = [:]
+    @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
+    @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
+    /// 有 peer 連線時持有，避免 App Nap 拖慢心跳與同步。
+    @ObservationIgnored private var activityToken: (any NSObjectProtocol)?
 
     /// 收到的 envelope 交給上層（M5 的 ControlCoordinator）。ping/pong 在本層處理。
     @ObservationIgnored var envelopeHandler: ((_ peerID: String, _ envelope: Envelope) -> Void)?
@@ -56,6 +62,67 @@ final class SyncSessionManager {
             for await nwConnection in stream {
                 self?.handleInbound(nwConnection)
             }
+        }
+        startHeartbeat()
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleWake()
+            }
+        }
+    }
+
+    /// 睡醒：TCP 連線多半已死但未回報 → 關閉全部、重啟 browser、立即重撥。
+    private func handleWake() {
+        for (peerID, connection) in connections {
+            connection.close()
+            connectionStates[peerID] = .disconnected
+        }
+        connections = [:]
+        redialDelay = [:]
+        browser.stop()
+        browser.start(myPeerID: instance.peerID)
+        for peer in pairedPeers.peers {
+            maybeDial(peer.peerID)
+        }
+    }
+
+    /// 心跳：每 10 秒 ping；30 秒沒聽到任何訊息視為死線（Bonjour Sleep Proxy
+    /// 會讓已睡眠的 Mac 看似在線，必須靠 application-level 心跳）。
+    private func startHeartbeat() {
+        heartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(10))
+                self?.heartbeatTick()
+            }
+        }
+    }
+
+    private func heartbeatTick() {
+        let now = ContinuousClock.now
+        for (peerID, connection) in connections {
+            if let heard = lastHeard[peerID], now - heard > .seconds(30) {
+                connection.close() // envelope 迴圈結束時觸發 handleClosed → 重撥
+                continue
+            }
+            Task { try? await connection.send(Envelope(msg: .ping(0))) }
+        }
+    }
+
+    private func updateActivityKeeper() {
+        if connections.isEmpty {
+            if let token = activityToken {
+                ProcessInfo.processInfo.endActivity(token)
+                activityToken = nil
+            }
+        } else if activityToken == nil {
+            activityToken = ProcessInfo.processInfo.beginActivity(
+                options: [.background],
+                reason: "Syncing with paired Macs"
+            )
         }
     }
 
@@ -224,6 +291,8 @@ final class SyncSessionManager {
         connections[peerID] = connection
         connectionStates[peerID] = .connected
         redialDelay[peerID] = nil
+        lastHeard[peerID] = ContinuousClock.now
+        updateActivityKeeper()
         sessionEstablishedHandler?(peerID)
         return true
     }
@@ -233,10 +302,12 @@ final class SyncSessionManager {
         guard connections[peerID] === connection else { return }
         connections[peerID] = nil
         connectionStates[peerID] = .disconnected
+        updateActivityKeeper()
         scheduleRedial(peerID)
     }
 
     private func handleEnvelope(peerID: String, _ envelope: Envelope) {
+        lastHeard[peerID] = ContinuousClock.now
         switch envelope.msg {
         case let .ping(token):
             send(Envelope(msg: .pong(token)), to: peerID)

@@ -13,6 +13,18 @@ final class SettingsStore {
         static let disableDDCRead = "chorus.display.disableDDCRead"
         static let lastBrightness = "chorus.display.lastBrightness"
         static let lastVolume = "chorus.audio.lastVolume"
+        static let syncBrightness = "chorus.sync.brightness"
+        static let syncVolume = "chorus.sync.volume"
+    }
+
+    /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
+    var syncBrightnessEnabled: Bool {
+        didSet { defaults.set(syncBrightnessEnabled, forKey: Key.syncBrightness) }
+    }
+
+    /// 跨機同步音量／靜音。
+    var syncVolumeEnabled: Bool {
+        didSet { defaults.set(syncVolumeEnabled, forKey: Key.syncVolume) }
     }
 
     /// 強制軟體調光的顯示器 UUID。
@@ -41,6 +53,8 @@ final class SettingsStore {
         disableDDCRead = Set(defaults.stringArray(forKey: Key.disableDDCRead) ?? [])
         lastBrightness = (defaults.dictionary(forKey: Key.lastBrightness) as? [String: Double]) ?? [:]
         lastVolume = (defaults.dictionary(forKey: Key.lastVolume) as? [String: Double]) ?? [:]
+        syncBrightnessEnabled = defaults.object(forKey: Key.syncBrightness) as? Bool ?? true
+        syncVolumeEnabled = defaults.object(forKey: Key.syncVolume) as? Bool ?? true
     }
 
     func lastBrightness(for uuid: String) -> Double? {

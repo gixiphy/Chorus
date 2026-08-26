@@ -74,7 +74,12 @@ private struct SyncSettingsTab: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
+        @Bindable var settings = appState.settings
         Form {
+            Section("同步項目") {
+                Toggle("同步亮度", isOn: $settings.syncBrightnessEnabled)
+                Toggle("同步音量", isOn: $settings.syncVolumeEnabled)
+            }
             Section("已配對的裝置") {
                 if appState.pairedPeers.peers.isEmpty {
                     Text("尚未配對任何裝置")
