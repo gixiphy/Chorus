@@ -1,0 +1,63 @@
+name: Chorus
+options:
+  bundleIdPrefix: com.hermes
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+packages:
+  ChorusCore:
+    path: Packages/ChorusCore
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 2ENEDJHX95
+
+targets:
+  Chorus:
+    type: application
+    platform: macOS
+    sources: [Chorus]
+    settings:
+      base:
+        SWIFT_OBJC_BRIDGING_HEADER: Chorus/Support/Chorus-Bridging-Header.h
+    dependencies:
+      - package: ChorusCore
+      - sdk: CoreDisplay.framework
+    info:
+      path: Chorus/Support/Info.plist
+      properties:
+        CFBundleDisplayName: Chorus
+        LSUIElement: true
+        NSLocalNetworkUsageDescription: Chorus 會在區域網路上尋找你的其他 Mac，以同步亮度與音量。
+        NSBonjourServices:
+          - _chorus._tcp
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: Chorus/Support/Chorus.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+
+  ChorusAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Tests/ChorusAppTests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Chorus
+
+schemes:
+  Chorus:
+    build:
+      targets:
+        Chorus: all
+    run:
+      config: Debug
+    test:
+      targets:
+        - ChorusAppTests
