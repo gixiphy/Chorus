@@ -20,6 +20,19 @@ struct PeersSection: View {
                 .buttonStyle(.plain)
                 .help("配對新裝置")
             }
+            if appState.sessionManager.hasDiscoveryProblem {
+                Button {
+                    NSWorkspace.shared.open(
+                        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")!
+                    )
+                } label: {
+                    Label("無法探索裝置 — 檢查「區域網路」權限", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.orange)
+                .help("到 系統設定 > 隱私權與安全性 > 區域網路 開啟 Chorus；若清單中沒有 Chorus，重新開機通常可以修復")
+            }
             if appState.pairedPeers.peers.isEmpty {
                 Text("尚未配對任何裝置")
                     .font(.callout)

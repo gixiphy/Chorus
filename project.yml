@@ -31,6 +31,7 @@ targets:
       path: Chorus/Support/Info.plist
       properties:
         CFBundleDisplayName: Chorus
+        CFBundleIconFile: Chorus
         LSUIElement: true
         NSLocalNetworkUsageDescription: Chorus 會在區域網路上尋找你的其他 Mac，以同步亮度與音量。
         NSBonjourServices:

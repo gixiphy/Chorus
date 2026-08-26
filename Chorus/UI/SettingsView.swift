@@ -1,3 +1,4 @@
+import ServiceManagement
 import SwiftUI
 
 struct SettingsView: View {
@@ -6,11 +7,7 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             Tab("一般", systemImage: "gearshape") {
-                Form {
-                    Text("設定內容將於後續里程碑加入")
-                        .foregroundStyle(.secondary)
-                }
-                .formStyle(.grouped)
+                GeneralSettingsTab()
             }
             Tab("顯示器", systemImage: "display") {
                 DisplaySettingsTab()
@@ -21,6 +18,35 @@ struct SettingsView: View {
         }
         .frame(width: 460, height: 360)
         .environment(appState)
+    }
+}
+
+private struct GeneralSettingsTab: View {
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+
+    var body: some View {
+        Form {
+            Toggle("登入時啟動 Chorus", isOn: $launchAtLogin)
+                .onChange(of: launchAtLogin) { _, enabled in
+                    do {
+                        if enabled {
+                            try SMAppService.mainApp.register()
+                        } else {
+                            try SMAppService.mainApp.unregister()
+                        }
+                    } catch {
+                        launchAtLogin = SMAppService.mainApp.status == .enabled
+                    }
+                }
+            LabeledContent("版本") {
+                Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+        }
     }
 }
 

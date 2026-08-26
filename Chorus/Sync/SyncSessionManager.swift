@@ -18,6 +18,14 @@ final class SyncSessionManager {
     /// peerID → 連線狀態（UI 顯示用）。
     private(set) var connectionStates: [String: ConnectionState] = [:]
 
+    /// 同步 browser 的最近狀態；NoAuth／waiting 表示區域網路權限有問題。
+    private(set) var browserStateDescription = ""
+
+    /// 探索管道異常（權限被拒等）→ UI 顯示疑難排解提示。
+    var hasDiscoveryProblem: Bool {
+        browserStateDescription.contains("NoAuth") || browserStateDescription.hasPrefix("waiting")
+    }
+
     @ObservationIgnored private let instance: InstanceConfig
     @ObservationIgnored private let pairedPeers: PairedPeersStore
     @ObservationIgnored private let advertiser = BonjourAdvertiser()
@@ -61,6 +69,12 @@ final class SyncSessionManager {
             guard let stream = self?.advertiser.inboundConnections else { return }
             for await nwConnection in stream {
                 self?.handleInbound(nwConnection)
+            }
+        }
+        Task { [weak self] in
+            guard let stream = self?.browser.states else { return }
+            for await state in stream {
+                self?.browserStateDescription = state
             }
         }
         startHeartbeat()
