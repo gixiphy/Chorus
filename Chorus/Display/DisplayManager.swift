@@ -76,7 +76,22 @@ final class DisplayManager {
         let ddcCapable = await ddc.refresh(displayIDs: ddcCandidates)
         guard !Task.isCancelled else { return }
         for id in ddcCandidates {
-            classified.append((id, ddcCapable.contains(id) ? .ddc : .gammaOnly))
+            guard ddcCapable.contains(id) else {
+                classified.append((id, .gammaOnly))
+                continue
+            }
+            // Service 配對只代表 I2C 端點存在；Mac mini 內建 HDMI 這類路徑
+            // 會 ACK 寫入但不透傳（實測 Q34E2G5：寫「成功」、讀全失敗、螢幕沒反應）。
+            // 以讀取驗證：讀得回亮度才承認 DDC；使用者停用讀取時信任寫入。
+            let uuid = Self.stableUUID(for: id)
+            if settings.disableDDCRead.contains(uuid) {
+                classified.append((id, .ddc))
+            } else if let probe = await ddc.read(id, vcp: DDCController.VCP.brightness), probe.max > 0 {
+                classified.append((id, .ddc))
+            } else {
+                classified.append((id, .gammaOnly))
+            }
+            guard !Task.isCancelled else { return }
         }
 
         var models: [DisplayModel] = []

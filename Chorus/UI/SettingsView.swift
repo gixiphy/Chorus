@@ -135,13 +135,15 @@ private struct DisplaySettingsTab: View {
                             set: { appState.displayManager.setForceSoftwareDimming($0, for: display) }
                         ))
                     }
-                    if display.backend == .ddc {
-                        Toggle("停用 DDC 讀取（螢幕閃爍或讀取失敗時開啟）", isOn: Binding(
+                    if display.backend == .ddc || display.backend == .gammaOnly {
+                        Toggle("停用 DDC 讀取（讀取造成閃爍時開啟；將直接信任 DDC 寫入）", isOn: Binding(
                             get: { appState.settings.disableDDCRead.contains(display.uuid) },
                             set: { enabled in
                                 var set = appState.settings.disableDDCRead
                                 if enabled { set.insert(display.uuid) } else { set.remove(display.uuid) }
                                 appState.settings.disableDDCRead = set
+                                // 讀取開關影響 DDC 分類（讀取驗證 vs 信任寫入）→ 重新分類
+                                appState.displayManager.scheduleRefresh()
                             }
                         ))
                     }
