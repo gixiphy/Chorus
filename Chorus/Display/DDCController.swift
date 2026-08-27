@@ -46,6 +46,10 @@ final class DDCController: @unchecked Sendable {
     private var lastWritten: [CGDirectDisplayID: [UInt8: UInt16]] = [:]
     /// 失敗計數分 VCP（音訊 VCP 失敗不連坐亮度）。
     private var writeFailureCounts: [CGDirectDisplayID: [UInt8: Int]] = [:]
+    /// 各顯示器的傳輸路徑（IORegistry Transport；診斷用）。
+    /// 上游 DisplayPort＋下游 HDMI ＝ 內建 HDMI 埠／DP→HDMI 轉接的
+    /// MCDP 類轉換晶片指紋——已知不透傳標準 DDC（Lunar 以隱藏碼特判此晶片）。
+    private var transports: [CGDirectDisplayID: (upstream: String, downstream: String)] = [:]
     private var tickScheduled = false
     private var lastRequestUptime: TimeInterval = 0
     private var lastFlushUptime: TimeInterval = 0
@@ -75,9 +79,14 @@ final class DDCController: @unchecked Sendable {
                 }
                 let matches = AppleSiliconDDC.getServiceMatches(displayIDs: displayIDs)
                 var refreshed: [CGDirectDisplayID: IOAVService] = [:]
+                self.transports = [:]
                 for match in matches where !match.dummy && !match.discouraged {
                     if let service = match.service {
                         refreshed[match.displayID] = service
+                        self.transports[match.displayID] = (
+                            match.serviceDetails.transportUpstream,
+                            match.serviceDetails.transportDownstream
+                        )
                     }
                 }
                 self.services = refreshed
@@ -182,16 +191,19 @@ final class DDCController: @unchecked Sendable {
         let brightness: (current: UInt16, max: UInt16)?
         let volume: (current: UInt16, max: UInt16)?
         let mute: (current: UInt16, max: UInt16)?
+        /// IORegistry Transport（上游/下游）；DP→HDMI ＝ 轉換晶片、不透傳 DDC。
+        let transport: (upstream: String, downstream: String)?
     }
 
     /// 設定頁「DDC 診斷」：服務配對狀態＋三個 VCP 的讀值＋失敗計數。
     /// 純讀取，不寫入。
     func diagnostics(_ displayID: CGDirectDisplayID) async -> Diagnostics {
-        let (hasService, failures) = await withCheckedContinuation { continuation in
+        let (hasService, failures, transport) = await withCheckedContinuation { continuation in
             queue.async {
                 continuation.resume(returning: (
                     self.services[displayID] != nil,
-                    self.writeFailureCounts[displayID] ?? [:]
+                    self.writeFailureCounts[displayID] ?? [:],
+                    self.transports[displayID]
                 ))
             }
         }
@@ -203,7 +215,8 @@ final class DDCController: @unchecked Sendable {
             failureCounts: failures,
             brightness: brightness,
             volume: volume,
-            mute: mute
+            mute: mute,
+            transport: transport
         )
     }
 }

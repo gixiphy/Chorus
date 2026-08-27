@@ -197,6 +197,14 @@ private struct DDCDiagnosticsRow: View {
             let diag = await appState.displayManager.ddc.diagnostics(id)
             var lines: [String] = []
             lines.append("IOAVService：" + (diag.hasService ? "已配對" : "無（DDC 不可用或已降級）"))
+            if let transport = diag.transport {
+                var line = "傳輸路徑：\(transport.upstream) → \(transport.downstream)"
+                if transport.upstream.localizedCaseInsensitiveContains("DisplayPort"),
+                   transport.downstream.localizedCaseInsensitiveContains("HDMI") {
+                    line += "（DP→HDMI 轉換晶片：此路徑不透傳標準 DDC，請改接 DP／USB-C）"
+                }
+                lines.append(line)
+            }
             lines.append(format("亮度 0x10", diag.brightness))
             lines.append(format("音量 0x62", diag.volume))
             lines.append(format("靜音 0x8D", diag.mute))
