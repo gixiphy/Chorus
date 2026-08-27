@@ -33,6 +33,8 @@ final class AutoBrightnessController {
 
     @ObservationIgnored private var smoother = LuxSmoother()
     @ObservationIgnored private var syncCore: AmbientSyncCore
+    /// 近 24h 的本機 lux 樣本（committed 變化時記錄；光環境顧問統計用，不落地）。
+    @ObservationIgnored private var luxHistory: [(micros: Int64, lux: Double)] = []
     /// 每台顯示器最後一次 auto 寫入的值（poller 對帳用）。
     @ObservationIgnored private var lastAutoWritten: [String: Double] = [:]
     @ObservationIgnored private var pollTask: Task<Void, Never>?
@@ -165,6 +167,32 @@ final class AutoBrightnessController {
         reapplyTargets()
     }
 
+    /// 近 24h 本機環境光統計（光環境顧問 context 用）；無感器或無樣本為 nil。
+    func recentLuxStats() -> LuxStats? {
+        pruneLuxHistory(nowMicros: Self.wallNowMicros())
+        let values = luxHistory.map(\.lux).sorted()
+        guard !values.isEmpty else { return nil }
+        return LuxStats(
+            minLux: values.first!,
+            medianLux: values[values.count / 2],
+            maxLux: values.last!
+        )
+    }
+
+    private func recordLuxSample(_ lux: Double, atMicros: Int64) {
+        luxHistory.append((atMicros, lux))
+        pruneLuxHistory(nowMicros: atMicros)
+    }
+
+    private func pruneLuxHistory(nowMicros: Int64) {
+        let cutoff = nowMicros - 24 * 3600 * 1_000_000
+        if let firstKept = luxHistory.firstIndex(where: { $0.micros >= cutoff }) {
+            luxHistory.removeFirst(firstKept)
+        } else if !luxHistory.isEmpty {
+            luxHistory.removeAll()
+        }
+    }
+
     #if DEBUG
     /// TestHooks injectLux：改變假感器讀值並立即輪詢一次。
     func injectLux(_ value: Double) {
@@ -181,6 +209,7 @@ final class AutoBrightnessController {
         let nowMicros = Self.wallNowMicros()
         if let committed = smoother.ingest(lux: raw, nowMillis: nowMicros / 1000) {
             currentLux = committed
+            recordLuxSample(committed, atMicros: nowMicros)
             let report = syncCore.localSample(lux: committed, wallNowMicros: nowMicros)
             baselineLux = committed
             baselineSourceID = localPeerID

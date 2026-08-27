@@ -100,6 +100,31 @@ public enum AdvicePrompt {
         return lines.joined(separator: "\n")
     }
 
+    /// CLI 單發呼叫的完整 prompt：系統提示＋context＋照片路徑＋輸出格式指示。
+    /// API forced tool_use 在 CLI 情境改為「指示＋本地驗證」——schema 常數同源，
+    /// `sanitized(for:)` 仍是最後防線。`readInstruction` 由引擎決定
+    /// （claude 有 Read 工具，其他 CLI 用通用措辭）。
+    public static func cliPrompt(
+        context: AdviceContext,
+        photoPath: String,
+        readInstruction: String
+    ) -> String {
+        """
+        \(systemPrompt)
+
+        \(contextDescription(context))
+
+        桌面照片：\(photoPath)（\(readInstruction)）
+
+        只輸出一個 JSON 物件（不要 markdown fence、不要其他文字），必須符合以下 JSON Schema：
+        \(toolInputSchemaJSON)
+        """
+    }
+
+    /// decode 失敗重試一次時附加的修正指示。
+    public static let retryInstruction =
+        "（上次輸出無法解析為符合 schema 的 JSON。請重新輸出：只輸出一個 JSON 物件，不含任何其他文字或 fence。）"
+
     /// 固定小數位、不受 locale 影響的數字格式（"12"、"0.42"、"-0.30"）。
     private static func format(_ value: Double, decimals: Int) -> String {
         String(format: "%.\(decimals)f", locale: nil, value)

@@ -15,6 +15,7 @@ final class AppState {
     let coordinator: ControlCoordinator
     let autoBrightness: AutoBrightnessController
     let diagram: DiagramStore
+    let advisor: LightingAdvisor
 
     init(instance: InstanceConfig = .current) {
         self.instance = instance
@@ -43,6 +44,15 @@ final class AppState {
             sensor: sensor
         )
         diagram = DiagramStore(instance: instance)
+        advisor = LightingAdvisor(
+            instance: instance,
+            settings: settings,
+            displayManager: displayManager,
+            pairedPeers: pairedPeers,
+            autoBrightness: autoBrightness,
+            coordinator: coordinator,
+            diagram: diagram
+        )
 
         // 能力（含 "als"）要在 sessionManager.start() 之前設定，Bonjour TXT 與 hello 才帶得到
         var capabilities = ["display", "audio"]

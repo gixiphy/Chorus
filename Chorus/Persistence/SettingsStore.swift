@@ -21,6 +21,9 @@ final class SettingsStore {
         static let ambientCurve = "chorus.ambient.curve"
         static let ambientDisplayOffsets = "chorus.ambient.displayOffsets"
         static let ambientDeviceOffset = "chorus.ambient.deviceOffset"
+        static let advisorEngineID = "chorus.advisor.engineID"
+        static let advisorCustomPaths = "chorus.advisor.customPaths"
+        static let advisorConfirmed = "chorus.advisor.confirmed"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -83,6 +86,21 @@ final class SettingsStore {
         didSet { defaults.set(ambientDeviceOffset, forKey: Key.ambientDeviceOffset) }
     }
 
+    /// 光環境顧問選定的分析引擎 id（已知 CLI 目錄的 id；預設 claude）。
+    var advisorEngineID: String {
+        didSet { defaults.set(advisorEngineID, forKey: Key.advisorEngineID) }
+    }
+
+    /// 各引擎的自訂執行檔路徑（engine id → path），偵測時優先於 PATH。
+    var advisorCustomPaths: [String: String] {
+        didSet { defaults.set(advisorCustomPaths, forKey: Key.advisorCustomPaths) }
+    }
+
+    /// 首次分析的「照片將交給本機 CLI」確認已被記住。
+    var advisorConfirmed: Bool {
+        didSet { defaults.set(advisorConfirmed, forKey: Key.advisorConfirmed) }
+    }
+
     init(defaults: UserDefaults) {
         self.defaults = defaults
         forceSoftwareDimming = Set(defaults.stringArray(forKey: Key.forceSoftwareDimming) ?? [])
@@ -101,6 +119,9 @@ final class SettingsStore {
         }
         ambientDisplayOffsets = (defaults.dictionary(forKey: Key.ambientDisplayOffsets) as? [String: Double]) ?? [:]
         ambientDeviceOffset = defaults.object(forKey: Key.ambientDeviceOffset) as? Double ?? 0
+        advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"
+        advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]
+        advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)
     }
 
     func lastBrightness(for uuid: String) -> Double? {

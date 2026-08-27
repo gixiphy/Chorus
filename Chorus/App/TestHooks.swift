@@ -80,6 +80,15 @@ final class TestHooks {
         case "excludeAllAuto":
             // 同機 E2E：讓這個實例只回報 lux、不寫實體螢幕（兩實例共用同一片硬體）
             appState.settings.ambientExcludedDisplays = Set(appState.displayManager.displays.map(\.uuid))
+        case "injectAdvice":
+            // value = LightingAdvice JSON；走 FakeAdviceProvider 完整管線
+            if let json = info["value"] {
+                appState.advisor.debugInject(adviceJSON: json)
+            }
+        case "applyAdvice":
+            appState.advisor.debugApplyAll()
+        case "undoAdvice":
+            appState.advisor.undoLastApply()
         default:
             break
         }
@@ -138,6 +147,15 @@ final class TestHooks {
                     "isDefault": device.isDefault,
                 ] as [String: Any]
             },
+            "advisor": [
+                "isAnalyzing": appState.advisor.isAnalyzing,
+                "hasResult": appState.advisor.result != nil,
+                "resultOffsets": appState.advisor.result?.advice.offsets.count ?? 0,
+                "canUndo": appState.advisor.canUndo,
+                "historyCount": appState.advisor.history.count,
+                "lastError": appState.advisor.lastErrorMessage.map { $0 as Any } ?? NSNull(),
+                "activeEngine": appState.advisor.registry.activeEngine.map { $0.id as Any } ?? NSNull(),
+            ] as [String: Any],
             "ambient": [
                 "autoEnabled": appState.settings.autoBrightnessEnabled,
                 "hasLocalSensor": appState.autoBrightness.hasLocalSensor,

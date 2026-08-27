@@ -8,10 +8,14 @@ import UniformTypeIdentifiers
 struct DeviceDiagramView: View {
     @Environment(AppState.self) private var appState
     @State private var showingImporter = false
+    @State private var showingFirstUseConfirm = false
 
     var body: some View {
+        @Bindable var advisor = appState.advisor
         VStack(spacing: 0) {
             canvas
+            Divider()
+            advisorBar
             Divider()
             footer
         }
@@ -25,6 +29,84 @@ struct DeviceDiagramView: View {
                 appState.diagram.importBackground(from: url)
                 if accessing { url.stopAccessingSecurityScopedResource() }
             }
+        }
+        .sheet(item: $advisor.result) { result in
+            AdviceSheetView(result: result)
+                .environment(appState)
+        }
+        .alert("分析光環境", isPresented: $showingFirstUseConfirm) {
+            Button("繼續") {
+                appState.settings.advisorConfirmed = true
+                appState.advisor.analyze()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("照片將交由本機 \(engineName) CLI 分析（經你的訂閱送至其服務商）。分析只在你按下按鈕時發生。")
+        }
+        .onAppear { appState.advisor.loadHistoryIfNeeded() }
+    }
+
+    // MARK: - 顧問列
+
+    private var engineName: String {
+        appState.advisor.registry.activeEngine?.engine.displayName ?? "claude"
+    }
+
+    private var advisorBar: some View {
+        HStack(spacing: 8) {
+            if appState.advisor.isAnalyzing {
+                ProgressView()
+                    .controlSize(.small)
+                Text("分析中…（CLI 冷啟與推理較慢，預期 20–60 秒）")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("取消") { appState.advisor.cancelAnalysis() }
+                    .controlSize(.small)
+            } else {
+                analyzeButton
+                if !appState.advisor.history.isEmpty {
+                    Button("上次分析結果") { appState.advisor.showLatestHistory() }
+                        .controlSize(.small)
+                }
+                if let message = appState.advisor.lastErrorMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                }
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var analyzeButton: some View {
+        if appState.advisor.registry.activeEngine == nil {
+            SettingsLink {
+                Label("未找到分析引擎", systemImage: "exclamationmark.triangle")
+            }
+            .controlSize(.small)
+            .help("開啟設定 → 分析引擎，確認 CLI 已安裝或指定路徑")
+        } else {
+            Button {
+                if appState.settings.advisorConfirmed {
+                    appState.advisor.analyze()
+                } else {
+                    showingFirstUseConfirm = true
+                }
+            } label: {
+                Label("分析光環境", systemImage: "lightbulb.max")
+            }
+            .controlSize(.small)
+            .disabled(appState.diagram.backgroundImageURL == nil)
+            .help(
+                appState.diagram.backgroundImageURL == nil
+                    ? "先匯入桌面照片才能分析"
+                    : "把照片與裝置配置交給本機 \(engineName) CLI 分析"
+            )
         }
     }
 

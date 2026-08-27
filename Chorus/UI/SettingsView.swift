@@ -15,6 +15,9 @@ struct SettingsView: View {
             Tab("同步", systemImage: "arrow.triangle.2.circlepath") {
                 SyncSettingsTab()
             }
+            Tab("分析引擎", systemImage: "brain") {
+                AdvisorSettingsTab()
+            }
         }
         .frame(width: 460, height: 420)
         .environment(appState)
@@ -190,6 +193,100 @@ private struct AmbientDisplayControls: View {
     private var offsetLabel: String {
         let offset = appState.settings.ambientDisplayOffsets[displayUUID] ?? 0
         return String(format: "%+.0f%%", offset * 100)
+    }
+}
+
+/// 光環境顧問的分析引擎：已知 CLI 目錄掃描結果、單選、自訂路徑與重新掃描。
+/// 零金鑰／零憑證經手——認證與計費都在使用者已登入的 CLI。
+private struct AdvisorSettingsTab: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(KnownCLIEngine.catalog) { engine in
+                    engineRow(engine)
+                }
+            } header: {
+                Text("光環境顧問使用的本機 LLM CLI（偵測到什麼列什麼；不經手任何金鑰）")
+            }
+            Section {
+                Button("重新掃描") { appState.advisor.registry.rescan() }
+                Text("掃描順序：自訂路徑 → PATH → 常見安裝位置。找不到時可在上方填入執行檔完整路徑。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func engineRow(_ engine: KnownCLIEngine) -> some View {
+        let detected = appState.advisor.registry.detected.first { $0.id == engine.id }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                if let detected, detected.selectable {
+                    Toggle(isOn: Binding(
+                        get: { appState.settings.advisorEngineID == engine.id },
+                        set: { on in if on { appState.settings.advisorEngineID = engine.id } }
+                    )) {
+                        Text(engine.displayName).fontWeight(.medium)
+                    }
+                    .toggleStyle(.checkbox)
+                } else {
+                    Text(engine.displayName)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                }
+                if engine.experimental {
+                    badge("實驗性")
+                }
+                Spacer()
+                statusText(engine: engine, detected: detected)
+            }
+            if let detected {
+                Text(detected.url.path + (detected.version.map { "（\($0)）" } ?? ""))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            } else {
+                TextField(
+                    "自訂 \(engine.executableName) 路徑（例：/opt/homebrew/bin/\(engine.executableName)）",
+                    text: customPathBinding(engine.id)
+                )
+                .font(.caption)
+                .onSubmit { appState.advisor.registry.rescan() }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func statusText(engine: KnownCLIEngine, detected: AdviceEngineRegistry.DetectedEngine?) -> some View {
+        if detected == nil {
+            Text("未安裝").font(.caption).foregroundStyle(.secondary)
+        } else if engine.requiresPTY {
+            Text("待接入").font(.caption).foregroundStyle(.orange)
+                .help("此 CLI 需要 PTY 包裝，接入層完成後開放選用")
+        } else {
+            Text("已安裝").font(.caption).foregroundStyle(.green)
+        }
+    }
+
+    private func badge(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(.quaternary, in: Capsule())
+    }
+
+    private func customPathBinding(_ engineID: String) -> Binding<String> {
+        Binding(
+            get: { appState.settings.advisorCustomPaths[engineID] ?? "" },
+            set: { appState.settings.advisorCustomPaths[engineID] = $0 }
+        )
     }
 }
 
