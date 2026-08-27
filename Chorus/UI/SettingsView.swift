@@ -145,6 +145,9 @@ private struct DisplaySettingsTab: View {
                             }
                         ))
                     }
+                    if !display.isBuiltin {
+                        DDCDiagnosticsRow(display: display)
+                    }
                 }
             }
         }
@@ -157,6 +160,59 @@ private struct DisplaySettingsTab: View {
         case .displayServices: "Apple 原生"
         case .gammaOnly: "軟體調光"
         }
+    }
+}
+
+/// 外接螢幕的 DDC 診斷：服務配對、三個 VCP 讀值、寫入失敗計數。
+/// 純讀取（不寫任何 VCP）；結果可選取複製，方便回報。
+private struct DDCDiagnosticsRow: View {
+    @Environment(AppState.self) private var appState
+    let display: DisplayModel
+
+    @State private var result: String?
+    @State private var running = false
+
+    var body: some View {
+        LabeledContent("DDC 診斷") {
+            Button(running ? "診斷中…" : "執行") { run() }
+                .controlSize(.small)
+                .disabled(running)
+        }
+        if let result {
+            Text(result)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func run() {
+        running = true
+        result = nil
+        let id = display.id
+        Task {
+            let diag = await appState.displayManager.ddc.diagnostics(id)
+            var lines: [String] = []
+            lines.append("IOAVService：" + (diag.hasService ? "已配對" : "無（DDC 不可用或已降級）"))
+            lines.append(format("亮度 0x10", diag.brightness))
+            lines.append(format("音量 0x62", diag.volume))
+            lines.append(format("靜音 0x8D", diag.mute))
+            let failures = diag.failureCounts.filter { $0.value > 0 }
+            if !failures.isEmpty {
+                lines.append("寫入失敗計數：" + failures
+                    .map { String(format: "0x%02X×%d", $0.key, $0.value) }
+                    .sorted()
+                    .joined(separator: "、"))
+            }
+            result = lines.joined(separator: "\n")
+            running = false
+        }
+    }
+
+    private func format(_ name: String, _ value: (current: UInt16, max: UInt16)?) -> String {
+        if let value { return "\(name)：\(value.current)／max \(value.max)" }
+        return "\(name)：讀取失敗（螢幕不支援讀或通道不通）"
     }
 }
 

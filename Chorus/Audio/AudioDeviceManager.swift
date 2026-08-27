@@ -60,6 +60,15 @@ final class AudioDeviceManager {
 
     func start() {
         worker.start()
+        // 音訊 VCP（0x62/0x8D）持續寫入失敗 → 標記橋接無回應（不影響亮度）
+        displayManager?.ddc.setAudioFailureHandler { displayID in
+            Task { @MainActor in
+                guard let manager = AppStateRegistry.displayManager?.audioManager else { return }
+                for device in manager.devices where device.bridgedDisplayID == displayID {
+                    device.bridgeUnresponsive = true
+                }
+            }
+        }
         consumeTask = Task { [weak self] in
             guard let stream = self?.worker.snapshots else { return }
             for await snapshot in stream {

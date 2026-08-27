@@ -44,10 +44,18 @@ final class DDCController: @unchecked Sendable {
     private var pendingWrites: [CGDirectDisplayID: [UInt8: UInt16]] = [:]
     /// 每個 (display, vcp) 最後成功寫入的值：相同值不再打 I2C。
     private var lastWritten: [CGDirectDisplayID: [UInt8: UInt16]] = [:]
+    /// 失敗計數分 VCP（音訊 VCP 失敗不連坐亮度）。
+    private var writeFailureCounts: [CGDirectDisplayID: [UInt8: Int]] = [:]
     private var tickScheduled = false
     private var lastRequestUptime: TimeInterval = 0
     private var lastFlushUptime: TimeInterval = 0
-    private var writeFailureCounts: [CGDirectDisplayID: Int] = [:]
+    private var audioFailureHandler: (@Sendable (CGDirectDisplayID) -> Void)?
+
+    /// 音訊類 VCP（0x62/0x8D）持續失敗的回呼——只影響音量橋接，
+    /// 絕不連坐亮度（見 flushLocked 的分 VCP 計數）。
+    func setAudioFailureHandler(_ handler: @escaping @Sendable (CGDirectDisplayID) -> Void) {
+        queue.async { self.audioFailureHandler = handler }
+    }
     private var failureHandler: (@Sendable (CGDirectDisplayID) -> Void)?
 
     /// 註冊「DDC 持續失敗」回呼（呼叫端負責降級到軟體調光）。
@@ -132,7 +140,10 @@ final class DDCController: @unchecked Sendable {
         }
     }
 
-    /// 只能在 queue 上呼叫。
+    /// 只能在 queue 上呼叫。失敗計數**分 VCP**：
+    /// 亮度（0x10）連續失敗才代表 DDC 通道死了（降級整台）；
+    /// 音訊 VCP（0x62/0x8D）失敗只代表螢幕不支援該指令，
+    /// 只通知音訊層停用橋接——b16 曾因共用計數讓靜音寫入連坐處死亮度。
     private func flushLocked(now: TimeInterval) {
         lastFlushUptime = now
         let batch = pendingWrites
@@ -141,21 +152,58 @@ final class DDCController: @unchecked Sendable {
             guard let service = services[displayID] else { continue }
             for (vcp, value) in vcpValues {
                 if AppleSiliconDDC.write(service: service, command: vcp, value: value) {
-                    writeFailureCounts[displayID] = 0
+                    writeFailureCounts[displayID]?[vcp] = 0
                     lastWritten[displayID, default: [:]][vcp] = value
                 } else {
-                    let failures = (writeFailureCounts[displayID] ?? 0) + 1
-                    writeFailureCounts[displayID] = failures
-                    if failures >= Self.writeFailureThreshold {
-                        // DDC 確定不可用：移除服務讓後續寫入變 no-op，並通知降級
+                    let failures = (writeFailureCounts[displayID]?[vcp] ?? 0) + 1
+                    writeFailureCounts[displayID, default: [:]][vcp] = failures
+                    guard failures >= Self.writeFailureThreshold else { continue }
+                    if vcp == VCP.brightness {
+                        // DDC 通道確定不可用：移除服務讓後續寫入變 no-op，並通知降級
                         services.removeValue(forKey: displayID)
                         pendingWrites.removeValue(forKey: displayID)
                         lastWritten.removeValue(forKey: displayID)
                         failureHandler?(displayID)
                         break
+                    } else {
+                        pendingWrites[displayID]?[vcp] = nil
+                        audioFailureHandler?(displayID)
                     }
                 }
             }
         }
+    }
+
+    // MARK: - 診斷
+
+    struct Diagnostics: Sendable {
+        let hasService: Bool
+        let failureCounts: [UInt8: Int]
+        let brightness: (current: UInt16, max: UInt16)?
+        let volume: (current: UInt16, max: UInt16)?
+        let mute: (current: UInt16, max: UInt16)?
+    }
+
+    /// 設定頁「DDC 診斷」：服務配對狀態＋三個 VCP 的讀值＋失敗計數。
+    /// 純讀取，不寫入。
+    func diagnostics(_ displayID: CGDirectDisplayID) async -> Diagnostics {
+        let (hasService, failures) = await withCheckedContinuation { continuation in
+            queue.async {
+                continuation.resume(returning: (
+                    self.services[displayID] != nil,
+                    self.writeFailureCounts[displayID] ?? [:]
+                ))
+            }
+        }
+        let brightness = await read(displayID, vcp: VCP.brightness)
+        let volume = await read(displayID, vcp: VCP.volume)
+        let mute = await read(displayID, vcp: VCP.mute)
+        return Diagnostics(
+            hasService: hasService,
+            failureCounts: failures,
+            brightness: brightness,
+            volume: volume,
+            mute: mute
+        )
     }
 }
