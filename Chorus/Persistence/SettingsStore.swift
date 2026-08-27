@@ -22,6 +22,7 @@ final class SettingsStore {
         static let ambientDisplayOffsets = "chorus.ambient.displayOffsets"
         static let ambientDeviceOffset = "chorus.ambient.deviceOffset"
         static let hiddenAudioDevices = "chorus.audio.hiddenDevices"
+        static let mediaKeyCapture = "chorus.mediaKeys.enabled"
         static let peerKnownControls = "chorus.peer.knownControls"
         static let advisorEngineID = "chorus.advisor.engineID"
         static let advisorCustomPaths = "chorus.advisor.customPaths"
@@ -94,6 +95,12 @@ final class SettingsStore {
         didSet { defaults.set(Array(hiddenAudioDevices), forKey: Key.hiddenAudioDevices) }
     }
 
+    /// 媒體鍵接管（需輔助使用權限，預設關閉）。只在 macOS 原生處理走不通的
+    /// 情境接手：螢幕喇叭音量鍵、無內建螢幕機器的亮度鍵。
+    var mediaKeyCaptureEnabled: Bool {
+        didSet { defaults.set(mediaKeyCaptureEnabled, forKey: Key.mediaKeyCapture) }
+    }
+
     /// 各 peer 最後已知的語意層數值（peerID → {"brightness"/"volume" → 0–1}）。
     /// 來源：對方的 stateUpdate/fullState 與我們送出的遙控指令；
     /// 遙控滑桿以此初始化，跨重啟保留（不需要 iCloud——值走既有同步通道）。
@@ -135,6 +142,7 @@ final class SettingsStore {
         ambientDisplayOffsets = (defaults.dictionary(forKey: Key.ambientDisplayOffsets) as? [String: Double]) ?? [:]
         ambientDeviceOffset = defaults.object(forKey: Key.ambientDeviceOffset) as? Double ?? 0
         hiddenAudioDevices = Set(defaults.stringArray(forKey: Key.hiddenAudioDevices) ?? [])
+        mediaKeyCaptureEnabled = defaults.bool(forKey: Key.mediaKeyCapture)
         peerKnownControls = (defaults.dictionary(forKey: Key.peerKnownControls) as? [String: [String: Double]]) ?? [:]
         advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"
         advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]

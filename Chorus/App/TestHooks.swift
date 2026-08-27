@@ -96,6 +96,12 @@ final class TestHooks {
         case "excludeAllAuto":
             // 同機 E2E：讓這個實例只回報 lux、不寫實體螢幕（兩實例共用同一片硬體）
             appState.settings.ambientExcludedDisplays = Set(appState.displayManager.displays.map(\.uuid))
+        case "simulateMediaKey":
+            // value = NX keyCode（0=音量+ 1=音量- 7=mute 2=亮度+ 3=亮度-）；
+            // 直接走路由驗證接管條件與套用路徑，不經 CGEvent tap
+            if let code = info["value"].flatMap(Int32.init) {
+                _ = appState.mediaKeys.debugSimulate(keyCode: code)
+            }
         case "injectAdvice":
             // value = LightingAdvice JSON；走 FakeAdviceProvider 完整管線
             if let json = info["value"] {
@@ -163,6 +169,11 @@ final class TestHooks {
                     "isDefault": device.isDefault,
                 ] as [String: Any]
             },
+            "mediaKeys": [
+                "enabled": appState.settings.mediaKeyCaptureEnabled,
+                "tapActive": appState.mediaKeys.tapActive,
+                "trusted": appState.mediaKeys.lastTrusted,
+            ] as [String: Any],
             "advisor": [
                 "isAnalyzing": appState.advisor.isAnalyzing,
                 "hasResult": appState.advisor.result != nil,

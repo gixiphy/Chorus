@@ -16,6 +16,7 @@ final class AppState {
     let autoBrightness: AutoBrightnessController
     let diagram: DiagramStore
     let advisor: LightingAdvisor
+    let mediaKeys: MediaKeyInterceptor
 
     init(instance: InstanceConfig = .current) {
         self.instance = instance
@@ -60,6 +61,12 @@ final class AppState {
         sessionManager.localCapabilities = capabilities
         pairing.localCapabilities = capabilities
 
+        mediaKeys = MediaKeyInterceptor(
+            settings: settings,
+            displayManager: displayManager,
+            audioManager: audioManager
+        )
+
         displayManager.autoController = autoBrightness
         displayManager.audioManager = audioManager
         coordinator.attachAutoController(autoBrightness)
@@ -68,5 +75,6 @@ final class AppState {
         audioManager.start()
         sessionManager.start()
         autoBrightness.start()
+        mediaKeys.updateActivation()
     }
 }

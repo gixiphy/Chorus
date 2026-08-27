@@ -49,6 +49,38 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
+            Section("鍵盤媒體鍵") {
+                Toggle("接管亮度／音量鍵", isOn: Binding(
+                    get: { appState.settings.mediaKeyCaptureEnabled },
+                    set: { enabled in
+                        appState.settings.mediaKeyCaptureEnabled = enabled
+                        appState.mediaKeys.updateActivation(promptIfNeeded: enabled)
+                    }
+                ))
+                if appState.settings.mediaKeyCaptureEnabled {
+                    if appState.mediaKeys.tapActive {
+                        Label("已啟用", systemImage: "checkmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    } else {
+                        HStack {
+                            Label("等待「輔助使用」權限…", systemImage: "exclamationmark.triangle")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                            Spacer()
+                            Button("打開輔助使用設定") {
+                                NSWorkspace.shared.open(
+                                    URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+                                )
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+                Text("只在 macOS 原生處理不了時接手：螢幕喇叭（HDMI/DP）的音量鍵、沒有內建螢幕機器（如 Mac mini）的亮度鍵。其餘按鍵行為維持原生。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if !appState.settings.hiddenAudioDevices.isEmpty {
                 Section("隱藏的音訊裝置") {
                     ForEach(Array(appState.settings.hiddenAudioDevices).sorted(), id: \.self) { uid in
