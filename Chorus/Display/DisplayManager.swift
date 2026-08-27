@@ -17,6 +17,7 @@ final class DisplayManager {
     @ObservationIgnored private let gamma = GammaDimmer()
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private var screenObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var pollerTask: Task<Void, Never>?
     @ObservationIgnored weak var coordinator: ControlCoordinator?
@@ -29,6 +30,10 @@ final class DisplayManager {
     init(settings: SettingsStore) {
         self.settings = settings
     }
+
+    /// 睡醒後螢幕 scaler／I2C 尚未就緒，貿然讀寫會失敗甚至誤判能力。
+    /// 此期間 DDC 寫入延後、能力重探測也等這麼久才跑。
+    private static let wakeSettleDelay: TimeInterval = 3.0
 
     func start() {
         ddc.setPersistentFailureHandler { displayID in
@@ -47,12 +52,34 @@ final class DisplayManager {
                 AppStateRegistry.displayManager?.scheduleRefresh()
             }
         }
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                AppStateRegistry.displayManager?.handleScreensWake()
+            }
+        }
         AppStateRegistry.displayManager = self
     }
 
-    func scheduleRefresh() {
+    /// 螢幕喚醒：DDC 寫入延後、重新分類也等靜置期過後才做
+    /// （太早探測會把還沒醒的螢幕誤判成不支援 DDC）。
+    private func handleScreensWake() {
+        ddc.deferWrites(for: Self.wakeSettleDelay)
+        scheduleRefresh(after: Self.wakeSettleDelay)
+    }
+
+    func scheduleRefresh(after delay: TimeInterval = 0) {
         refreshTask?.cancel()
-        refreshTask = Task { await refresh() }
+        refreshTask = Task {
+            if delay > 0 {
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+            }
+            await refresh()
+        }
     }
 
     /// 重新列舉顯示器並分類能力。
@@ -64,11 +91,11 @@ final class DisplayManager {
         let activeIDs = ids.prefix(Int(count)).filter { CGDisplayMirrorsDisplay($0) == kCGNullDirectDisplay }
 
         // 先分出 DisplayServices 可控的（內建與 Apple 顯示器），其餘嘗試 DDC
-        var classified: [(id: CGDirectDisplayID, backend: BrightnessBackend)] = []
+        var classified: [(id: CGDirectDisplayID, backend: BrightnessBackend, probe: (current: UInt16, max: UInt16)?)] = []
         var ddcCandidates: [CGDirectDisplayID] = []
         for id in activeIDs {
             if displayServices.canChangeBrightness(id) {
-                classified.append((id, .displayServices))
+                classified.append((id, .displayServices, nil))
             } else {
                 ddcCandidates.append(id)
             }
@@ -77,29 +104,29 @@ final class DisplayManager {
         guard !Task.isCancelled else { return }
         for id in ddcCandidates {
             guard ddcCapable.contains(id) else {
-                classified.append((id, .gammaOnly))
+                classified.append((id, .gammaOnly, nil))
                 continue
             }
             // Service 配對只代表 I2C 端點存在；Mac mini 內建 HDMI 這類路徑
             // 會 ACK 寫入但不透傳（實測 Q34E2G5：寫「成功」、讀全失敗、螢幕沒反應）。
             // 以讀取驗證：讀得回亮度才承認 DDC；使用者停用讀取時信任寫入。
+            // 讀值同時是初始亮度與值域上限的來源（不重複打 I2C）。
             let uuid = Self.stableUUID(for: id)
             if settings.disableDDCRead.contains(uuid) {
-                classified.append((id, .ddc))
+                classified.append((id, .ddc, nil))
             } else if let probe = await ddc.read(id, vcp: DDCController.VCP.brightness), probe.max > 0 {
-                classified.append((id, .ddc))
+                classified.append((id, .ddc, probe))
             } else {
-                classified.append((id, .gammaOnly))
+                classified.append((id, .gammaOnly, nil))
             }
             guard !Task.isCancelled else { return }
         }
 
         var models: [DisplayModel] = []
-        for (id, backend) in classified {
+        for (id, backend, probe) in classified {
             let uuid = Self.stableUUID(for: id)
             let force = settings.forceSoftwareDimming.contains(uuid)
-            let brightness = await initialBrightness(id: id, uuid: uuid, backend: backend)
-            guard !Task.isCancelled else { return }
+            let brightness = initialBrightness(id: id, uuid: uuid, backend: backend, probe: probe)
             models.append(DisplayModel(
                 id: id,
                 uuid: uuid,
@@ -107,7 +134,8 @@ final class DisplayManager {
                 isBuiltin: CGDisplayIsBuiltin(id) != 0,
                 backend: backend,
                 forceSoftwareDimming: force,
-                brightness: brightness
+                brightness: brightness,
+                ddcBrightnessMax: probe?.max ?? 100
             ))
         }
         // 內建排最前，其餘依名稱
@@ -200,7 +228,12 @@ final class DisplayManager {
         if let hardware = output.hardware {
             switch model.backend {
             case .ddc:
-                ddc.write(model.id, vcp: DDCController.VCP.brightness, value: UInt16((hardware * 100).rounded()))
+                // 依螢幕自報的 0x10 值域縮放（多數 100，也有 255 的）
+                ddc.write(
+                    model.id,
+                    vcp: DDCController.VCP.brightness,
+                    value: UInt16((hardware * Double(model.ddcBrightnessMax)).rounded())
+                )
             case .displayServices:
                 displayServices.setBrightness(hardware, for: model.id)
             case .gammaOnly:
@@ -210,17 +243,20 @@ final class DisplayManager {
         gamma.setFactor(output.softwareFactor, for: model.id)
     }
 
-    /// 讀取初始亮度：DisplayServices 直接讀；DDC 讀一次（除非該螢幕停用 read）；
+    /// 初始亮度：DisplayServices 直接讀；DDC 用分類時的讀值（停用 read 時為 nil）；
     /// 讀不到時用上次記住的值，再不行取 0.5。
-    private func initialBrightness(id: CGDirectDisplayID, uuid: String, backend: BrightnessBackend) async -> Double {
+    private func initialBrightness(
+        id: CGDirectDisplayID,
+        uuid: String,
+        backend: BrightnessBackend,
+        probe: (current: UInt16, max: UInt16)?
+    ) -> Double {
         switch backend {
         case .displayServices:
             if let value = displayServices.brightness(for: id) { return value }
         case .ddc:
-            if !settings.disableDDCRead.contains(uuid),
-               let (current, max) = await ddc.read(id, vcp: DDCController.VCP.brightness),
-               max > 0 {
-                return Double(current) / Double(max)
+            if let probe, probe.max > 0 {
+                return Double(probe.current) / Double(probe.max)
             }
         case .gammaOnly:
             break

@@ -53,6 +53,8 @@ final class DDCController: @unchecked Sendable {
     private var tickScheduled = false
     private var lastRequestUptime: TimeInterval = 0
     private var lastFlushUptime: TimeInterval = 0
+    /// 此時間點（uptime）之前不打 I2C 寫入（睡醒靜置期；pending 保留、期滿補寫）。
+    private var suspendUntilUptime: TimeInterval = 0
     private var audioFailureHandler: (@Sendable (CGDirectDisplayID) -> Void)?
 
     /// 音訊類 VCP（0x62/0x8D）持續失敗的回呼——只影響音量橋接，
@@ -129,8 +131,21 @@ final class DDCController: @unchecked Sendable {
         }
     }
 
+    /// 睡醒後螢幕的 I2C/scaler 需要時間才可靠：此期間所有寫入延後
+    /// （pending 保留、值照常合併），期滿由 tick 自動補寫最後值。
+    func deferWrites(for seconds: TimeInterval) {
+        queue.async {
+            let until = ProcessInfo.processInfo.systemUptime + seconds
+            self.suspendUntilUptime = max(self.suspendUntilUptime, until)
+            if !self.pendingWrites.isEmpty {
+                self.scheduleTickLocked()
+            }
+        }
+    }
+
     /// 只能在 queue 上呼叫。輪詢檢查「已靜置」或「距上次寫入過久」，
     /// 兩者任一成立就把 pending 值寫出；仍有 pending 就繼續排下一次檢查。
+    /// 睡醒靜置期（suspendUntilUptime）內不寫，只持續輪詢等解除。
     private func scheduleTickLocked() {
         guard !tickScheduled else { return }
         tickScheduled = true
@@ -138,9 +153,10 @@ final class DDCController: @unchecked Sendable {
             self.tickScheduled = false
             guard !self.pendingWrites.isEmpty else { return }
             let now = ProcessInfo.processInfo.systemUptime
+            let suspended = now < self.suspendUntilUptime
             let settled = now - self.lastRequestUptime >= Self.settleQuiet
             let overdue = now - self.lastFlushUptime >= Self.maxLatency
-            if settled || overdue {
+            if !suspended, settled || overdue {
                 self.flushLocked(now: now)
             }
             if !self.pendingWrites.isEmpty {

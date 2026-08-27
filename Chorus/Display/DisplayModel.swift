@@ -23,6 +23,10 @@ final class DisplayModel: Identifiable {
     let isBuiltin: Bool
     /// DDC 持續失敗時會被 DisplayManager 降級為 .gammaOnly。
     private(set) var backend: BrightnessBackend
+    /// 螢幕自報的 VCP 0x10 值域上限。多數螢幕是 100，但協定允許任意值
+    /// （有螢幕用 255）；寫入一律以此縮放，不能假設 100。
+    /// 讀不到（停用讀取）時依 MCCS 慣例取 100。
+    let ddcBrightnessMax: UInt16
 
     func demoteToGammaOnly() {
         backend = .gammaOnly
@@ -40,7 +44,8 @@ final class DisplayModel: Identifiable {
         isBuiltin: Bool,
         backend: BrightnessBackend,
         forceSoftwareDimming: Bool,
-        brightness: Double
+        brightness: Double,
+        ddcBrightnessMax: UInt16 = 100
     ) {
         self.id = id
         self.uuid = uuid
@@ -49,6 +54,7 @@ final class DisplayModel: Identifiable {
         self.backend = backend
         self.forceSoftwareDimming = forceSoftwareDimming
         self.brightness = brightness
+        self.ddcBrightnessMax = max(ddcBrightnessMax, 1)
     }
 
     var hasHardwareControl: Bool {
