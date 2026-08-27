@@ -129,7 +129,14 @@ final class DisplayManager {
         for (id, backend, probe, contrastProbe) in classified {
             let uuid = Self.stableUUID(for: id)
             let force = settings.forceSoftwareDimming.contains(uuid)
-            let brightness = initialBrightness(id: id, uuid: uuid, backend: backend, probe: probe)
+            var brightness = initialBrightness(id: id, uuid: uuid, backend: backend, probe: probe)
+            // Sub-zero 顯示器：讀回的是硬體值，要反映射回滑桿值；
+            // 硬體 0（gamma 區間）無法還原 → 用上次記住的滑桿值
+            if backend == .ddc, probe != nil, settings.subZeroDimming.contains(uuid) {
+                let pipeline = BrightnessPipeline(softwareThreshold: Self.subZeroThreshold)
+                brightness = pipeline.sliderValue(forHardware: brightness)
+                    ?? settings.lastBrightness(for: uuid) ?? 0.5
+            }
             let contrast: Double? = contrastProbe.flatMap { $0.max > 0 ? Double($0.current) / Double($0.max) : nil }
             models.append(DisplayModel(
                 id: id,
@@ -138,6 +145,7 @@ final class DisplayManager {
                 isBuiltin: CGDisplayIsBuiltin(id) != 0,
                 backend: backend,
                 forceSoftwareDimming: force,
+                subZeroDimming: settings.subZeroDimming.contains(uuid),
                 brightness: brightness,
                 ddcBrightnessMax: probe?.max ?? 100,
                 contrast: contrast,
@@ -227,8 +235,28 @@ final class DisplayManager {
         apply(model)
     }
 
+    func setSubZeroDimming(_ enabled: Bool, for model: DisplayModel) {
+        model.subZeroDimming = enabled
+        var set = settings.subZeroDimming
+        if enabled { set.insert(model.uuid) } else { set.remove(model.uuid) }
+        settings.subZeroDimming = set
+        if !enabled {
+            gamma.restore(model.id)
+        }
+        apply(model)
+    }
+
+    /// Sub-zero dimming 啟用時滑桿下段（此值以下）改走 gamma。
+    /// 同步協定不受影響：跨機傳的是 0–1 滑桿值，各機依自己的 pipeline 映射。
+    private static let subZeroThreshold = 0.25
+
     private func apply(_ model: DisplayModel) {
-        let pipeline = BrightnessPipeline()
+        // Sub-zero 只給 DDC 螢幕：DisplayServices 顯示器的 poller 以硬體值
+        // 對帳 model，滑桿≠硬體的映射會被誤判成外部變更而互相拉扯
+        let pipeline = BrightnessPipeline(
+            softwareThreshold: model.subZeroDimming && model.backend == .ddc && model.hasHardwareControl
+                ? Self.subZeroThreshold : 0
+        )
         let output = pipeline.map(slider: model.brightness, hasHardwareControl: model.hasHardwareControl)
 
         if let hardware = output.hardware {

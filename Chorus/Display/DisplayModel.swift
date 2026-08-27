@@ -37,6 +37,8 @@ final class DisplayModel: Identifiable {
     }
     /// 使用者強制軟體調光（apply 時視同無硬體控制）。
     var forceSoftwareDimming: Bool
+    /// Sub-zero dimming：滑桿下段硬體到底後接續 gamma（外接螢幕硬體 0 仍亮時用）。
+    var subZeroDimming: Bool
 
     /// UI 顯示的 0–1 亮度值（樂觀更新：先動 UI 再寫硬體）。
     var brightness: Double
@@ -48,6 +50,7 @@ final class DisplayModel: Identifiable {
         isBuiltin: Bool,
         backend: BrightnessBackend,
         forceSoftwareDimming: Bool,
+        subZeroDimming: Bool = false,
         brightness: Double,
         ddcBrightnessMax: UInt16 = 100,
         contrast: Double? = nil,
@@ -59,6 +62,7 @@ final class DisplayModel: Identifiable {
         self.isBuiltin = isBuiltin
         self.backend = backend
         self.forceSoftwareDimming = forceSoftwareDimming
+        self.subZeroDimming = subZeroDimming
         self.brightness = brightness
         self.ddcBrightnessMax = max(ddcBrightnessMax, 1)
         self.contrast = contrast

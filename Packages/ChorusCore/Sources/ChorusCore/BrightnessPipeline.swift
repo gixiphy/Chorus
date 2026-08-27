@@ -29,6 +29,16 @@ public struct BrightnessPipeline: Sendable, Equatable {
         }
     }
 
+    /// `map` 的反函數（硬體亮度 → slider 值）：重啟時把讀到的硬體現值還原成
+    /// 滑桿位置。硬體 0 對應整段軟體調光區間、無法唯一還原 → 回 nil
+    /// （呼叫端改用上次記住的滑桿值）。
+    public func sliderValue(forHardware hardware: Double) -> Double? {
+        let value = min(max(hardware, 0), 1)
+        guard softwareThreshold > 0 else { return value }
+        guard value > 0 else { return nil }
+        return softwareThreshold + value * (1 - softwareThreshold)
+    }
+
     public func map(slider: Double, hasHardwareControl: Bool) -> Output {
         let value = min(max(slider, 0), 1)
 

@@ -135,6 +135,17 @@ private struct DisplaySettingsTab: View {
                             set: { appState.displayManager.setForceSoftwareDimming($0, for: display) }
                         ))
                     }
+                    if display.backend == .ddc {
+                        Toggle("延伸調暗（硬體亮度到底後接續軟體調光）", isOn: Binding(
+                            get: { display.subZeroDimming },
+                            set: { appState.displayManager.setSubZeroDimming($0, for: display) }
+                        ))
+                        if display.subZeroDimming {
+                            Text("滑桿下段 25% 改為軟體調光：外接螢幕的硬體最低亮度常常還是太亮，夜間可再往下壓。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     if display.backend == .ddc, display.contrast != nil {
                         LabeledContent("對比") {
                             Slider(

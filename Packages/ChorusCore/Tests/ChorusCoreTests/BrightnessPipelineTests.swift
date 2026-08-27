@@ -57,4 +57,18 @@ struct BrightnessPipelineTests {
         #expect(pipeline.map(slider: -0.5, hasHardwareControl: true).hardware == 0)
         #expect(pipeline.map(slider: 1.5, hasHardwareControl: true).hardware == 1)
     }
+
+    @Test("Inverse recovers the slider from hardware; hardware 0 is ambiguous")
+    func inverse() {
+        let pipeline = BrightnessPipeline(softwareThreshold: 0.25)
+        // 硬體區間內（門檻以上）：map → invert 還原滑桿值
+        for step in [0.3, 0.5, 0.75, 1.0] {
+            let hardware = pipeline.map(slider: step, hasHardwareControl: true).hardware!
+            #expect(abs(pipeline.sliderValue(forHardware: hardware)! - step) < 0.0001)
+        }
+        // 硬體 0 落在軟體調光整段，無法唯一還原
+        #expect(pipeline.sliderValue(forHardware: 0) == nil)
+        // 未啟用 combined dimming 時是恆等映射
+        #expect(BrightnessPipeline().sliderValue(forHardware: 0.4) == 0.4)
+    }
 }

@@ -11,6 +11,7 @@ final class SettingsStore {
 
     private enum Key {
         static let forceSoftwareDimming = "chorus.display.forceSoftwareDimming"
+        static let subZeroDimming = "chorus.display.subZeroDimming"
         static let disableDDCRead = "chorus.display.disableDDCRead"
         static let lastBrightness = "chorus.display.lastBrightness"
         static let lastVolume = "chorus.audio.lastVolume"
@@ -43,6 +44,12 @@ final class SettingsStore {
     /// 強制軟體調光的顯示器 UUID。
     var forceSoftwareDimming: Set<String> {
         didSet { defaults.set(Array(forceSoftwareDimming), forKey: Key.forceSoftwareDimming) }
+    }
+
+    /// Sub-zero dimming 的顯示器 UUID：滑桿下段先讓硬體亮度到底、
+    /// 再以 gamma 繼續變暗（外接螢幕的硬體 0 常常還是很亮）。
+    var subZeroDimming: Set<String> {
+        didSet { defaults.set(Array(subZeroDimming), forKey: Key.subZeroDimming) }
     }
 
     /// 停用 DDC read 的顯示器 UUID（部分螢幕 read 會失敗或造成閃爍）。
@@ -133,6 +140,7 @@ final class SettingsStore {
     init(defaults: UserDefaults) {
         self.defaults = defaults
         forceSoftwareDimming = Set(defaults.stringArray(forKey: Key.forceSoftwareDimming) ?? [])
+        subZeroDimming = Set(defaults.stringArray(forKey: Key.subZeroDimming) ?? [])
         disableDDCRead = Set(defaults.stringArray(forKey: Key.disableDDCRead) ?? [])
         lastBrightness = (defaults.dictionary(forKey: Key.lastBrightness) as? [String: Double]) ?? [:]
         lastVolume = (defaults.dictionary(forKey: Key.lastVolume) as? [String: Double]) ?? [:]
