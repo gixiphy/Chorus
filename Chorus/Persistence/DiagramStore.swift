@@ -43,6 +43,12 @@ final class DiagramStore {
         positions[key]
     }
 
+    /// 情境切換：整組座標取代（DeskScenarioStore 專用）。
+    func replacePositions(_ new: [String: CGPoint]) {
+        positions = new
+        persistPositions()
+    }
+
     /// 拖拉結束後保存座標（夾在 0–1）。
     func setPosition(_ point: CGPoint, for key: String) {
         let clamped = CGPoint(

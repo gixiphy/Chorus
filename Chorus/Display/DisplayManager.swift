@@ -23,6 +23,8 @@ final class DisplayManager {
     @ObservationIgnored weak var autoController: AutoBrightnessController?
     /// DDC 能力分類完成後回呼音訊層重算橋接（音訊 snapshot 常比 DDC 探測先到）。
     @ObservationIgnored weak var audioManager: AudioDeviceManager?
+    /// 螢幕組合變更後通知桌面情境自動切換（防抖在對方）。
+    @ObservationIgnored weak var scenarioStore: DeskScenarioStore?
 
     init(settings: SettingsStore) {
         self.settings = settings
@@ -106,6 +108,7 @@ final class DisplayManager {
         }
         displays = models
         audioManager?.refreshBridges()
+        scenarioStore?.displaysDidChange(Set(models.map(\.uuid)))
     }
 
     /// 使用者透過 UI 設定亮度（會廣播同步）。value 0–1。
@@ -278,4 +281,5 @@ final class DisplayManager {
 @MainActor
 enum AppStateRegistry {
     static var displayManager: DisplayManager?
+    static var scenarioStore: DeskScenarioStore?
 }

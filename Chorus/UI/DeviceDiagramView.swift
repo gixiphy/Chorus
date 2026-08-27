@@ -9,6 +9,8 @@ struct DeviceDiagramView: View {
     @Environment(AppState.self) private var appState
     @State private var showingImporter = false
     @State private var showingFirstUseConfirm = false
+    @State private var showingScenarioName = false
+    @State private var newScenarioName = ""
 
     var body: some View {
         @Bindable var advisor = appState.advisor
@@ -48,7 +50,55 @@ struct DeviceDiagramView: View {
         } message: {
             Text("照片將交由本機 \(engineName) CLI 分析（經你的訂閱送至其服務商）。分析只在你按下按鈕時發生。")
         }
+        .alert("新增桌面情境", isPresented: $showingScenarioName) {
+            TextField("名稱（例：家、公司）", text: $newScenarioName)
+            Button("儲存") {
+                appState.scenarios.createFromCurrent(named: newScenarioName)
+                newScenarioName = ""
+            }
+            Button("取消", role: .cancel) { newScenarioName = "" }
+        } message: {
+            Text("記住目前的照片、節點位置與亮度設定；之後接上同一組螢幕會自動切換。")
+        }
         .onAppear { appState.advisor.loadHistoryIfNeeded() }
+    }
+
+    // MARK: - 桌面情境
+
+    private var scenarioMenu: some View {
+        Menu {
+            ForEach(appState.scenarios.scenarios) { scenario in
+                Button {
+                    appState.scenarios.switchTo(scenario.id)
+                } label: {
+                    if scenario.id == appState.scenarios.activeID {
+                        Label(scenario.name, systemImage: "checkmark")
+                    } else {
+                        Text(scenario.name)
+                    }
+                }
+            }
+            if !appState.scenarios.scenarios.isEmpty {
+                Divider()
+            }
+            Button("將目前桌面存為新情境…") { showingScenarioName = true }
+            if appState.scenarios.activeID != nil {
+                Button("更新目前情境（含螢幕組合）") {
+                    appState.scenarios.saveLiveIntoActive(refreshSignature: true)
+                }
+                Button("刪除目前情境", role: .destructive) {
+                    appState.scenarios.deleteActive()
+                }
+            }
+        } label: {
+            Label(
+                appState.scenarios.activeScenario?.name ?? "情境",
+                systemImage: "square.3.layers.3d"
+            )
+        }
+        .controlSize(.small)
+        .fixedSize()
+        .help("桌面情境：各自記住照片、節點位置與亮度設定；接上對應螢幕組合時自動切換")
     }
 
     // MARK: - 顧問列
@@ -154,9 +204,11 @@ struct DeviceDiagramView: View {
 
     private var footer: some View {
         HStack {
+            scenarioMenu
             Text("拖拉節點擺放實際位置；差異值會疊加在環境基準亮度上")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
             Spacer()
             if appState.diagram.backgroundImageURL != nil {
                 Button("移除照片") {

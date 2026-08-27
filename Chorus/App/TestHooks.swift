@@ -96,6 +96,15 @@ final class TestHooks {
         case "excludeAllAuto":
             // 同機 E2E：讓這個實例只回報 lux、不寫實體螢幕（兩實例共用同一片硬體）
             appState.settings.ambientExcludedDisplays = Set(appState.displayManager.displays.map(\.uuid))
+        case "saveScenario":
+            if let name = info["value"] {
+                appState.scenarios.createFromCurrent(named: name)
+            }
+        case "switchScenario":
+            if let name = info["value"],
+               let scenario = appState.scenarios.scenarios.first(where: { $0.name == name }) {
+                appState.scenarios.switchTo(scenario.id)
+            }
         case "simulateMediaKey":
             // value = NX keyCode（0=音量+ 1=音量- 7=mute 2=亮度+ 3=亮度-）；
             // 直接走路由驗證接管條件與套用路徑，不經 CGEvent tap
@@ -169,6 +178,10 @@ final class TestHooks {
                     "isDefault": device.isDefault,
                 ] as [String: Any]
             },
+            "scenarios": [
+                "active": appState.scenarios.activeScenario.map { $0.name as Any } ?? NSNull(),
+                "names": appState.scenarios.scenarios.map(\.name),
+            ] as [String: Any],
             "mediaKeys": [
                 "enabled": appState.settings.mediaKeyCaptureEnabled,
                 "tapActive": appState.mediaKeys.tapActive,

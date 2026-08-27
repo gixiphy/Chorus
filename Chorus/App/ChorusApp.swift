@@ -41,6 +41,7 @@ struct ChorusApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
+            AppStateRegistry.scenarioStore?.saveOnTerminate()
             AppStateRegistry.displayManager?.shutdown()
         }
     }

@@ -17,6 +17,7 @@ final class AppState {
     let diagram: DiagramStore
     let advisor: LightingAdvisor
     let mediaKeys: MediaKeyInterceptor
+    let scenarios: DeskScenarioStore
 
     init(instance: InstanceConfig = .current) {
         self.instance = instance
@@ -61,6 +62,13 @@ final class AppState {
         sessionManager.localCapabilities = capabilities
         pairing.localCapabilities = capabilities
 
+        scenarios = DeskScenarioStore(
+            instance: instance,
+            settings: settings,
+            diagram: diagram,
+            displayManager: displayManager,
+            autoBrightness: autoBrightness
+        )
         mediaKeys = MediaKeyInterceptor(
             settings: settings,
             displayManager: displayManager,
@@ -69,6 +77,8 @@ final class AppState {
 
         displayManager.autoController = autoBrightness
         displayManager.audioManager = audioManager
+        displayManager.scenarioStore = scenarios
+        AppStateRegistry.scenarioStore = scenarios
         coordinator.attachAutoController(autoBrightness)
 
         displayManager.start()
