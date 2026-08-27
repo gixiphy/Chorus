@@ -11,3 +11,4 @@ docs/
 
 # Build artifacts 打包產物
 dist/
+.b1-work/

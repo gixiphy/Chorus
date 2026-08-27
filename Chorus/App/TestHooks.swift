@@ -49,6 +49,13 @@ final class TestHooks {
             if let candidate = appState.pairing.candidates.first {
                 appState.pairing.requestPair(with: candidate)
             }
+        case "requestPairNamed":
+            // 依名稱選候選者：同機 E2E 時網路上可能同時有正式 app 與其他 Mac，
+            // requestPairFirst 會挑錯對象。
+            if let name = info["value"],
+               let candidate = appState.pairing.candidates.first(where: { $0.name.contains(name) }) {
+                appState.pairing.requestPair(with: candidate)
+            }
         case "requestPairLoopback":
             if let port = info["port"].flatMap(UInt16.init) {
                 appState.pairing.requestPair(host: "127.0.0.1", port: port)
@@ -68,6 +75,15 @@ final class TestHooks {
             if let value = info["value"].flatMap(Double.init),
                let device = appState.audioManager.defaultDevice {
                 appState.audioManager.setVolume(value, for: device)
+            }
+        case "setBrightnessUUID":
+            // value = "<uuid>:<0–1>"；指定顯示器（測試後還原原值用）
+            if let raw = info["value"] {
+                let parts = raw.split(separator: ":")
+                if parts.count == 2, let value = Double(parts[1]),
+                   let display = appState.displayManager.displays.first(where: { $0.uuid == parts[0] }) {
+                    appState.displayManager.setBrightness(value, for: display)
+                }
             }
         case "setAutoBrightness":
             if let value = info["value"] {
