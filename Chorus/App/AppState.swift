@@ -18,6 +18,7 @@ final class AppState {
     let advisor: LightingAdvisor
     let mediaKeys: MediaKeyInterceptor
     let scenarios: DeskScenarioStore
+    let virtualDriver: VirtualAudioDriverController
 
     init(instance: InstanceConfig = .current) {
         self.instance = instance
@@ -75,6 +76,9 @@ final class AppState {
             audioManager: audioManager
         )
 
+        virtualDriver = VirtualAudioDriverController()
+        audioManager.virtualDriver = virtualDriver
+
         displayManager.autoController = autoBrightness
         displayManager.audioManager = audioManager
         displayManager.scenarioStore = scenarios
@@ -86,5 +90,6 @@ final class AppState {
         sessionManager.start()
         autoBrightness.start()
         mediaKeys.updateActivation()
+        virtualDriver.refreshStatus()
     }
 }

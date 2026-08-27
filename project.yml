@@ -20,7 +20,13 @@ targets:
   Chorus:
     type: application
     platform: macOS
-    sources: [Chorus]
+    sources:
+      - Chorus
+      # BV 虛擬音訊驅動（package.sh 產出；開發建置沒有也能過）
+      - path: AudioDriver/prebuilt/ChorusAudioDevice.driver
+        buildPhase: resources
+        type: folder
+        optional: true
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: Chorus/Support/Chorus-Bridging-Header.h

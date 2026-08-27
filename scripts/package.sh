@@ -27,6 +27,12 @@ sed -i '' "s/CFBundleShortVersionString: \".*\"/CFBundleShortVersionString: \"$V
 sed -i '' "s/CFBundleVersion: \".*\"/CFBundleVersion: \"$NEXT_BUILD\"/" project.yml
 echo "▸ 版本 $VERSION (build $NEXT_BUILD)"
 
+# BV 虛擬音訊驅動：先建好放進 App Resources（設定頁一鍵安裝的來源）
+scripts/build-audio-driver.sh
+rm -rf AudioDriver/prebuilt
+mkdir -p AudioDriver/prebuilt
+ditto dist/ChorusAudioDevice.driver AudioDriver/prebuilt/ChorusAudioDevice.driver
+
 xcodegen generate > /dev/null
 rm -rf dist/Chorus.xcarchive
 xcodebuild -project Chorus.xcodeproj -scheme Chorus -configuration Release \

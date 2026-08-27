@@ -12,6 +12,8 @@ final class AudioDeviceManager {
     @ObservationIgnored private let worker = AudioWorker()
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private weak var displayManager: DisplayManager?
+    /// BV 虛擬輸出裝置控制器（音量鏡射與模式切換用）。
+    @ObservationIgnored weak var virtualDriver: VirtualAudioDriverController?
     @ObservationIgnored private var consumeTask: Task<Void, Never>?
     @ObservationIgnored weak var coordinator: ControlCoordinator?
 
@@ -124,6 +126,9 @@ final class AudioDeviceManager {
 
         if device.canSetVolume {
             worker.setVolume(device.id, to: clamped)
+            if device.uid == VirtualAudioDriverController.deviceUID {
+                mirrorVirtualVolume(clamped)
+            }
         } else if let displayID = device.bridgedDisplayID {
             // 螢幕可能處於 DDC 靜音（0x8D）而我們不知道——調音量＝想聽到聲音，
             // 比照 macOS 語意一併送解除靜音（DDC 層的重複值去重讓它幾乎免費）
@@ -161,6 +166,9 @@ final class AudioDeviceManager {
         device.muted = muted
         if device.hasMute {
             worker.setMute(device.id, muted: muted)
+            if device.uid == VirtualAudioDriverController.deviceUID {
+                mirrorVirtualMute(muted)
+            }
         } else if let displayID = device.bridgedDisplayID {
             displayManager?.ddc.write(
                 displayID,
@@ -188,15 +196,25 @@ final class AudioDeviceManager {
                 // 橋接裝置（無 CoreAudio 音量）的 snapshot 值無意義（恆為 0），
                 // model 由 DDC 路徑維護——不能讓任何音訊事件把滑桿蓋成 0。
                 if info.canSetVolume, !shouldPreserveLocalValue(uid: info.uid, reported: info.volume) {
-                    // 非本 App 寫入造成的變更（媒體鍵、其他 App）→ 視為本地硬體事件
+                    // 非本 App 寫入造成的變更（媒體鍵、Touch Bar、其他 App）
+                    // → 視為本地硬體事件
                     let changed = abs(existing.volume - info.volume) > 0.005
                     existing.volume = info.volume
-                    if changed, isDefault {
-                        coordinator?.localVolumeChanged(info.volume)
+                    if changed {
+                        // Touch Bar／控制中心動的是虛擬裝置 → 鏡射到螢幕硬體
+                        if info.uid == VirtualAudioDriverController.deviceUID {
+                            mirrorVirtualVolume(info.volume)
+                        }
+                        if isDefault {
+                            coordinator?.localVolumeChanged(info.volume)
+                        }
                     }
                 }
                 if info.hasMute, existing.muted != info.muted {
                     existing.muted = info.muted
+                    if info.uid == VirtualAudioDriverController.deviceUID {
+                        mirrorVirtualMute(info.muted)
+                    }
                     if isDefault {
                         coordinator?.localMuteChanged(info.muted)
                     }
@@ -208,6 +226,10 @@ final class AudioDeviceManager {
                     // HDMI/DP 裝置沒有軟體音量：試著橋接到 DDC 顯示器
                     model.bridgedDisplayID = bridgeTarget(forDeviceNamed: info.name)?.id
                     model.volume = settings.lastVolume(for: info.uid) ?? 0.3
+                }
+                if info.uid == VirtualAudioDriverController.deviceUID {
+                    // 虛擬裝置剛出現（安裝完／coreaudiod 重啟）→ 讀 driver 設定
+                    virtualDriver?.refreshStatus()
                 }
                 updated.append(model)
             }
@@ -235,6 +257,43 @@ final class AudioDeviceManager {
                 }
             }
         }
+        updateVirtualMirrorMode()
+    }
+
+    // MARK: - BV 虛擬裝置音量鏡射
+
+    /// 虛擬裝置的音量變更（Touch Bar／音量鍵／滑桿）→ 轉送目標若是
+    /// DDC 橋接的螢幕裝置，走既有 writeVolume 路徑鏡射到 VCP 0x62
+    /// （螢幕裝置的滑桿與寫後驗證都跟著動）。無 DDC 時不鏡射——
+    /// driver 端 applyVolume=1 的數位衰減就是音量本體。
+    private func mirrorVirtualVolume(_ value: Double) {
+        guard let target = mirrorTarget() else { return }
+        writeVolume(value, to: target)
+    }
+
+    private func mirrorVirtualMute(_ muted: Bool) {
+        guard let target = mirrorTarget() else { return }
+        writeMute(muted, to: target)
+    }
+
+    /// 鏡射目標：driver 設定的轉送裝置，且必須是 DDC 橋接的螢幕裝置。
+    private func mirrorTarget() -> AudioDeviceModel? {
+        guard let uid = virtualDriver?.targetUID,
+              let target = devices.first(where: { $0.uid == uid }),
+              !target.canSetVolume,
+              target.bridgedDisplayID != nil
+        else { return nil }
+        return target
+    }
+
+    /// 依鏡射可用性切 driver 模式：DDC 通 → 鏡射（樣本原樣通過）；
+    /// 不通 → driver 內數位衰減。只在值改變時打設定通道。
+    func updateVirtualMirrorMode() {
+        guard let virtualDriver,
+              devices.contains(where: { $0.uid == VirtualAudioDriverController.deviceUID })
+        else { return }
+        let mirrors = mirrorTarget().map { !$0.bridgeUnresponsive } ?? false
+        virtualDriver.setMirrorMode(mirrors)
     }
 
     /// 橋接建立時讀螢幕的 VCP 0x62 現值回填滑桿（否則只能猜上次記住的值，

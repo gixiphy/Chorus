@@ -12,6 +12,9 @@ struct SettingsView: View {
             Tab("顯示器", systemImage: "display") {
                 DisplaySettingsTab()
             }
+            Tab("音訊", systemImage: "speaker.wave.2") {
+                AudioSettingsTab()
+            }
             Tab("同步", systemImage: "arrow.triangle.2.circlepath") {
                 SyncSettingsTab()
             }
@@ -481,6 +484,162 @@ private struct AdvisorSettingsTab: View {
             get: { appState.settings.advisorCustomPaths[engineID] ?? "" },
             set: { appState.settings.advisorCustomPaths[engineID] = $0 }
         )
+    }
+}
+
+/// BV：虛擬輸出裝置（螢幕音量）。安裝／狀態／轉送目標／模式。
+private struct AudioSettingsTab: View {
+    @Environment(AppState.self) private var appState
+    @State private var busy = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            Section("螢幕音量（虛擬輸出裝置）") {
+                explanation
+                switch appState.virtualDriver.status {
+                case .notInstalled:
+                    notInstalledRows
+                case .installedNotLoaded:
+                    installedNotLoadedRows
+                case .active:
+                    activeRows
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { appState.virtualDriver.refreshStatus() }
+    }
+
+    private var explanation: some View {
+        Text("DP/HDMI 螢幕音訊沒有系統音量，macOS 會停用 Touch Bar／控制中心／音量鍵。安裝虛擬輸出裝置後，把它設為預設輸出：系統音量 UI 全部恢復，音訊轉送到螢幕；支援 DDC 的螢幕直接鏡射硬體音量（不損音質），其餘用數位衰減。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var notInstalledRows: some View {
+        LabeledContent("狀態") {
+            Text("未安裝").foregroundStyle(.secondary)
+        }
+        HStack {
+            Button(busy ? "安裝中…" : "安裝驅動…") { install() }
+                .disabled(busy || VirtualAudioDriverController.bundledDriverURL == nil)
+            if VirtualAudioDriverController.bundledDriverURL == nil {
+                Text("此建置未附驅動：專案目錄執行 scripts/build-audio-driver.sh 與 sudo scripts/install-audio-driver.sh")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("需要管理員密碼一次；會重啟音訊服務（聲音短暫中斷）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var installedNotLoadedRows: some View {
+        LabeledContent("狀態") {
+            Text("已安裝，等待音訊服務載入").foregroundStyle(.orange)
+        }
+        HStack {
+            Button("重新整理") { appState.virtualDriver.refreshStatus() }
+            Button("移除驅動…", role: .destructive) { uninstall() }
+                .disabled(busy)
+            Text("剛安裝完請稍候幾秒再重新整理；一直沒出現時重開機。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var activeRows: some View {
+        LabeledContent("狀態") {
+            Text("運作中").foregroundStyle(.green)
+        }
+        Picker("轉送到", selection: Binding(
+            get: { appState.virtualDriver.targetUID },
+            set: { uid in
+                guard let uid else { return }
+                appState.virtualDriver.setTarget(uid: uid)
+                appState.audioManager.updateVirtualMirrorMode()
+            }
+        )) {
+            ForEach(proxyCandidates, id: \.uid) { device in
+                Text(device.name).tag(Optional(device.uid))
+            }
+            if appState.virtualDriver.targetUID == nil {
+                Text("（未設定）").tag(String?.none)
+            }
+        }
+        LabeledContent("音量模式") {
+            switch appState.virtualDriver.mirrorMode {
+            case true?:
+                Text("DDC 硬體鏡射（不損音質）").foregroundStyle(.green)
+            case false?:
+                Text("數位衰減（軟體音量）").foregroundStyle(.secondary)
+            case nil:
+                Text("讀取中…").foregroundStyle(.secondary)
+            }
+        }
+        HStack {
+            if let virtualModel, !virtualModel.isDefault {
+                Button("設為預設輸出") {
+                    appState.audioManager.setAsDefault(virtualModel)
+                }
+            }
+            Button("移除驅動…", role: .destructive) { uninstall() }
+                .disabled(busy)
+        }
+        Text("把音量鍵／Touch Bar 交給它：設為預設輸出。之後調整音量都會轉到上面選的實體輸出。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private var virtualModel: AudioDeviceModel? {
+        appState.audioManager.devices.first { $0.uid == VirtualAudioDriverController.deviceUID }
+    }
+
+    /// 轉送候選：虛擬裝置以外的所有輸出（螢幕裝置排最前）。
+    private var proxyCandidates: [AudioDeviceModel] {
+        appState.audioManager.devices
+            .filter { $0.uid != VirtualAudioDriverController.deviceUID }
+            .sorted { lhs, rhs in
+                if lhs.canSetVolume != rhs.canSetVolume { return !lhs.canSetVolume }
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    private func install() {
+        busy = true
+        errorMessage = nil
+        Task {
+            do {
+                try await appState.virtualDriver.install()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            busy = false
+        }
+    }
+
+    private func uninstall() {
+        busy = true
+        errorMessage = nil
+        Task {
+            do {
+                try await appState.virtualDriver.uninstall()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            busy = false
+        }
     }
 }
 
