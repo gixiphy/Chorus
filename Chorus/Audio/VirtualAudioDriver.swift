@@ -94,6 +94,7 @@ final class VirtualAudioDriverController {
             guard box != kAudioObjectUnknown else { return }
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 queue.async {
+                    Self.registerConfiguratorLocked(box: box)
                     var address = CoreAudioProperty.address(kAudioObjectPropertyName)
                     var name = Unmanaged.passRetained(keyValue as CFString)
                     _ = withUnsafeMutablePointer(to: &name) { pointer in
@@ -112,6 +113,7 @@ final class VirtualAudioDriverController {
     private func readConfig(box: AudioObjectID, type: ConfigType) async -> String? {
         await withCheckedContinuation { continuation in
             queue.async {
+                Self.registerConfiguratorLocked(box: box)
                 // identify = -ConfigType 之後，本 process 讀 name 得到的是設定值
                 let identify = CoreAudioProperty.address(kAudioObjectPropertyIdentify)
                 CoreAudioProperty.set(box, identify, to: Int32(-type.rawValue))
@@ -119,6 +121,13 @@ final class VirtualAudioDriverController {
                 continuation.resume(returning: value)
             }
         }
+    }
+
+    /// driver 只理會已註冊 pid 的 configurator：每次操作前先把自己的 pid
+    /// 寫進 identify（正值）。每次都寫——coreaudiod 重啟後記憶會消失。
+    private static func registerConfiguratorLocked(box: AudioObjectID) {
+        let identify = CoreAudioProperty.address(kAudioObjectPropertyIdentify)
+        CoreAudioProperty.set(box, identify, to: Int32(ProcessInfo.processInfo.processIdentifier))
     }
 
     private func findBox() async -> AudioObjectID {
