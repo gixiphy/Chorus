@@ -20,17 +20,32 @@ final class DDCController: @unchecked Sendable {
 
     /// 連續寫入失敗達此次數即視為 DDC 不可用（轉接器不透傳 I2C、螢幕關閉 DDC/CI 等）。
     private static let writeFailureThreshold = 3
-    /// 兩次 flush 之間的最小間隔。合併只保證「送最後值」，沒有間隔的話拖曳
-    /// 期間仍會以每秒數十次打 I2C——部分螢幕 scaler／DCP 會被打掛
-    /// （實測：連續 VCP 0x62 造成螢幕雪花、需硬重啟）。10 Hz 對 UI 足夠平滑。
-    private static let minFlushInterval: TimeInterval = 0.1
+
+    // MARK: - 寫入節流參數
+    //
+    // 拖曳滑桿會產生每秒數十個值。實測（AG493US3R4）連續 I2C 會把螢幕 scaler
+    // 打掛——畫面變雪花、只能硬重啟；兩台 Mac 同步時雙方各自寫入更危險。
+    // 因此採「靜置才寫 + 最大延遲上限」：
+    //   - 值停止變動 settleQuiet 後寫出最後值（拖曳結束必定落地）
+    //   - 拖曳持續進行時，每 maxLatency 至少寫一次維持視覺回饋
+    // 淨效果：持續拖曳約 2.5 Hz、結束後補一次，遠低於先前的 10 Hz。
+
+    /// 值停止變動多久後寫出。
+    private static let settleQuiet: TimeInterval = 0.15
+    /// 持續拖曳時兩次寫入的最大間隔（視覺回饋下限）。
+    private static let maxLatency: TimeInterval = 0.4
+    /// 判斷上述兩條件的輪詢間隔。
+    private static let tickInterval: TimeInterval = 0.05
 
     private let queue = DispatchQueue(label: "com.hermes.Chorus.ddc", qos: .userInitiated)
 
     // 以下狀態只在 queue 上讀寫
     private var services: [CGDirectDisplayID: IOAVService] = [:]
     private var pendingWrites: [CGDirectDisplayID: [UInt8: UInt16]] = [:]
-    private var flushScheduled = false
+    /// 每個 (display, vcp) 最後成功寫入的值：相同值不再打 I2C。
+    private var lastWritten: [CGDirectDisplayID: [UInt8: UInt16]] = [:]
+    private var tickScheduled = false
+    private var lastRequestUptime: TimeInterval = 0
     private var lastFlushUptime: TimeInterval = 0
     private var writeFailureCounts: [CGDirectDisplayID: Int] = [:]
     private var failureHandler: (@Sendable (CGDirectDisplayID) -> Void)?
@@ -59,6 +74,7 @@ final class DDCController: @unchecked Sendable {
                 }
                 self.services = refreshed
                 self.pendingWrites = [:]
+                self.lastWritten = [:]
                 self.writeFailureCounts = [:]
                 continuation.resume(returning: Set(refreshed.keys))
             }
@@ -78,43 +94,65 @@ final class DDCController: @unchecked Sendable {
         }
     }
 
-    /// 寫入 VCP 值。fire-and-forget：slider 拖曳期間的連續寫入會自動合併，
-    /// 只送出每個 (display, vcp) 的最後值。
+    /// 寫入 VCP 值。fire-and-forget：拖曳期間的連續值會合併，
+    /// 依 §寫入節流參數 的規則稀疏寫出；與最後成功寫入相同的值完全不碰 I2C。
     func write(_ displayID: CGDirectDisplayID, vcp: UInt8, value: UInt16) {
         queue.async {
+            if self.lastWritten[displayID]?[vcp] == value {
+                // 值等同硬體現況：連 pending 都不用留（例如拖回原位、重複套用）
+                self.pendingWrites[displayID]?[vcp] = nil
+                if self.pendingWrites[displayID]?.isEmpty == true {
+                    self.pendingWrites.removeValue(forKey: displayID)
+                }
+                return
+            }
             self.pendingWrites[displayID, default: [:]][vcp] = value
-            self.scheduleFlushLocked()
+            self.lastRequestUptime = ProcessInfo.processInfo.systemUptime
+            self.scheduleTickLocked()
         }
     }
 
-    /// 只能在 queue 上呼叫。把 flush 排到目前已入佇列的更新之後、且距離上次
-    /// flush 至少 minFlushInterval，讓 pending 更新合併完再以受限頻率寫出。
-    private func scheduleFlushLocked() {
-        guard !flushScheduled else { return }
-        flushScheduled = true
-        let elapsed = ProcessInfo.processInfo.systemUptime - lastFlushUptime
-        let delay = max(0, Self.minFlushInterval - elapsed)
-        queue.asyncAfter(deadline: .now() + delay) {
-            self.flushScheduled = false
-            self.lastFlushUptime = ProcessInfo.processInfo.systemUptime
-            let batch = self.pendingWrites
-            self.pendingWrites = [:]
-            for (displayID, vcpValues) in batch {
-                guard let service = self.services[displayID] else { continue }
-                for (vcp, value) in vcpValues {
-                    let success = AppleSiliconDDC.write(service: service, command: vcp, value: value)
-                    if success {
-                        self.writeFailureCounts[displayID] = 0
-                    } else {
-                        let failures = (self.writeFailureCounts[displayID] ?? 0) + 1
-                        self.writeFailureCounts[displayID] = failures
-                        if failures >= Self.writeFailureThreshold {
-                            // DDC 確定不可用：移除服務讓後續寫入變 no-op，並通知降級
-                            self.services.removeValue(forKey: displayID)
-                            self.pendingWrites.removeValue(forKey: displayID)
-                            self.failureHandler?(displayID)
-                            break
-                        }
+    /// 只能在 queue 上呼叫。輪詢檢查「已靜置」或「距上次寫入過久」，
+    /// 兩者任一成立就把 pending 值寫出；仍有 pending 就繼續排下一次檢查。
+    private func scheduleTickLocked() {
+        guard !tickScheduled else { return }
+        tickScheduled = true
+        queue.asyncAfter(deadline: .now() + Self.tickInterval) {
+            self.tickScheduled = false
+            guard !self.pendingWrites.isEmpty else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            let settled = now - self.lastRequestUptime >= Self.settleQuiet
+            let overdue = now - self.lastFlushUptime >= Self.maxLatency
+            if settled || overdue {
+                self.flushLocked(now: now)
+            }
+            if !self.pendingWrites.isEmpty {
+                self.scheduleTickLocked()
+            }
+        }
+    }
+
+    /// 只能在 queue 上呼叫。
+    private func flushLocked(now: TimeInterval) {
+        lastFlushUptime = now
+        let batch = pendingWrites
+        pendingWrites = [:]
+        for (displayID, vcpValues) in batch {
+            guard let service = services[displayID] else { continue }
+            for (vcp, value) in vcpValues {
+                if AppleSiliconDDC.write(service: service, command: vcp, value: value) {
+                    writeFailureCounts[displayID] = 0
+                    lastWritten[displayID, default: [:]][vcp] = value
+                } else {
+                    let failures = (writeFailureCounts[displayID] ?? 0) + 1
+                    writeFailureCounts[displayID] = failures
+                    if failures >= Self.writeFailureThreshold {
+                        // DDC 確定不可用：移除服務讓後續寫入變 no-op，並通知降級
+                        services.removeValue(forKey: displayID)
+                        pendingWrites.removeValue(forKey: displayID)
+                        lastWritten.removeValue(forKey: displayID)
+                        failureHandler?(displayID)
+                        break
                     }
                 }
             }

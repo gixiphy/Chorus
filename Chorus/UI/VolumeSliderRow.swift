@@ -70,6 +70,16 @@ struct VolumeSliderRow: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 38, alignment: .trailing)
             }
+            // 螢幕音訊（HDMI/DP）沒有 CoreAudio 音量，macOS 的音量鍵對它無效——
+            // Chorus 只能經 DDC 控制，鍵盤鍵要等媒體鍵接管（Phase 2）才可行。
+            if device.isDefault, !device.canSetVolume {
+                Text(device.bridgedDisplayID != nil
+                     ? "鍵盤音量鍵對螢幕喇叭無效，請用上方滑桿（經 DDC 控制）"
+                     : "此裝置沒有可控音量")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .padding(.leading, 24)
+            }
         }
         .contextMenu {
             if manager.isHidden(device) {
