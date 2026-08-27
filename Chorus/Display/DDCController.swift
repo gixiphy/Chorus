@@ -20,6 +20,10 @@ final class DDCController: @unchecked Sendable {
 
     /// 連續寫入失敗達此次數即視為 DDC 不可用（轉接器不透傳 I2C、螢幕關閉 DDC/CI 等）。
     private static let writeFailureThreshold = 3
+    /// 兩次 flush 之間的最小間隔。合併只保證「送最後值」，沒有間隔的話拖曳
+    /// 期間仍會以每秒數十次打 I2C——部分螢幕 scaler／DCP 會被打掛
+    /// （實測：連續 VCP 0x62 造成螢幕雪花、需硬重啟）。10 Hz 對 UI 足夠平滑。
+    private static let minFlushInterval: TimeInterval = 0.1
 
     private let queue = DispatchQueue(label: "com.hermes.Chorus.ddc", qos: .userInitiated)
 
@@ -27,6 +31,7 @@ final class DDCController: @unchecked Sendable {
     private var services: [CGDirectDisplayID: IOAVService] = [:]
     private var pendingWrites: [CGDirectDisplayID: [UInt8: UInt16]] = [:]
     private var flushScheduled = false
+    private var lastFlushUptime: TimeInterval = 0
     private var writeFailureCounts: [CGDirectDisplayID: Int] = [:]
     private var failureHandler: (@Sendable (CGDirectDisplayID) -> Void)?
 
@@ -82,13 +87,16 @@ final class DDCController: @unchecked Sendable {
         }
     }
 
-    /// 只能在 queue 上呼叫。把 flush 排到目前已入佇列的更新之後，
-    /// 讓佇列中所有 pending 更新先合併完再一次寫出。
+    /// 只能在 queue 上呼叫。把 flush 排到目前已入佇列的更新之後、且距離上次
+    /// flush 至少 minFlushInterval，讓 pending 更新合併完再以受限頻率寫出。
     private func scheduleFlushLocked() {
         guard !flushScheduled else { return }
         flushScheduled = true
-        queue.async {
+        let elapsed = ProcessInfo.processInfo.systemUptime - lastFlushUptime
+        let delay = max(0, Self.minFlushInterval - elapsed)
+        queue.asyncAfter(deadline: .now() + delay) {
             self.flushScheduled = false
+            self.lastFlushUptime = ProcessInfo.processInfo.systemUptime
             let batch = self.pendingWrites
             self.pendingWrites = [:]
             for (displayID, vcpValues) in batch {

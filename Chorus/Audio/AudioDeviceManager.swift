@@ -153,10 +153,32 @@ final class AudioDeviceManager {
     /// DDC 降級（gammaOnly）時也在此清掉失效的橋接。
     func refreshBridges() {
         for device in devices where !device.canSetVolume {
-            let target = bridgeTarget(forDeviceNamed: device.name)?.id
-            if device.bridgedDisplayID != target {
-                device.bridgedDisplayID = target
+            let target = bridgeTarget(forDeviceNamed: device.name)
+            if device.bridgedDisplayID != target?.id {
+                let isNewBridge = device.bridgedDisplayID == nil
+                device.bridgedDisplayID = target?.id
+                if isNewBridge, let target {
+                    initializeBridgedVolume(device: device, display: target)
+                }
             }
+        }
+    }
+
+    /// 橋接建立時讀螢幕的 VCP 0x62 現值回填滑桿（否則只能猜上次記住的值，
+    /// 滑桿位置對不上硬體）。該螢幕停用 DDC 讀取時跳過。
+    private func initializeBridgedVolume(device: AudioDeviceModel, display: DisplayModel) {
+        guard !settings.disableDDCRead.contains(display.uuid) else { return }
+        let displayID = display.id
+        let uid = device.uid
+        Task { [weak self] in
+            guard let ddc = self?.displayManager?.ddc,
+                  let result = await ddc.read(displayID, vcp: DDCController.VCP.volume),
+                  result.max > 0 else { return }
+            guard let self, let model = self.devices.first(where: { $0.uid == uid }),
+                  model.bridgedDisplayID == displayID else { return }
+            let value = Double(result.current) / Double(result.max)
+            model.volume = value
+            self.settings.setLastVolume(value, for: uid)
         }
     }
 
