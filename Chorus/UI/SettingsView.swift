@@ -25,6 +25,7 @@ struct SettingsView: View {
 }
 
 private struct GeneralSettingsTab: View {
+    @Environment(AppState.self) private var appState
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -48,11 +49,34 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
+            if !appState.settings.hiddenAudioDevices.isEmpty {
+                Section("隱藏的音訊裝置") {
+                    ForEach(Array(appState.settings.hiddenAudioDevices).sorted(), id: \.self) { uid in
+                        HStack {
+                            Text(deviceName(for: uid))
+                            Spacer()
+                            Button("取消隱藏") {
+                                appState.settings.hiddenAudioDevices.remove(uid)
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                    Text("在選單列的音訊裝置上按右鍵可以隱藏；成為預設輸出時仍會顯示。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
         .onAppear {
             launchAtLogin = SMAppService.mainApp.status == .enabled
         }
+    }
+
+    /// 隱藏裝置目前在線時顯示名稱，否則顯示 UID 尾段。
+    private func deviceName(for uid: String) -> String {
+        appState.audioManager.devices.first { $0.uid == uid }?.name
+            ?? "未連接的裝置（\(uid.suffix(8))）"
     }
 }
 

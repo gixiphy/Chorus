@@ -49,7 +49,7 @@ struct MenuBarView: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(appState.audioManager.devices) { device in
+                    ForEach(appState.audioManager.visibleDevices) { device in
                         VolumeSliderRow(device: device, manager: appState.audioManager)
                     }
                 }

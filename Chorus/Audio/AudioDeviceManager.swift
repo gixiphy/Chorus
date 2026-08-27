@@ -22,6 +22,22 @@ final class AudioDeviceManager {
         devices.first(where: \.isDefault)
     }
 
+    /// 選單列顯示的裝置：排除使用者隱藏的；預設輸出永遠顯示（避免被劫走
+    /// 預設卻看不到是誰）。
+    var visibleDevices: [AudioDeviceModel] {
+        devices.filter { !settings.hiddenAudioDevices.contains($0.uid) || $0.isDefault }
+    }
+
+    func setHidden(_ hidden: Bool, for device: AudioDeviceModel) {
+        var set = settings.hiddenAudioDevices
+        if hidden { set.insert(device.uid) } else { set.remove(device.uid) }
+        settings.hiddenAudioDevices = set
+    }
+
+    func isHidden(_ device: AudioDeviceModel) -> Bool {
+        settings.hiddenAudioDevices.contains(device.uid)
+    }
+
     init(settings: SettingsStore, displayManager: DisplayManager) {
         self.settings = settings
         self.displayManager = displayManager

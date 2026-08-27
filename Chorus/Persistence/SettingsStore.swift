@@ -21,6 +21,7 @@ final class SettingsStore {
         static let ambientCurve = "chorus.ambient.curve"
         static let ambientDisplayOffsets = "chorus.ambient.displayOffsets"
         static let ambientDeviceOffset = "chorus.ambient.deviceOffset"
+        static let hiddenAudioDevices = "chorus.audio.hiddenDevices"
         static let advisorEngineID = "chorus.advisor.engineID"
         static let advisorCustomPaths = "chorus.advisor.customPaths"
         static let advisorConfirmed = "chorus.advisor.confirmed"
@@ -86,6 +87,12 @@ final class SettingsStore {
         didSet { defaults.set(ambientDeviceOffset, forKey: Key.ambientDeviceOffset) }
     }
 
+    /// 選單列不顯示的音訊裝置 UID（虛擬裝置如 Teams Audio 等）。
+    /// 僅影響清單顯示；成為預設輸出時仍會顯示。
+    var hiddenAudioDevices: Set<String> {
+        didSet { defaults.set(Array(hiddenAudioDevices), forKey: Key.hiddenAudioDevices) }
+    }
+
     /// 光環境顧問選定的分析引擎 id（已知 CLI 目錄的 id；預設 claude）。
     var advisorEngineID: String {
         didSet { defaults.set(advisorEngineID, forKey: Key.advisorEngineID) }
@@ -119,6 +126,7 @@ final class SettingsStore {
         }
         ambientDisplayOffsets = (defaults.dictionary(forKey: Key.ambientDisplayOffsets) as? [String: Double]) ?? [:]
         ambientDeviceOffset = defaults.object(forKey: Key.ambientDeviceOffset) as? Double ?? 0
+        hiddenAudioDevices = Set(defaults.stringArray(forKey: Key.hiddenAudioDevices) ?? [])
         advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"
         advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)

@@ -66,5 +66,12 @@ struct VolumeSliderRow: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .contextMenu {
+            if manager.isHidden(device) {
+                Button("取消隱藏此裝置") { manager.setHidden(false, for: device) }
+            } else {
+                Button("隱藏此裝置") { manager.setHidden(true, for: device) }
+            }
+        }
     }
 }
