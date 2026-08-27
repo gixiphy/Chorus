@@ -32,8 +32,8 @@ targets:
       properties:
         CFBundleDisplayName: Chorus
         CFBundleIconFile: Chorus
-        CFBundleShortVersionString: "1.1"
-        CFBundleVersion: "2"
+        CFBundleShortVersionString: "1.1.0"
+        CFBundleVersion: "4"
         LSUIElement: true
         NSLocalNetworkUsageDescription: Chorus 會在區域網路上尋找你的其他 Mac，以同步亮度與音量。
         NSBonjourServices:
