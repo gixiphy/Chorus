@@ -116,7 +116,13 @@ final class AudioDeviceManager {
         if device.canSetVolume {
             worker.setVolume(device.id, to: clamped)
         } else if let displayID = device.bridgedDisplayID {
-            displayManager?.ddc.write(displayID, vcp: DDCController.VCP.volume, value: UInt16((clamped * 100).rounded()))
+            // 螢幕可能處於 DDC 靜音（0x8D）而我們不知道——調音量＝想聽到聲音，
+            // 比照 macOS 語意一併送解除靜音（DDC 層的重複值去重讓它幾乎免費）
+            if !device.muted {
+                displayManager?.ddc.write(displayID, vcp: DDCController.VCP.mute, value: DDCController.MuteValue.unmuted)
+            }
+            let range = Double(Swift.max(device.bridgeVolumeMax, 1))
+            displayManager?.ddc.write(displayID, vcp: DDCController.VCP.volume, value: UInt16((clamped * range).rounded()))
             scheduleBridgeVerify(device: device, displayID: displayID, expected: clamped)
         }
     }
@@ -229,14 +235,21 @@ final class AudioDeviceManager {
         let displayID = display.id
         let uid = device.uid
         Task { [weak self] in
-            guard let ddc = self?.displayManager?.ddc,
-                  let result = await ddc.read(displayID, vcp: DDCController.VCP.volume),
-                  result.max > 0 else { return }
-            guard let self, let model = self.devices.first(where: { $0.uid == uid }),
-                  model.bridgedDisplayID == displayID else { return }
-            let value = Double(result.current) / Double(result.max)
-            model.volume = value
-            self.settings.setLastVolume(value, for: uid)
+            guard let ddc = self?.displayManager?.ddc else { return }
+            if let result = await ddc.read(displayID, vcp: DDCController.VCP.volume), result.max > 0 {
+                guard let self, let model = self.devices.first(where: { $0.uid == uid }),
+                      model.bridgedDisplayID == displayID else { return }
+                model.bridgeVolumeMax = result.max
+                let value = Double(result.current) / Double(result.max)
+                model.volume = value
+                self.settings.setLastVolume(value, for: uid)
+            }
+            // 靜音狀態也回讀（0x8D：1=靜音 2=未靜音），避免模型與螢幕脫鉤
+            if let muteResult = await ddc.read(displayID, vcp: DDCController.VCP.mute) {
+                guard let self, let model = self.devices.first(where: { $0.uid == uid }),
+                      model.bridgedDisplayID == displayID else { return }
+                model.muted = muteResult.current == DDCController.MuteValue.muted
+            }
         }
     }
 

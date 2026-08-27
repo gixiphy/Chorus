@@ -20,6 +20,9 @@ final class AudioDeviceModel: Identifiable {
     var bridgedDisplayID: CGDirectDisplayID?
     /// 寫後驗證讀值發現螢幕沒有套用音量指令（可能不支援 VCP 0x62）。
     var bridgeUnresponsive = false
+    /// 螢幕回報的音量值域上限（VCP 0x62 的 max；讀不到時假設 100）。
+    /// 有些螢幕不是 0–100，硬寫 0–100 會被忽略或夾錯。
+    var bridgeVolumeMax: UInt16 = 100
 
     var volume: Double
     var muted: Bool
