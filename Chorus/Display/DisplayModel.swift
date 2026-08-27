@@ -27,6 +27,10 @@ final class DisplayModel: Identifiable {
     /// （有螢幕用 255）；寫入一律以此縮放，不能假設 100。
     /// 讀不到（停用讀取）時依 MCCS 慣例取 100。
     let ddcBrightnessMax: UInt16
+    /// 對比 0–1（VCP 0x12）。nil = 讀不到（不支援、停用讀取或非 DDC）→ 不顯示對比 UI。
+    var contrast: Double?
+    /// VCP 0x12 值域上限（同亮度：以螢幕自報值縮放）。
+    let ddcContrastMax: UInt16
 
     func demoteToGammaOnly() {
         backend = .gammaOnly
@@ -45,7 +49,9 @@ final class DisplayModel: Identifiable {
         backend: BrightnessBackend,
         forceSoftwareDimming: Bool,
         brightness: Double,
-        ddcBrightnessMax: UInt16 = 100
+        ddcBrightnessMax: UInt16 = 100,
+        contrast: Double? = nil,
+        ddcContrastMax: UInt16 = 100
     ) {
         self.id = id
         self.uuid = uuid
@@ -55,6 +61,8 @@ final class DisplayModel: Identifiable {
         self.forceSoftwareDimming = forceSoftwareDimming
         self.brightness = brightness
         self.ddcBrightnessMax = max(ddcBrightnessMax, 1)
+        self.contrast = contrast
+        self.ddcContrastMax = max(ddcContrastMax, 1)
     }
 
     var hasHardwareControl: Bool {

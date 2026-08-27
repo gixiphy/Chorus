@@ -91,11 +91,12 @@ final class DisplayManager {
         let activeIDs = ids.prefix(Int(count)).filter { CGDisplayMirrorsDisplay($0) == kCGNullDirectDisplay }
 
         // 先分出 DisplayServices 可控的（內建與 Apple 顯示器），其餘嘗試 DDC
-        var classified: [(id: CGDirectDisplayID, backend: BrightnessBackend, probe: (current: UInt16, max: UInt16)?)] = []
+        typealias VCPProbe = (current: UInt16, max: UInt16)
+        var classified: [(id: CGDirectDisplayID, backend: BrightnessBackend, probe: VCPProbe?, contrastProbe: VCPProbe?)] = []
         var ddcCandidates: [CGDirectDisplayID] = []
         for id in activeIDs {
             if displayServices.canChangeBrightness(id) {
-                classified.append((id, .displayServices, nil))
+                classified.append((id, .displayServices, nil, nil))
             } else {
                 ddcCandidates.append(id)
             }
@@ -104,7 +105,7 @@ final class DisplayManager {
         guard !Task.isCancelled else { return }
         for id in ddcCandidates {
             guard ddcCapable.contains(id) else {
-                classified.append((id, .gammaOnly, nil))
+                classified.append((id, .gammaOnly, nil, nil))
                 continue
             }
             // Service 配對只代表 I2C 端點存在；Mac mini 內建 HDMI 這類路徑
@@ -113,20 +114,23 @@ final class DisplayManager {
             // 讀值同時是初始亮度與值域上限的來源（不重複打 I2C）。
             let uuid = Self.stableUUID(for: id)
             if settings.disableDDCRead.contains(uuid) {
-                classified.append((id, .ddc, nil))
+                classified.append((id, .ddc, nil, nil))
             } else if let probe = await ddc.read(id, vcp: DDCController.VCP.brightness), probe.max > 0 {
-                classified.append((id, .ddc, probe))
+                // 對比順手探（讀得到才有對比 UI；讀不到＝不支援 0x12，靜默略過）
+                let contrastProbe = await ddc.read(id, vcp: DDCController.VCP.contrast)
+                classified.append((id, .ddc, probe, contrastProbe))
             } else {
-                classified.append((id, .gammaOnly, nil))
+                classified.append((id, .gammaOnly, nil, nil))
             }
             guard !Task.isCancelled else { return }
         }
 
         var models: [DisplayModel] = []
-        for (id, backend, probe) in classified {
+        for (id, backend, probe, contrastProbe) in classified {
             let uuid = Self.stableUUID(for: id)
             let force = settings.forceSoftwareDimming.contains(uuid)
             let brightness = initialBrightness(id: id, uuid: uuid, backend: backend, probe: probe)
+            let contrast: Double? = contrastProbe.flatMap { $0.max > 0 ? Double($0.current) / Double($0.max) : nil }
             models.append(DisplayModel(
                 id: id,
                 uuid: uuid,
@@ -135,7 +139,9 @@ final class DisplayManager {
                 backend: backend,
                 forceSoftwareDimming: force,
                 brightness: brightness,
-                ddcBrightnessMax: probe?.max ?? 100
+                ddcBrightnessMax: probe?.max ?? 100,
+                contrast: contrast,
+                ddcContrastMax: contrastProbe?.max ?? 100
             ))
         }
         // 內建排最前，其餘依名稱
@@ -293,6 +299,40 @@ final class DisplayManager {
                 coordinator?.localBrightnessChanged(actual)
             }
         }
+    }
+
+    /// 切換輸入源（VCP 0x60）。切走後這台 Mac 通常會失去該螢幕——
+    /// 這是使用者要的效果（KVM 情境），不是錯誤。
+    /// one-shot：輸入源可能被螢幕按鈕或另一台機器改走，去重快取不可信。
+    func setInput(_ code: UInt16, for model: DisplayModel) {
+        guard model.backend == .ddc else { return }
+        ddc.write(model.id, vcp: DDCController.VCP.inputSource, value: code, oneShot: true)
+    }
+
+    /// 遙控切換指定顯示器的輸入源（UUID 不存在時 no-op）。
+    /// 這正是 KVM 的關鍵動作：螢幕被切到別台後，本機 UI 摸不到它，
+    /// 只有對方機器能把它切回來。
+    func applyInput(_ code: UInt16, toUUID uuid: String) {
+        guard let model = displays.first(where: { $0.uuid == uuid }) else { return }
+        setInput(code, for: model)
+    }
+
+    /// 對比 VCP 0x12（0–1，依螢幕自報值域縮放）。只在探測到對比的螢幕上有 UI。
+    func setContrast(_ value: Double, for model: DisplayModel) {
+        guard model.backend == .ddc else { return }
+        let clamped = min(max(value, 0), 1)
+        model.contrast = clamped
+        ddc.write(
+            model.id,
+            vcp: DDCController.VCP.contrast,
+            value: UInt16((clamped * Double(model.ddcContrastMax)).rounded())
+        )
+    }
+
+    /// 遙控設定指定顯示器的對比（UUID 不存在時 no-op）。
+    func applyContrast(_ value: Double, toUUID uuid: String) {
+        guard let model = displays.first(where: { $0.uuid == uuid }) else { return }
+        setContrast(value, for: model)
     }
 
     /// DDC 持續寫入失敗：降級為 gamma 軟體調光，讓 slider 立即恢復作用。

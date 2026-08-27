@@ -135,6 +135,37 @@ private struct DisplaySettingsTab: View {
                             set: { appState.displayManager.setForceSoftwareDimming($0, for: display) }
                         ))
                     }
+                    if display.backend == .ddc, display.contrast != nil {
+                        LabeledContent("對比") {
+                            Slider(
+                                value: Binding(
+                                    get: { display.contrast ?? 0.5 },
+                                    set: { appState.displayManager.setContrast($0, for: display) }
+                                ),
+                                in: 0...1
+                            )
+                            .frame(width: 130)
+                            Text(display.contrast ?? 0.5, format: .percent.precision(.fractionLength(0)))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                                .frame(width: 44, alignment: .trailing)
+                        }
+                    }
+                    if display.backend == .ddc {
+                        LabeledContent("輸入源") {
+                            Menu("切換…") {
+                                ForEach(InputSource.allCases) { source in
+                                    Button(source.label) {
+                                        appState.displayManager.setInput(source.rawValue, for: display)
+                                    }
+                                }
+                            }
+                            .frame(width: 150)
+                        }
+                        Text("切到別的輸入後，這台 Mac 會失去此螢幕——由接在該輸入的機器（或螢幕實體按鈕）才能切回來。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if display.backend == .ddc || display.backend == .gammaOnly {
                         Toggle("停用 DDC 讀取（讀取造成閃爍時開啟；將直接信任 DDC 寫入）", isOn: Binding(
                             get: { appState.settings.disableDDCRead.contains(display.uuid) },
@@ -206,6 +237,12 @@ private struct DDCDiagnosticsRow: View {
                 lines.append(line)
             }
             lines.append(format("亮度 0x10", diag.brightness))
+            lines.append(format("對比 0x12", diag.contrast))
+            if let input = diag.inputSource {
+                lines.append("輸入源 0x60：\(InputSource.describe(input.current))（raw \(input.current)）")
+            } else {
+                lines.append("輸入源 0x60：讀取失敗（螢幕不支援讀或通道不通）")
+            }
             lines.append(format("音量 0x62", diag.volume))
             lines.append(format("靜音 0x8D", diag.mute))
             let failures = diag.failureCounts.filter { $0.value > 0 }

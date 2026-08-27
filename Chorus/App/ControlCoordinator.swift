@@ -167,6 +167,13 @@ final class ControlCoordinator {
             audioManager?.applySyncedMute(value > 0.5)
         case let .mute(uid?):
             audioManager?.applyMute(value > 0.5, toUID: uid)
+        case let .input(uuid?):
+            // value 是 MCCS 輸入源代碼原值（非 0–1）
+            displayManager?.applyInput(UInt16(value.rounded()), toUUID: uuid)
+        case let .contrast(uuid?):
+            displayManager?.applyContrast(value, toUUID: uuid)
+        case .input(nil), .contrast(nil):
+            break // 語意層無意義（預留）
         }
     }
 
@@ -203,6 +210,8 @@ final class ControlCoordinator {
         switch key {
         case .brightness: settings.syncBrightnessEnabled
         case .volume, .mute: settings.syncVolumeEnabled
+        // command 專用鍵：不做狀態同步（executeCommand 仍會套用到硬體）
+        case .input, .contrast: false
         }
     }
 

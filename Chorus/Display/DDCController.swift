@@ -8,6 +8,8 @@ import Foundation
 final class DDCController: @unchecked Sendable {
     enum VCP {
         static let brightness: UInt8 = 0x10
+        static let contrast: UInt8 = 0x12
+        static let inputSource: UInt8 = 0x60
         static let volume: UInt8 = 0x62
         static let mute: UInt8 = 0x8D
     }
@@ -115,8 +117,14 @@ final class DDCController: @unchecked Sendable {
 
     /// 寫入 VCP 值。fire-and-forget：拖曳期間的連續值會合併，
     /// 依 §寫入節流參數 的規則稀疏寫出；與最後成功寫入相同的值完全不碰 I2C。
-    func write(_ displayID: CGDirectDisplayID, vcp: UInt8, value: UInt16) {
+    ///
+    /// `oneShot`：跳過「與最後寫入相同就不寫」的去重——輸入源這類動作型 VCP
+    /// 可能被外部改走（螢幕按鈕、另一台機器），我們的 lastWritten 不可信。
+    func write(_ displayID: CGDirectDisplayID, vcp: UInt8, value: UInt16, oneShot: Bool = false) {
         queue.async {
+            if oneShot {
+                self.lastWritten[displayID]?[vcp] = nil
+            }
             if self.lastWritten[displayID]?[vcp] == value {
                 // 值等同硬體現況：連 pending 都不用留（例如拖回原位、重複套用）
                 self.pendingWrites[displayID]?[vcp] = nil
@@ -192,7 +200,11 @@ final class DDCController: @unchecked Sendable {
                         break
                     } else {
                         pendingWrites[displayID]?[vcp] = nil
-                        audioFailureHandler?(displayID)
+                        // 只有音訊 VCP 的失敗才通知音量橋接；輸入源／對比失敗
+                        // 是各自的功能不支援，與橋接無關
+                        if vcp == VCP.volume || vcp == VCP.mute {
+                            audioFailureHandler?(displayID)
+                        }
                     }
                 }
             }
@@ -205,13 +217,15 @@ final class DDCController: @unchecked Sendable {
         let hasService: Bool
         let failureCounts: [UInt8: Int]
         let brightness: (current: UInt16, max: UInt16)?
+        let contrast: (current: UInt16, max: UInt16)?
+        let inputSource: (current: UInt16, max: UInt16)?
         let volume: (current: UInt16, max: UInt16)?
         let mute: (current: UInt16, max: UInt16)?
         /// IORegistry Transport（上游/下游）；DP→HDMI ＝ 轉換晶片、不透傳 DDC。
         let transport: (upstream: String, downstream: String)?
     }
 
-    /// 設定頁「DDC 診斷」：服務配對狀態＋三個 VCP 的讀值＋失敗計數。
+    /// 設定頁「DDC 診斷」：服務配對狀態＋五個 VCP 的讀值＋失敗計數。
     /// 純讀取，不寫入。
     func diagnostics(_ displayID: CGDirectDisplayID) async -> Diagnostics {
         let (hasService, failures, transport) = await withCheckedContinuation { continuation in
@@ -224,12 +238,16 @@ final class DDCController: @unchecked Sendable {
             }
         }
         let brightness = await read(displayID, vcp: VCP.brightness)
+        let contrast = await read(displayID, vcp: VCP.contrast)
+        let inputSource = await read(displayID, vcp: VCP.inputSource)
         let volume = await read(displayID, vcp: VCP.volume)
         let mute = await read(displayID, vcp: VCP.mute)
         return Diagnostics(
             hasService: hasService,
             failureCounts: failures,
             brightness: brightness,
+            contrast: contrast,
+            inputSource: inputSource,
             volume: volume,
             mute: mute,
             transport: transport

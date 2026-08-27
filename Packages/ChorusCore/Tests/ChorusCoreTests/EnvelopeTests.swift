@@ -12,6 +12,8 @@ struct EnvelopeTests {
             .hello(Hello(peerID: "A", deviceName: "Mac A", protocolVersion: 1, deviceKind: "mac", capabilities: ["als", "display"])),
             .stateUpdate(StateUpdate(originID: "A", seq: 1, hlc: hlc, key: .brightness(displayUUID: nil), value: 0.5)),
             .command(Command(key: .volume(deviceUID: "uid-1"), value: 0.3)),
+            .command(Command(key: .input(displayUUID: "uuid-1"), value: 17)),
+            .command(Command(key: .contrast(displayUUID: "uuid-1"), value: 0.75)),
             .fullState(FullState(entries: [.init(key: .mute(deviceUID: nil), value: 1, hlc: hlc)])),
             .ping(7),
             .pong(7),
@@ -55,6 +57,18 @@ struct EnvelopeTests {
             return
         }
         #expect(error == .malformed)
+    }
+
+    /// 新增的 command 專用鍵（input/contrast）：確認線上格式與可解性。
+    /// 舊版 peer 解不開這些 key 時走 malformed → 逐則丟棄（上面測試已覆蓋）。
+    @Test("Input/contrast command keys encode with associated UUID and raw value")
+    func inputContrastWireFormat() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(ControlKey.input(displayUUID: "u"))
+        #expect(String(data: data, encoding: .utf8) == #"{"input":{"displayUUID":"u"}}"#)
+        let decoded = try JSONDecoder().decode(ControlKey.self, from: data)
+        #expect(decoded == .input(displayUUID: "u"))
     }
 
     /// Golden JSON：鎖定 v1 既有訊息的線上格式。此測試若失敗，代表改動破壞了
