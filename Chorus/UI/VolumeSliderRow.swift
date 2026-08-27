@@ -55,6 +55,11 @@ struct VolumeSliderRow: View {
                     in: 0...1
                 )
                 .disabled(!device.isVolumeControllable)
+                .help(
+                    device.isVolumeControllable
+                        ? "調整音量"
+                        : "此裝置沒有軟體音量，且未橋接到可用的 DDC 螢幕（螢幕需支援 DDC/CI 音量）"
+                )
 
                 Image(systemName: "speaker.wave.3")
                     .imageScale(.small)

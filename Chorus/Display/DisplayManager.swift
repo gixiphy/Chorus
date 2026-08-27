@@ -21,6 +21,8 @@ final class DisplayManager {
     @ObservationIgnored private var pollerTask: Task<Void, Never>?
     @ObservationIgnored weak var coordinator: ControlCoordinator?
     @ObservationIgnored weak var autoController: AutoBrightnessController?
+    /// DDC 能力分類完成後回呼音訊層重算橋接（音訊 snapshot 常比 DDC 探測先到）。
+    @ObservationIgnored weak var audioManager: AudioDeviceManager?
 
     init(settings: SettingsStore) {
         self.settings = settings
@@ -103,6 +105,7 @@ final class DisplayManager {
             gamma.forget(old.id)
         }
         displays = models
+        audioManager?.refreshBridges()
     }
 
     /// 使用者透過 UI 設定亮度（會廣播同步）。value 0–1。
@@ -128,6 +131,27 @@ final class DisplayManager {
             model.brightness = clamped
             settings.setLastBrightness(clamped, for: model.uuid)
             apply(model)
+        }
+    }
+
+    /// 遙控命令：語意同本機手動調整——auto 受管的顯示器套用後學進差異值
+    /// （否則會被 applySyncedBrightness 的 auto 抑制吞掉、下一輪 auto 又拉回），
+    /// 非受管顯示器直接套用並廣播。
+    func applyCommandBrightness(_ value: Double) {
+        let clamped = min(max(value, 0), 1)
+        var appliedNonAuto = false
+        for model in displays {
+            model.brightness = clamped
+            settings.setLastBrightness(clamped, for: model.uuid)
+            apply(model)
+            if let autoController, autoController.isAutoActive(for: model.uuid) {
+                autoController.learnOffsetFromManualSet(uuid: model.uuid, value: clamped)
+            } else {
+                appliedNonAuto = true
+            }
+        }
+        if appliedNonAuto {
+            coordinator?.localBrightnessChanged(clamped)
         }
     }
 

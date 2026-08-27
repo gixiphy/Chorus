@@ -142,7 +142,27 @@ final class AudioDeviceManager {
                 updated.append(model)
             }
         }
-        // 內建優先、其次依名稱排序
+        devices = updated
+        refreshBridges()
+        sortDevices()
+    }
+
+    /// 重算所有無軟體音量裝置的 DDC 橋接。
+    /// 首次橋接常敗在時序：音訊 snapshot 比 DDC 能力探測先到，當時還沒有
+    /// 任何 .ddc 顯示器可配。DisplayManager 每次 refresh 完成後回呼這裡補配；
+    /// DDC 降級（gammaOnly）時也在此清掉失效的橋接。
+    func refreshBridges() {
+        for device in devices where !device.canSetVolume {
+            let target = bridgeTarget(forDeviceNamed: device.name)?.id
+            if device.bridgedDisplayID != target {
+                device.bridgedDisplayID = target
+            }
+        }
+    }
+
+    /// 內建優先、其次依名稱排序。
+    private func sortDevices() {
+        var updated = devices
         updated.sort { lhs, rhs in
             let lhsBuiltin = lhs.transportType == kAudioDeviceTransportTypeBuiltIn
             let rhsBuiltin = rhs.transportType == kAudioDeviceTransportTypeBuiltIn

@@ -61,6 +61,7 @@ final class AppState {
         pairing.localCapabilities = capabilities
 
         displayManager.autoController = autoBrightness
+        displayManager.audioManager = audioManager
         coordinator.attachAutoController(autoBrightness)
 
         displayManager.start()

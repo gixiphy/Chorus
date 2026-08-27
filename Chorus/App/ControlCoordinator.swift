@@ -114,7 +114,13 @@ final class ControlCoordinator {
     }
 
     /// 遙控指令：套用到本機，並以自己為 origin 廣播結果（其他 peer 跟著收斂）。
+    /// 語意層亮度另走命令路徑：auto 受管顯示器要學差異值而非被同步抑制吞掉，
+    /// 是否廣播由 DisplayManager 依受管狀態決定。
     private func executeCommand(_ command: Command) {
+        if case .brightness(nil) = command.key {
+            displayManager?.applyCommandBrightness(command.value)
+            return
+        }
         applyToHardware(key: command.key, value: command.value)
         broadcastLocalChange(key: command.key, value: command.value)
     }
