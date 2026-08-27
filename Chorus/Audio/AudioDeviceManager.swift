@@ -17,6 +17,8 @@ final class AudioDeviceManager {
 
     /// 我們自己剛寫入的值：snapshot 回報若與其相近則不覆蓋 UI（避免拖曳中跳動）。
     @ObservationIgnored private var recentLocalSets: [String: (value: Double, at: ContinuousClock.Instant)] = [:]
+    /// DDC 音量寫後驗證任務（每裝置一個，拖曳中重排程）。
+    @ObservationIgnored private var bridgeVerifyTasks: [String: Task<Void, Never>] = [:]
 
     var defaultDevice: AudioDeviceModel? {
         devices.first(where: \.isDefault)
@@ -102,6 +104,28 @@ final class AudioDeviceManager {
             worker.setVolume(device.id, to: clamped)
         } else if let displayID = device.bridgedDisplayID {
             displayManager?.ddc.write(displayID, vcp: DDCController.VCP.volume, value: UInt16((clamped * 100).rounded()))
+            scheduleBridgeVerify(device: device, displayID: displayID, expected: clamped)
+        }
+    }
+
+    /// 寫後驗證：拖曳結束 1.5 秒後回讀 VCP 0x62，分辨「橋接正常」與
+    /// 「螢幕不理音量指令（不支援 0x62）」——兩者在 UI 上完全看不出差別，
+    /// 只有讀值能戳破。讀不到（螢幕不支援讀）視為無定論、不標記。
+    private func scheduleBridgeVerify(device: AudioDeviceModel, displayID: CGDirectDisplayID, expected: Double) {
+        guard let displayManager,
+              let display = displayManager.displays.first(where: { $0.id == displayID }),
+              !settings.disableDDCRead.contains(display.uuid) else { return }
+        let uid = device.uid
+        bridgeVerifyTasks[uid]?.cancel()
+        bridgeVerifyTasks[uid] = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard !Task.isCancelled, let self else { return }
+            guard let result = await self.displayManager?.ddc.read(displayID, vcp: DDCController.VCP.volume),
+                  result.max > 0 else { return }
+            guard let model = self.devices.first(where: { $0.uid == uid }),
+                  model.bridgedDisplayID == displayID else { return }
+            let actual = Double(result.current) / Double(result.max)
+            model.bridgeUnresponsive = abs(actual - expected) > 0.08
         }
     }
 

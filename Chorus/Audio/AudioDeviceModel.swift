@@ -18,6 +18,8 @@ final class AudioDeviceModel: Identifiable {
 
     /// 無軟體音量時橋接到的 DDC 顯示器（nil 表示無法橋接，音量不可控）。
     var bridgedDisplayID: CGDirectDisplayID?
+    /// 寫後驗證讀值發現螢幕沒有套用音量指令（可能不支援 VCP 0x62）。
+    var bridgeUnresponsive = false
 
     var volume: Double
     var muted: Bool

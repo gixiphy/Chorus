@@ -72,18 +72,22 @@ struct VolumeSliderRow: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 38, alignment: .trailing)
             }
-            // 螢幕音訊沒有 CoreAudio 音量：媒體鍵接管開著時按鍵可用（不需提示）；
-            // 沒開才安靜地指路。無法橋接則說明音量不可控。
-            if device.isDefault, !device.canSetVolume {
+            // 螢幕音訊沒有 CoreAudio 音量：三種狀態各自說明——
+            // 無法橋接／螢幕不理指令（寫後驗證戳破）／可用但音量鍵未接管。
+            if !device.canSetVolume {
                 Group {
                     if device.bridgedDisplayID == nil {
-                        Text("此裝置沒有可控音量")
-                    } else if !appState.settings.mediaKeyCaptureEnabled {
+                        Text("螢幕的 DDC 不可用，音量無法控制")
+                            .foregroundStyle(.secondary)
+                    } else if device.bridgeUnresponsive {
+                        Text("螢幕未回應音量指令——可能不支援 DDC 音量（VCP 0x62）")
+                            .foregroundStyle(.orange)
+                    } else if device.isDefault, !appState.settings.mediaKeyCaptureEnabled {
                         Text("音量鍵對螢幕喇叭無效——設定 → 鍵盤媒體鍵可接管")
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .font(.caption2)
-                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 24)
             }
