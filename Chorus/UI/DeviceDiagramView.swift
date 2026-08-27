@@ -8,7 +8,6 @@ import UniformTypeIdentifiers
 struct DeviceDiagramView: View {
     @Environment(AppState.self) private var appState
     @State private var showingImporter = false
-    @State private var showingExtraImporter = false
     @State private var showingFirstUseConfirm = false
 
     var body: some View {
@@ -21,24 +20,18 @@ struct DeviceDiagramView: View {
             footer
         }
         .frame(minWidth: 560, minHeight: 400)
+        // 注意：同一個 view 只能掛一個 fileImporter（掛兩個只有一個會生效），
+        // 所以背景照與補充照共用同一次匯入：第一張當背景、其餘當補充視角。
         .fileImporter(
             isPresented: $showingImporter,
-            allowedContentTypes: [.image]
-        ) { result in
-            if case let .success(url) = result {
-                let accessing = url.startAccessingSecurityScopedResource()
-                appState.diagram.importBackground(from: url)
-                if accessing { url.stopAccessingSecurityScopedResource() }
-            }
-        }
-        .fileImporter(
-            isPresented: $showingExtraImporter,
             allowedContentTypes: [.image],
             allowsMultipleSelection: true
         ) { result in
-            if case let .success(urls) = result {
+            if case let .success(urls) = result, let first = urls.first {
                 let accessed = urls.filter { $0.startAccessingSecurityScopedResource() }
-                appState.advisor.importExtraPhotos(from: urls)
+                appState.diagram.importBackground(from: first)
+                appState.advisor.clearExtraPhotos()
+                appState.advisor.importExtraPhotos(from: Array(urls.dropFirst()))
                 for url in accessed { url.stopAccessingSecurityScopedResource() }
             }
         }
@@ -77,7 +70,11 @@ struct DeviceDiagramView: View {
                     .controlSize(.small)
             } else {
                 analyzeButton
-                extraPhotosControl
+                if !appState.advisor.extraPhotos.isEmpty {
+                    Text("含 \(appState.advisor.extraPhotos.count) 張補充照片")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if !appState.advisor.history.isEmpty {
                     Button("上次分析結果") { appState.advisor.showLatestHistory() }
                         .controlSize(.small)
@@ -93,30 +90,6 @@ struct DeviceDiagramView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-    }
-
-    /// 補充視角照片：與背景照一起送分析（上限共 4 張），給模型更多光源線索。
-    @ViewBuilder
-    private var extraPhotosControl: some View {
-        let count = appState.advisor.extraPhotos.count
-        Button {
-            showingExtraImporter = true
-        } label: {
-            Label(count > 0 ? "補充照片 \(count)" : "補充照片…", systemImage: "photo.on.rectangle.angled")
-        }
-        .controlSize(.small)
-        .disabled(count >= LightingAdvisor.maxPhotos - 1)
-        .help("加入其他視角或時段的桌面照片，隨背景照一起分析（最多共 \(LightingAdvisor.maxPhotos) 張）")
-        if count > 0 {
-            Button {
-                appState.advisor.clearExtraPhotos()
-            } label: {
-                Image(systemName: "xmark.circle")
-            }
-            .buttonStyle(.plain)
-            .controlSize(.small)
-            .help("清除全部補充照片")
-        }
     }
 
     @ViewBuilder
@@ -186,11 +159,15 @@ struct DeviceDiagramView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             if appState.diagram.backgroundImageURL != nil {
-                Button("移除照片") { appState.diagram.removeBackground() }
-                    .controlSize(.small)
+                Button("移除照片") {
+                    appState.diagram.removeBackground()
+                    appState.advisor.clearExtraPhotos()
+                }
+                .controlSize(.small)
             }
             Button("匯入桌面照片…") { showingImporter = true }
                 .controlSize(.small)
+                .help("可一次選多張（最多 \(LightingAdvisor.maxPhotos) 張）：第一張作為配置圖背景與座標基準，其餘為分析用補充視角")
         }
         .padding(10)
     }
