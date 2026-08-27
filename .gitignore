@@ -8,3 +8,6 @@ DerivedData/
 # 內部文件（交接、筆記）只留本機
 docs/
 .claude/
+
+# Build artifacts 打包產物
+dist/
