@@ -13,6 +13,8 @@ final class AppState {
     let sessionManager: SyncSessionManager
     let pairing: PairingController
     let coordinator: ControlCoordinator
+    let autoBrightness: AutoBrightnessController
+    let diagram: DiagramStore
 
     init(instance: InstanceConfig = .current) {
         self.instance = instance
@@ -33,8 +35,27 @@ final class AppState {
             displayManager: displayManager,
             audioManager: audioManager
         )
+        let sensor = AmbientLightSensorClient(fakeALS: instance.fakeALS, disabled: instance.disableALS)
+        autoBrightness = AutoBrightnessController(
+            localPeerID: instance.peerID,
+            settings: settings,
+            displayManager: displayManager,
+            sensor: sensor
+        )
+        diagram = DiagramStore(instance: instance)
+
+        // 能力（含 "als"）要在 sessionManager.start() 之前設定，Bonjour TXT 與 hello 才帶得到
+        var capabilities = ["display", "audio"]
+        if sensor.isAvailable { capabilities.append("als") }
+        sessionManager.localCapabilities = capabilities
+        pairing.localCapabilities = capabilities
+
+        displayManager.autoController = autoBrightness
+        coordinator.attachAutoController(autoBrightness)
+
         displayManager.start()
         audioManager.start()
         sessionManager.start()
+        autoBrightness.start()
     }
 }

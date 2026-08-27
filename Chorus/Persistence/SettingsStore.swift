@@ -1,3 +1,4 @@
+import ChorusCore
 import Foundation
 import Observation
 
@@ -15,6 +16,11 @@ final class SettingsStore {
         static let lastVolume = "chorus.audio.lastVolume"
         static let syncBrightness = "chorus.sync.brightness"
         static let syncVolume = "chorus.sync.volume"
+        static let autoBrightness = "chorus.ambient.autoBrightness"
+        static let ambientExcludedDisplays = "chorus.ambient.excludedDisplays"
+        static let ambientCurve = "chorus.ambient.curve"
+        static let ambientDisplayOffsets = "chorus.ambient.displayOffsets"
+        static let ambientDeviceOffset = "chorus.ambient.deviceOffset"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -47,6 +53,36 @@ final class SettingsStore {
         didSet { defaults.set(lastVolume, forKey: Key.lastVolume) }
     }
 
+    /// 自動亮度（環境光感器驅動）總開關。
+    var autoBrightnessEnabled: Bool {
+        didSet { defaults.set(autoBrightnessEnabled, forKey: Key.autoBrightness) }
+    }
+
+    /// 不參與自動亮度的顯示器 UUID。
+    var ambientExcludedDisplays: Set<String> {
+        didSet { defaults.set(Array(ambientExcludedDisplays), forKey: Key.ambientExcludedDisplays) }
+    }
+
+    /// lux → 亮度曲線參數。
+    var ambientCurve: AmbientCurve {
+        didSet {
+            if let data = try? JSONEncoder().encode(ambientCurve) {
+                defaults.set(data, forKey: Key.ambientCurve)
+            }
+        }
+    }
+
+    /// 各顯示器的亮度差異值（UUID → -0.5…+0.5），疊加在環境基準之上。
+    /// 自動模式下手動調整會「學」進這裡（配置圖也編輯同一份）。
+    var ambientDisplayOffsets: [String: Double] {
+        didSet { defaults.set(ambientDisplayOffsets, forKey: Key.ambientDisplayOffsets) }
+    }
+
+    /// 整機亮度差異值（-0.5…+0.5），peer 可經配置圖遠端調整。
+    var ambientDeviceOffset: Double {
+        didSet { defaults.set(ambientDeviceOffset, forKey: Key.ambientDeviceOffset) }
+    }
+
     init(defaults: UserDefaults) {
         self.defaults = defaults
         forceSoftwareDimming = Set(defaults.stringArray(forKey: Key.forceSoftwareDimming) ?? [])
@@ -55,6 +91,16 @@ final class SettingsStore {
         lastVolume = (defaults.dictionary(forKey: Key.lastVolume) as? [String: Double]) ?? [:]
         syncBrightnessEnabled = defaults.object(forKey: Key.syncBrightness) as? Bool ?? true
         syncVolumeEnabled = defaults.object(forKey: Key.syncVolume) as? Bool ?? true
+        autoBrightnessEnabled = defaults.object(forKey: Key.autoBrightness) as? Bool ?? false
+        ambientExcludedDisplays = Set(defaults.stringArray(forKey: Key.ambientExcludedDisplays) ?? [])
+        if let data = defaults.data(forKey: Key.ambientCurve),
+           let curve = try? JSONDecoder().decode(AmbientCurve.self, from: data) {
+            ambientCurve = curve
+        } else {
+            ambientCurve = AmbientCurve()
+        }
+        ambientDisplayOffsets = (defaults.dictionary(forKey: Key.ambientDisplayOffsets) as? [String: Double]) ?? [:]
+        ambientDeviceOffset = defaults.object(forKey: Key.ambientDeviceOffset) as? Double ?? 0
     }
 
     func lastBrightness(for uuid: String) -> Double? {

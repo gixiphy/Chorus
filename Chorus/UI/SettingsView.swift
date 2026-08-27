@@ -16,7 +16,7 @@ struct SettingsView: View {
                 SyncSettingsTab()
             }
         }
-        .frame(width: 460, height: 360)
+        .frame(width: 460, height: 420)
         .environment(appState)
     }
 }
@@ -55,6 +55,7 @@ private struct DisplaySettingsTab: View {
 
     var body: some View {
         Form {
+            AmbientCurveSection()
             if appState.displayManager.displays.isEmpty {
                 Text("找不到顯示器")
                     .foregroundStyle(.secondary)
@@ -65,6 +66,7 @@ private struct DisplaySettingsTab: View {
                         Text(backendLabel(display))
                             .foregroundStyle(.secondary)
                     }
+                    AmbientDisplayControls(displayUUID: display.uuid)
                     if display.backend != .gammaOnly {
                         Toggle("強制軟體調光", isOn: Binding(
                             get: { display.forceSoftwareDimming },
@@ -93,6 +95,101 @@ private struct DisplaySettingsTab: View {
         case .displayServices: "Apple 原生"
         case .gammaOnly: "軟體調光"
         }
+    }
+}
+
+/// 自動亮度總開關與曲線參數。
+private struct AmbientCurveSection: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        Section("自動亮度") {
+            Toggle("依環境光自動調整亮度", isOn: Binding(
+                get: { appState.settings.autoBrightnessEnabled },
+                set: { appState.autoBrightness.setAutoEnabled($0) }
+            ))
+            if !appState.autoBrightness.hasLocalSensor {
+                Text("這台 Mac 沒有光線感測器，將跟隨已配對裝置回報的環境光。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            LabeledContent("最暗亮度") {
+                Slider(
+                    value: Binding(
+                        get: { appState.settings.ambientCurve.minBrightness },
+                        set: { value in
+                            appState.settings.ambientCurve.minBrightness = value
+                            appState.autoBrightness.reapplyTargets()
+                        }
+                    ),
+                    in: 0...0.5
+                )
+                .frame(width: 160)
+                Text(appState.settings.ambientCurve.minBrightness, format: .percent.precision(.fractionLength(0)))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .frame(width: 44, alignment: .trailing)
+            }
+            LabeledContent("全亮環境光") {
+                Slider(
+                    value: Binding(
+                        get: { appState.settings.ambientCurve.maxLux },
+                        set: { value in
+                            appState.settings.ambientCurve.maxLux = value
+                            appState.autoBrightness.reapplyTargets()
+                        }
+                    ),
+                    in: 100...3000
+                )
+                .frame(width: 160)
+                Text("\(Int(appState.settings.ambientCurve.maxLux)) lx")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .frame(width: 56, alignment: .trailing)
+            }
+        }
+    }
+}
+
+/// 單一顯示器的自動亮度參與與差異值。
+private struct AmbientDisplayControls: View {
+    @Environment(AppState.self) private var appState
+    let displayUUID: String
+
+    var body: some View {
+        Toggle("參與自動亮度", isOn: Binding(
+            get: { !appState.settings.ambientExcludedDisplays.contains(displayUUID) },
+            set: { included in
+                var set = appState.settings.ambientExcludedDisplays
+                if included { set.remove(displayUUID) } else { set.insert(displayUUID) }
+                appState.settings.ambientExcludedDisplays = set
+                appState.autoBrightness.reapplyTargets()
+            }
+        ))
+        LabeledContent("亮度差異值") {
+            Slider(
+                value: Binding(
+                    get: { appState.settings.ambientDisplayOffsets[displayUUID] ?? 0 },
+                    set: { appState.autoBrightness.setDisplayOffset($0, for: displayUUID) }
+                ),
+                in: -0.5...0.5
+            )
+            .frame(width: 130)
+            Text(offsetLabel)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(width: 48, alignment: .trailing)
+            Button("重設") {
+                appState.autoBrightness.setDisplayOffset(0, for: displayUUID)
+            }
+            .controlSize(.small)
+            .disabled((appState.settings.ambientDisplayOffsets[displayUUID] ?? 0) == 0)
+        }
+    }
+
+    private var offsetLabel: String {
+        let offset = appState.settings.ambientDisplayOffsets[displayUUID] ?? 0
+        return String(format: "%+.0f%%", offset * 100)
     }
 }
 

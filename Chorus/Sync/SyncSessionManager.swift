@@ -3,7 +3,6 @@ import ChorusCore
 import Foundation
 import Network
 import Observation
-
 /// full-mesh 成員管理：探索已配對裝置、建立/接受 TLS-PSK 連線、hello 驗證、
 /// 斷線重撥（指數退避）。連線去重規則：peerID 字典序較小者當撥號方。
 @MainActor
@@ -45,6 +44,10 @@ final class SyncSessionManager {
     @ObservationIgnored var envelopeHandler: ((_ peerID: String, _ envelope: Envelope) -> Void)?
     /// 新 session 建立（hello 完成）時通知上層，用於互換 fullState。
     @ObservationIgnored var sessionEstablishedHandler: ((_ peerID: String) -> Void)?
+    /// Session 關閉時通知上層（環境光來源 failover 用）。
+    @ObservationIgnored var sessionClosedHandler: ((_ peerID: String) -> Void)?
+    /// 本機能力（hello 與 Bonjour TXT 用；AppState 在 start() 前設定）。
+    @ObservationIgnored var localCapabilities: [String] = ["display", "audio"]
 
     var localPeerID: String { instance.peerID }
 
@@ -149,7 +152,9 @@ final class SyncSessionManager {
             peerID: instance.peerID,
             deviceName: instance.deviceDisplayName,
             psks: psks,
-            fixedPort: instance.syncListenPort
+            fixedPort: instance.syncListenPort,
+            deviceKind: "mac",
+            capabilities: localCapabilities
         )
         for peer in pairedPeers.peers {
             if connectionStates[peer.peerID] == nil {
@@ -260,11 +265,13 @@ final class SyncSessionManager {
     // MARK: - Session（hello 交換與 envelope 迴圈）
 
     private func beginSession(_ connection: PeerConnection) {
-        Task { [instance] in
+        Task { [instance, localCapabilities] in
             let myHello = Hello(
                 peerID: instance.peerID,
                 deviceName: instance.deviceDisplayName,
-                protocolVersion: ChorusProtocol.version
+                protocolVersion: ChorusProtocol.version,
+                deviceKind: "mac",
+                capabilities: localCapabilities
             )
             try? await connection.send(Envelope(msg: .hello(myHello)))
 
@@ -307,6 +314,12 @@ final class SyncSessionManager {
         redialDelay[peerID] = nil
         lastHeard[peerID] = ContinuousClock.now
         updateActivityKeeper()
+        pairedPeers.updateMetadata(
+            peerID: peerID,
+            deviceName: hello.deviceName,
+            deviceKind: hello.deviceKind,
+            capabilities: hello.capabilities
+        )
         sessionEstablishedHandler?(peerID)
         return true
     }
@@ -317,6 +330,7 @@ final class SyncSessionManager {
         connections[peerID] = nil
         connectionStates[peerID] = .disconnected
         updateActivityKeeper()
+        sessionClosedHandler?(peerID)
         scheduleRedial(peerID)
     }
 

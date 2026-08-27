@@ -38,36 +38,40 @@ final class FramedNWConnection: @unchecked Sendable {
         }
     }
 
-    /// 啟動並等待 ready。TLS 握手失敗、被拒或逾時（local network 權限被拒是
-    /// 靜默丟包，表象即卡 waiting）都會丟錯。
+    /// 啟動並等待 ready。TLS 握手失敗、被拒或逾時都會丟錯。
+    ///
+    /// `.waiting` 一律視為立即失敗：loopback 連線被拒、local network 權限被拒
+    /// 都會停在 waiting 且沒有「網路路徑變化」可觸發自動恢復——失敗後交給
+    /// 上層的重撥退避。逾時用 watchdog cancel 連線（cancel 保證 state handler
+    /// resume，continuation 不會懸掛）。
     func start(timeout: Duration = .seconds(10)) async throws {
         let connection = connection
         let queue = queue
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                    let box = ResumeOnce(continuation)
-                    connection.stateUpdateHandler = { state in
-                        switch state {
-                        case .ready:
-                            box.resume(.success(()))
-                        case let .failed(error):
-                            box.resume(.failure(error))
-                        case .cancelled:
-                            box.resume(.failure(NWError.posix(.ECANCELED)))
-                        default:
-                            break
-                        }
-                    }
-                    connection.start(queue: queue)
+        let watchdog = Task {
+            try? await Task.sleep(for: timeout)
+            if !Task.isCancelled {
+                connection.cancel()
+            }
+        }
+        defer { watchdog.cancel() }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            let box = ResumeOnce(continuation)
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    box.resume(.success(()))
+                case let .failed(error):
+                    box.resume(.failure(error))
+                case .cancelled:
+                    box.resume(.failure(NWError.posix(.ECANCELED)))
+                case let .waiting(error):
+                    box.resume(.failure(error))
+                    connection.cancel()
+                default:
+                    break
                 }
             }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw PeerConnectionError.timeout
-            }
-            defer { group.cancelAll() }
-            try await group.next()
+            connection.start(queue: queue)
         }
         // ready 之後改為監聽斷線
         connection.stateUpdateHandler = { [weak self] state in
@@ -132,11 +136,6 @@ final class FramedNWConnection: @unchecked Sendable {
             _ = isComplete
         }
     }
-}
-
-enum PeerConnectionError: Error {
-    case timeout
-    case closed
 }
 
 /// CheckedContinuation 只允許 resume 一次；NW state handler 可能多次觸發。

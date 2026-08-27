@@ -13,6 +13,10 @@ struct InstanceConfig: Sendable {
     let syncListenPort: UInt16?
     /// 配對 listener 的固定 port。
     let pairListenPort: UInt16?
+    /// 模擬光感器（僅 DEBUG build 生效；無感器機器與同機 E2E 測試用）。
+    let fakeALS: Bool
+    /// 停用光感器（僅 DEBUG build 生效；在有感器的機器上模擬桌機 follower）。
+    let disableALS: Bool
 
     init(arguments: [String]) {
         func value(after flag: String) -> String? {
@@ -22,6 +26,8 @@ struct InstanceConfig: Sendable {
         name = value(after: "--instance")
         syncListenPort = value(after: "--listen-port").flatMap(UInt16.init)
         pairListenPort = value(after: "--pair-port").flatMap(UInt16.init)
+        fakeALS = arguments.contains("--fake-als")
+        disableALS = arguments.contains("--no-als")
     }
 
     private static let baseIdentifier = Bundle.main.bundleIdentifier ?? "com.hermes.Chorus"

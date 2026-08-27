@@ -23,13 +23,27 @@ public struct PairHello: Codable, Sendable, Equatable {
     /// 同步 listener 的固定 port（有值表示這台使用手動端點模式，
     /// 對方應記錄 host:port 作為 mDNS 之外的連線 fallback）。
     public let syncPort: Int?
+    /// 裝置類型："mac"；未來 iOS 伴侶 App 為 "iphone"/"ipad"。舊版無此欄 → nil。
+    public let deviceKind: String?
+    /// 能力清單（如 ["als","display","audio"]）。配對時即可知對方能力。
+    public let capabilities: [String]?
 
-    public init(peerID: String, deviceName: String, publicKey: Data, protocolVersion: Int, syncPort: Int? = nil) {
+    public init(
+        peerID: String,
+        deviceName: String,
+        publicKey: Data,
+        protocolVersion: Int,
+        syncPort: Int? = nil,
+        deviceKind: String? = nil,
+        capabilities: [String]? = nil
+    ) {
         self.peerID = peerID
         self.deviceName = deviceName
         self.publicKey = publicKey
         self.protocolVersion = protocolVersion
         self.syncPort = syncPort
+        self.deviceKind = deviceKind
+        self.capabilities = capabilities
     }
 }
 

@@ -19,6 +19,7 @@ final class ControlCoordinator {
     @ObservationIgnored private weak var sessionManager: SyncSessionManager?
     @ObservationIgnored private weak var displayManager: DisplayManager?
     @ObservationIgnored private weak var audioManager: AudioDeviceManager?
+    @ObservationIgnored private weak var autoController: AutoBrightnessController?
 
     init(
         localPeerID: String,
@@ -39,8 +40,19 @@ final class ControlCoordinator {
         sessionManager.sessionEstablishedHandler = { [weak self] peerID in
             self?.sessionEstablished(peerID)
         }
+        sessionManager.sessionClosedHandler = { [weak self] peerID in
+            self?.autoController?.peerDisconnected(peerID)
+        }
         displayManager.coordinator = self
         audioManager.coordinator = self
+    }
+
+    /// AppState 組裝時注入自動亮度控制器，並接上環境光回報的廣播管道。
+    func attachAutoController(_ controller: AutoBrightnessController) {
+        autoController = controller
+        controller.broadcastHandler = { [weak self] report in
+            self?.sessionManager?.broadcast(Envelope(msg: .ambientReport(report)))
+        }
     }
 
     // MARK: - 本地變更（UI 或硬體事件）
@@ -76,6 +88,10 @@ final class ControlCoordinator {
             apply(engine.receiveFullState(full, wallNowMicros: now))
         case let .command(command):
             executeCommand(command)
+        case let .ambientReport(report):
+            autoController?.receiveRemoteBaseline(report)
+        case let .setDeviceOffset(command):
+            autoController?.setDeviceOffset(command.offset)
         case .hello, .ping, .pong:
             break
         }
@@ -83,8 +99,18 @@ final class ControlCoordinator {
 
     private func sessionEstablished(_ peerID: String) {
         let snapshot = engine.fullStateSnapshot()
-        guard !snapshot.entries.isEmpty else { return }
-        sessionManager?.send(Envelope(msg: .fullState(snapshot)), to: peerID)
+        if !snapshot.entries.isEmpty {
+            sessionManager?.send(Envelope(msg: .fullState(snapshot)), to: peerID)
+        }
+        // 本機是環境光來源時補發最新回報，讓剛連上的 follower 立即收斂
+        if let report = autoController?.latestLocalReport() {
+            sessionManager?.send(Envelope(msg: .ambientReport(report)), to: peerID)
+        }
+    }
+
+    /// 配置圖：調整某個 peer 的整機亮度差異值。
+    func sendDeviceOffset(to peerID: String, offset: Double) {
+        sessionManager?.send(Envelope(msg: .setDeviceOffset(DeviceOffsetCommand(offset: offset))), to: peerID)
     }
 
     /// 遙控指令：套用到本機，並以自己為 origin 廣播結果（其他 peer 跟著收斂）。

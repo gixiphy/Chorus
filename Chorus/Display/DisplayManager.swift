@@ -20,6 +20,7 @@ final class DisplayManager {
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var pollerTask: Task<Void, Never>?
     @ObservationIgnored weak var coordinator: ControlCoordinator?
+    @ObservationIgnored weak var autoController: AutoBrightnessController?
 
     init(settings: SettingsStore) {
         self.settings = settings
@@ -105,18 +106,25 @@ final class DisplayManager {
     }
 
     /// 使用者透過 UI 設定亮度（會廣播同步）。value 0–1。
+    /// 自動亮度管理中的顯示器：改為差異值學習，不廣播（auto 受管顯示器不發 .brightness）。
     func setBrightness(_ value: Double, for model: DisplayModel) {
         let clamped = min(max(value, 0), 1)
         model.brightness = clamped
         settings.setLastBrightness(clamped, for: model.uuid)
         apply(model)
+        if let autoController, autoController.isAutoActive(for: model.uuid) {
+            autoController.learnOffsetFromManualSet(uuid: model.uuid, value: clamped)
+            return
+        }
         coordinator?.localBrightnessChanged(clamped)
     }
 
     /// 遠端同步套用：所有顯示器設為同一亮度。**不**觸發廣播。
+    /// 自動亮度管理中的顯示器不套用（auto 受管顯示器不收 .brightness）。
     func applySyncedBrightness(_ value: Double) {
         let clamped = min(max(value, 0), 1)
         for model in displays {
+            if let autoController, autoController.isAutoActive(for: model.uuid) { continue }
             model.brightness = clamped
             settings.setLastBrightness(clamped, for: model.uuid)
             apply(model)
@@ -194,6 +202,14 @@ final class DisplayManager {
         for model in displays where model.backend == .displayServices {
             guard let actual = displayServices.brightness(for: model.id) else { continue }
             if abs(actual - model.brightness) > 0.005 {
+                // 自動亮度管理中：交給 controller 對帳（自身寫入收斂 vs 使用者按鍵
+                // → 差異值學習），兩種情況都只更新 model、不廣播。
+                if let autoController,
+                   autoController.handleExternalBrightnessChange(uuid: model.uuid, actual: actual) {
+                    model.brightness = actual
+                    settings.setLastBrightness(actual, for: model.uuid)
+                    continue
+                }
                 model.brightness = actual
                 settings.setLastBrightness(actual, for: model.uuid)
                 coordinator?.localBrightnessChanged(actual)

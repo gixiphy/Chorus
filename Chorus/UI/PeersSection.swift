@@ -12,6 +12,14 @@ struct PeersSection: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
+                    openWindow(id: "diagram")
+                } label: {
+                    Image(systemName: "rectangle.3.group")
+                        .imageScale(.small)
+                }
+                .buttonStyle(.plain)
+                .help("裝置配置圖")
+                Button {
                     openWindow(id: "pairing")
                 } label: {
                     Image(systemName: "plus.circle")

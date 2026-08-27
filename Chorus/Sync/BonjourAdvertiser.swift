@@ -23,7 +23,9 @@ final class BonjourAdvertiser: @unchecked Sendable {
         peerID: String,
         deviceName: String,
         psks: [(identity: String, psk: Data)],
-        fixedPort: UInt16? = nil
+        fixedPort: UInt16? = nil,
+        deviceKind: String = "mac",
+        capabilities: [String] = []
     ) {
         queue.async { [self] in
             listener?.cancel()
@@ -45,6 +47,10 @@ final class BonjourAdvertiser: @unchecked Sendable {
                     txt["v"] = "\(ChorusProtocol.version)"
                     txt["pid"] = peerID
                     txt["name"] = deviceName
+                    txt["kind"] = deviceKind
+                    if !capabilities.isEmpty {
+                        txt["caps"] = capabilities.joined(separator: ",")
+                    }
                     newListener.service = NWListener.Service(
                         name: "\(deviceName)-\(peerID.prefix(8))",
                         type: ChorusProtocol.serviceType,

@@ -30,6 +30,11 @@ struct ChorusApp: App {
                 .environment(appState)
         }
         .windowResizability(.contentSize)
+
+        Window("裝置配置", id: "diagram") {
+            DeviceDiagramView()
+                .environment(appState)
+        }
     }
 }
 

@@ -40,6 +40,8 @@ final class PairingController {
     @ObservationIgnored private let instance: InstanceConfig
     @ObservationIgnored private let pairedPeers: PairedPeersStore
     @ObservationIgnored private weak var sessionManager: SyncSessionManager?
+    /// 本機能力（PairHello 用；AppState 組裝時設定）。
+    @ObservationIgnored var localCapabilities: [String] = ["display", "audio"]
 
     @ObservationIgnored private let listenerQueue = DispatchQueue(label: "com.hermes.Chorus.pairing")
     @ObservationIgnored private var listener: NWListener?
@@ -128,7 +130,9 @@ final class PairingController {
                     deviceName: instance.deviceDisplayName,
                     publicKey: key.publicKey.rawRepresentation,
                     protocolVersion: ChorusProtocol.version,
-                    syncPort: instance.syncListenPort.map(Int.init)
+                    syncPort: instance.syncListenPort.map(Int.init),
+                    deviceKind: "mac",
+                    capabilities: self?.localCapabilities
                 )
                 try await framed.send(PairingMessageCoding.encode(.request(hello)))
                 self?.consume(framed)
@@ -153,7 +157,9 @@ final class PairingController {
                     deviceName: instance.deviceDisplayName,
                     publicKey: key.publicKey.rawRepresentation,
                     protocolVersion: ChorusProtocol.version,
-                    syncPort: instance.syncListenPort.map(Int.init)
+                    syncPort: instance.syncListenPort.map(Int.init),
+                    deviceKind: "mac",
+                    capabilities: self?.localCapabilities
                 )
                 try await channel.send(PairingMessageCoding.encode(.response(hello)))
                 self?.deriveAndShowSAS(remotePublicKey: remoteHello.publicKey)
@@ -314,7 +320,9 @@ final class PairingController {
                 peerID: remoteHello.peerID,
                 deviceName: remoteHello.deviceName,
                 pairedAt: Date(),
-                manualEndpoint: manualEndpoint
+                manualEndpoint: manualEndpoint,
+                deviceKind: remoteHello.deviceKind,
+                capabilities: remoteHello.capabilities
             ),
             psk: secrets.psk
         )

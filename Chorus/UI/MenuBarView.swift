@@ -36,6 +36,8 @@ struct MenuBarView: View {
                 }
             }
 
+            AutoBrightnessRow()
+
             Divider()
 
             Text("音訊輸出")
@@ -68,6 +70,44 @@ struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 300)
+    }
+}
+
+/// 自動亮度開關與環境光狀態列。
+private struct AutoBrightnessRow: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(isOn: Binding(
+                get: { appState.settings.autoBrightnessEnabled },
+                set: { appState.autoBrightness.setAutoEnabled($0) }
+            )) {
+                Label("自動亮度", systemImage: "sun.max.circle")
+                    .font(.callout)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            Text(statusCaption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 2)
+        }
+    }
+
+    private var statusCaption: String {
+        let auto = appState.autoBrightness
+        if auto.hasLocalSensor {
+            if let lux = auto.currentLux {
+                return "目前環境光 \(Int(lux.rounded())) lx"
+            }
+            return appState.settings.autoBrightnessEnabled ? "讀取環境光中…" : "使用本機光線感測器"
+        }
+        if let sourceID = auto.baselineSourceID, let lux = auto.baselineLux {
+            let name = appState.pairedPeers.peers.first { $0.peerID == sourceID }?.deviceName ?? "其他裝置"
+            return "跟隨 \(name) · \(Int(lux.rounded())) lx"
+        }
+        return "無光線感測器 — 等待其他裝置回報"
     }
 }
 

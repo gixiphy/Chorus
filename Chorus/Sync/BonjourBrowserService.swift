@@ -8,6 +8,10 @@ struct DiscoveredPeer: Sendable {
     let name: String
     let endpoint: NWEndpoint
     let protocolVersion: Int
+    /// 裝置類型（TXT "kind"；舊版沒有 → nil）。
+    let deviceKind: String?
+    /// 能力清單（TXT "caps"，逗號分隔；舊版沒有 → nil）。
+    let capabilities: [String]?
 }
 
 /// 瀏覽 `_chorus._tcp`，以 TXT 中的 peerID 去重並過濾自己。
@@ -47,7 +51,9 @@ final class BonjourBrowserService: @unchecked Sendable {
                         peerID: peerID,
                         name: txt["name"] ?? "",
                         endpoint: result.endpoint,
-                        protocolVersion: version
+                        protocolVersion: version,
+                        deviceKind: txt["kind"],
+                        capabilities: txt["caps"].map { $0.split(separator: ",").map(String.init) }
                     )
                 }
                 self?.discoveriesContinuation.yield(peers)

@@ -69,6 +69,17 @@ final class TestHooks {
                let device = appState.audioManager.defaultDevice {
                 appState.audioManager.setVolume(value, for: device)
             }
+        case "setAutoBrightness":
+            if let value = info["value"] {
+                appState.autoBrightness.setAutoEnabled(value == "1")
+            }
+        case "injectLux":
+            if let value = info["value"].flatMap(Double.init) {
+                appState.autoBrightness.injectLux(value)
+            }
+        case "excludeAllAuto":
+            // 同機 E2E：讓這個實例只回報 lux、不寫實體螢幕（兩實例共用同一片硬體）
+            appState.settings.ambientExcludedDisplays = Set(appState.displayManager.displays.map(\.uuid))
         default:
             break
         }
@@ -127,6 +138,15 @@ final class TestHooks {
                     "isDefault": device.isDefault,
                 ] as [String: Any]
             },
+            "ambient": [
+                "autoEnabled": appState.settings.autoBrightnessEnabled,
+                "hasLocalSensor": appState.autoBrightness.hasLocalSensor,
+                "currentLux": appState.autoBrightness.currentLux.map { $0 as Any } ?? NSNull(),
+                "baselineLux": appState.autoBrightness.baselineLux.map { $0 as Any } ?? NSNull(),
+                "baselineSource": appState.autoBrightness.baselineSourceID.map { $0 as Any } ?? NSNull(),
+                "displayOffsets": appState.settings.ambientDisplayOffsets,
+                "deviceOffset": appState.settings.ambientDeviceOffset,
+            ] as [String: Any],
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dump, options: [.sortedKeys]) {
             try? data.write(to: url, options: .atomic)

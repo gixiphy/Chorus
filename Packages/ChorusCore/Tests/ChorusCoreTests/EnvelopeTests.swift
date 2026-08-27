@@ -9,11 +9,14 @@ struct EnvelopeTests {
         let hlc = HLCTimestamp(wallMicros: 1, counter: 0, peerID: "A")
         let messages: [SyncMessage] = [
             .hello(Hello(peerID: "A", deviceName: "Mac A", protocolVersion: 1)),
+            .hello(Hello(peerID: "A", deviceName: "Mac A", protocolVersion: 1, deviceKind: "mac", capabilities: ["als", "display"])),
             .stateUpdate(StateUpdate(originID: "A", seq: 1, hlc: hlc, key: .brightness(displayUUID: nil), value: 0.5)),
             .command(Command(key: .volume(deviceUID: "uid-1"), value: 0.3)),
             .fullState(FullState(entries: [.init(key: .mute(deviceUID: nil), value: 1, hlc: hlc)])),
             .ping(7),
             .pong(7),
+            .ambientReport(AmbientReport(originID: "A", hlc: hlc, lux: 420.5)),
+            .setDeviceOffset(DeviceOffsetCommand(offset: -0.2)),
         ]
         for message in messages {
             let data = try EnvelopeCoding.encode(Envelope(msg: message))
@@ -52,5 +55,88 @@ struct EnvelopeTests {
             return
         }
         #expect(error == .malformed)
+    }
+
+    /// Golden JSON：鎖定 v1 既有訊息的線上格式。此測試若失敗，代表改動破壞了
+    /// 與舊版 peer 的相容性（ControlKey/StateUpdate/FullState 本里程碑凍結）。
+    @Test("Golden JSON: v1 stateUpdate/fullState wire format is frozen")
+    func goldenWireFormat() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let hlc = HLCTimestamp(wallMicros: 1, counter: 0, peerID: "A")
+
+        let update = Envelope(msg: .stateUpdate(
+            StateUpdate(originID: "A", seq: 1, hlc: hlc, key: .brightness(displayUUID: nil), value: 0.5)
+        ))
+        #expect(
+            String(data: try encoder.encode(update), encoding: .utf8) ==
+            #"{"msg":{"stateUpdate":{"_0":{"hlc":{"counter":0,"peerID":"A","wallMicros":1},"key":{"brightness":{}},"originID":"A","seq":1,"value":0.5}}},"v":1}"#
+        )
+
+        let full = Envelope(msg: .fullState(
+            FullState(entries: [.init(key: .mute(deviceUID: nil), value: 1, hlc: hlc)])
+        ))
+        #expect(
+            String(data: try encoder.encode(full), encoding: .utf8) ==
+            #"{"msg":{"fullState":{"_0":{"entries":[{"hlc":{"counter":0,"peerID":"A","wallMicros":1},"key":{"mute":{}},"value":1}]}}},"v":1}"#
+        )
+    }
+
+    @Test("Hello without new optional fields decodes with nils (old peer compat)")
+    func helloMissingOptionalFields() {
+        let json = #"{"v":1,"msg":{"hello":{"_0":{"deviceName":"Mac B","peerID":"B","protocolVersion":1}}}}"#
+        guard case let .success(envelope) = EnvelopeCoding.decode(Data(json.utf8)),
+              case let .hello(hello) = envelope.msg
+        else {
+            Issue.record("expected hello")
+            return
+        }
+        #expect(hello.deviceKind == nil)
+        #expect(hello.capabilities == nil)
+    }
+
+    @Test("Hello with unknown extra fields still decodes (future compat)")
+    func helloUnknownExtraFields() {
+        let json = #"{"v":1,"msg":{"hello":{"_0":{"deviceName":"Mac B","peerID":"B","protocolVersion":1,"futureField":"x"}}}}"#
+        guard case let .success(envelope) = EnvelopeCoding.decode(Data(json.utf8)),
+              case let .hello(hello) = envelope.msg
+        else {
+            Issue.record("expected hello")
+            return
+        }
+        #expect(hello.peerID == "B")
+    }
+}
+
+@Suite("PairHello compat")
+struct PairHelloCompatTests {
+    @Test("PairHello without new optional fields decodes with nils")
+    func missingOptionalFields() {
+        let json = #"{"request":{"_0":{"peerID":"B","deviceName":"Mac B","publicKey":"","protocolVersion":1}}}"#
+        guard case let .request(hello) = PairingMessageCoding.decode(Data(json.utf8)) else {
+            Issue.record("expected request")
+            return
+        }
+        #expect(hello.deviceKind == nil)
+        #expect(hello.capabilities == nil)
+        #expect(hello.syncPort == nil)
+    }
+
+    @Test("PairHello with new fields round-trips")
+    func roundTripWithFields() throws {
+        let hello = PairHello(
+            peerID: "A",
+            deviceName: "Mac A",
+            publicKey: Data([1, 2, 3]),
+            protocolVersion: 1,
+            deviceKind: "mac",
+            capabilities: ["als", "display", "audio"]
+        )
+        let data = try PairingMessageCoding.encode(.response(hello))
+        guard case let .response(decoded) = PairingMessageCoding.decode(data) else {
+            Issue.record("expected response")
+            return
+        }
+        #expect(decoded == hello)
     }
 }
