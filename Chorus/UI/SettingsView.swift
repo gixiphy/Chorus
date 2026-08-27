@@ -263,6 +263,7 @@ private struct DDCDiagnosticsRow: View {
                     .sorted()
                     .joined(separator: "、"))
             }
+            lines.append(contentsOf: troubleshootingHints(diag))
             result = lines.joined(separator: "\n")
             running = false
         }
@@ -271,6 +272,26 @@ private struct DDCDiagnosticsRow: View {
     private func format(_ name: String, _ value: (current: UInt16, max: UInt16)?) -> String {
         if let value { return "\(name)：\(value.current)／max \(value.max)" }
         return "\(name)：讀取失敗（螢幕不支援讀或通道不通）"
+    }
+
+    /// 硬體怪癖知識庫（B1/B2 實測累積）：依讀值與失敗計數給對症提示。
+    private func troubleshootingHints(_ diag: DDCController.Diagnostics) -> [String] {
+        var hints: [String] = []
+        let anyReadable = [diag.brightness, diag.contrast, diag.inputSource, diag.volume, diag.mute]
+            .contains { $0 != nil }
+        if diag.hasService, !anyReadable {
+            // 實測（Mac mini 內建 HDMI × Q34E2G5）：I2C 端點在、寫入被 ACK、
+            // 讀取全滅＝轉換晶片本地假成功，螢幕實際收不到指令
+            hints.append("▲ 讀取全滅但服務存在：寫入很可能是「假成功」（轉換晶片本地 ACK、不透傳）。改用 DP／USB-C 直連，或螢幕若有第二輸入埠可換埠。")
+        }
+        let volumeWriteFailures = diag.failureCounts[DDCController.VCP.volume] ?? 0
+        if diag.brightness != nil, diag.volume == nil || volumeWriteFailures > 0 {
+            hints.append("▲ 亮度可用但音量 0x62 不通：此螢幕不支援 DDC 音量。可在選單列該音訊裝置上按右鍵標記「不支援 DDC 音量」，滑桿會誠實停用。")
+        }
+        if diag.hasService, anyReadable {
+            hints.append("ⓘ 若拖曳滑桿後畫面雪花／訊號異常：部分螢幕的 scaler 承受不了連續 I2C 寫入（已內建節流）。復發時開啟「強制軟體調光」並保留此診斷輸出回報。")
+        }
+        return hints
     }
 }
 
