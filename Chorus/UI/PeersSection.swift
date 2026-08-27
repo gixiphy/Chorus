@@ -86,12 +86,14 @@ struct PeersSection: View {
 }
 
 /// 遙控已連線 peer 的亮度與音量（送出絕對值 command）。
+/// 初始位置來自最後已知值（對方的 stateUpdate/fullState 與我們送過的指令）。
 private struct PeerRemoteControls: View {
     @Environment(AppState.self) private var appState
     let peerID: String
 
     @State private var brightness = 0.5
     @State private var volume = 0.5
+    @State private var didLoadKnown = false
 
     private var brightnessBinding: Binding<Double> {
         Binding {
@@ -145,5 +147,13 @@ private struct PeerRemoteControls: View {
             }
         }
         .padding(.leading, 13)
+        .onAppear {
+            guard !didLoadKnown else { return }
+            didLoadKnown = true
+            if let known = appState.settings.peerKnownControls[peerID] {
+                if let value = known["brightness"] { brightness = value }
+                if let value = known["volume"] { volume = value }
+            }
+        }
     }
 }

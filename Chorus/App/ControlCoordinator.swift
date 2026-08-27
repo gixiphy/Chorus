@@ -75,6 +75,21 @@ final class ControlCoordinator {
 
     func sendRemoteCommand(to peerID: String, key: ControlKey, value: Double) {
         sessionManager?.send(Envelope(msg: .command(Command(key: key, value: value))), to: peerID)
+        recordPeerKnown(peerID: peerID, key: key, value: value)
+    }
+
+    /// 記住 peer 最後已知的語意層數值（遙控滑桿初始位置用；跨重啟保留）。
+    private func recordPeerKnown(peerID: String, key: ControlKey, value: Double) {
+        let field: String
+        switch key {
+        case .brightness(nil): field = "brightness"
+        case .volume(nil): field = "volume"
+        default: return
+        }
+        var known = settings.peerKnownControls[peerID] ?? [:]
+        guard known[field] != value else { return }
+        known[field] = value
+        settings.peerKnownControls[peerID] = known
     }
 
     // MARK: - 遠端訊息
@@ -83,8 +98,12 @@ final class ControlCoordinator {
         let now = Self.wallNowMicros()
         switch envelope.msg {
         case let .stateUpdate(update):
+            recordPeerKnown(peerID: peerID, key: update.key, value: update.value)
             apply(engine.receive(update, wallNowMicros: now))
         case let .fullState(full):
+            for entry in full.entries {
+                recordPeerKnown(peerID: peerID, key: entry.key, value: entry.value)
+            }
             apply(engine.receiveFullState(full, wallNowMicros: now))
         case let .command(command):
             executeCommand(command)

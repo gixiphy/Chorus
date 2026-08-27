@@ -22,6 +22,7 @@ final class SettingsStore {
         static let ambientDisplayOffsets = "chorus.ambient.displayOffsets"
         static let ambientDeviceOffset = "chorus.ambient.deviceOffset"
         static let hiddenAudioDevices = "chorus.audio.hiddenDevices"
+        static let peerKnownControls = "chorus.peer.knownControls"
         static let advisorEngineID = "chorus.advisor.engineID"
         static let advisorCustomPaths = "chorus.advisor.customPaths"
         static let advisorConfirmed = "chorus.advisor.confirmed"
@@ -93,6 +94,13 @@ final class SettingsStore {
         didSet { defaults.set(Array(hiddenAudioDevices), forKey: Key.hiddenAudioDevices) }
     }
 
+    /// 各 peer 最後已知的語意層數值（peerID → {"brightness"/"volume" → 0–1}）。
+    /// 來源：對方的 stateUpdate/fullState 與我們送出的遙控指令；
+    /// 遙控滑桿以此初始化，跨重啟保留（不需要 iCloud——值走既有同步通道）。
+    var peerKnownControls: [String: [String: Double]] {
+        didSet { defaults.set(peerKnownControls, forKey: Key.peerKnownControls) }
+    }
+
     /// 光環境顧問選定的分析引擎 id（已知 CLI 目錄的 id；預設 claude）。
     var advisorEngineID: String {
         didSet { defaults.set(advisorEngineID, forKey: Key.advisorEngineID) }
@@ -127,6 +135,7 @@ final class SettingsStore {
         ambientDisplayOffsets = (defaults.dictionary(forKey: Key.ambientDisplayOffsets) as? [String: Double]) ?? [:]
         ambientDeviceOffset = defaults.object(forKey: Key.ambientDeviceOffset) as? Double ?? 0
         hiddenAudioDevices = Set(defaults.stringArray(forKey: Key.hiddenAudioDevices) ?? [])
+        peerKnownControls = (defaults.dictionary(forKey: Key.peerKnownControls) as? [String: [String: Double]]) ?? [:]
         advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"
         advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)

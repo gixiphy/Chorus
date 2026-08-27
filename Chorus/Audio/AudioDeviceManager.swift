@@ -133,7 +133,9 @@ final class AudioDeviceManager {
             let isDefault = info.id == snapshot.defaultDeviceID
             if let existing = devices.first(where: { $0.uid == info.uid }) {
                 existing.isDefault = isDefault
-                if !shouldPreserveLocalValue(uid: info.uid, reported: info.volume) {
+                // 橋接裝置（無 CoreAudio 音量）的 snapshot 值無意義（恆為 0），
+                // model 由 DDC 路徑維護——不能讓任何音訊事件把滑桿蓋成 0。
+                if info.canSetVolume, !shouldPreserveLocalValue(uid: info.uid, reported: info.volume) {
                     // 非本 App 寫入造成的變更（媒體鍵、其他 App）→ 視為本地硬體事件
                     let changed = abs(existing.volume - info.volume) > 0.005
                     existing.volume = info.volume
@@ -141,7 +143,7 @@ final class AudioDeviceManager {
                         coordinator?.localVolumeChanged(info.volume)
                     }
                 }
-                if existing.muted != info.muted {
+                if info.hasMute, existing.muted != info.muted {
                     existing.muted = info.muted
                     if isDefault {
                         coordinator?.localMuteChanged(info.muted)
