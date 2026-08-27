@@ -23,6 +23,7 @@ final class SettingsStore {
         static let ambientDeviceOffset = "chorus.ambient.deviceOffset"
         static let hiddenAudioDevices = "chorus.audio.hiddenDevices"
         static let mediaKeyCapture = "chorus.mediaKeys.enabled"
+        static let audioBridgeDisabled = "chorus.audio.bridgeDisabled"
         static let peerKnownControls = "chorus.peer.knownControls"
         static let advisorEngineID = "chorus.advisor.engineID"
         static let advisorCustomPaths = "chorus.advisor.customPaths"
@@ -95,6 +96,12 @@ final class SettingsStore {
         didSet { defaults.set(Array(hiddenAudioDevices), forKey: Key.hiddenAudioDevices) }
     }
 
+    /// 使用者標記「螢幕不支援 DDC 音量」的音訊裝置 UID：不再嘗試橋接，
+    /// 滑桿誠實地停用（實測 Q34E2G5 亮度支援 0x10 但音量 0x62 寫讀皆不通）。
+    var audioBridgeDisabled: Set<String> {
+        didSet { defaults.set(Array(audioBridgeDisabled), forKey: Key.audioBridgeDisabled) }
+    }
+
     /// 媒體鍵接管（需輔助使用權限，預設關閉）。只在 macOS 原生處理走不通的
     /// 情境接手：螢幕喇叭音量鍵、無內建螢幕機器的亮度鍵。
     var mediaKeyCaptureEnabled: Bool {
@@ -143,6 +150,7 @@ final class SettingsStore {
         ambientDeviceOffset = defaults.object(forKey: Key.ambientDeviceOffset) as? Double ?? 0
         hiddenAudioDevices = Set(defaults.stringArray(forKey: Key.hiddenAudioDevices) ?? [])
         mediaKeyCaptureEnabled = defaults.bool(forKey: Key.mediaKeyCapture)
+        audioBridgeDisabled = Set(defaults.stringArray(forKey: Key.audioBridgeDisabled) ?? [])
         peerKnownControls = (defaults.dictionary(forKey: Key.peerKnownControls) as? [String: [String: Double]]) ?? [:]
         advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"
         advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]

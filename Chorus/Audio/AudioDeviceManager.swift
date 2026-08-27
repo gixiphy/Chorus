@@ -40,6 +40,19 @@ final class AudioDeviceManager {
         settings.hiddenAudioDevices.contains(device.uid)
     }
 
+    /// 標記／取消「此螢幕不支援 DDC 音量」（右鍵選單）。
+    func setBridgeDisabled(_ disabled: Bool, for device: AudioDeviceModel) {
+        var set = settings.audioBridgeDisabled
+        if disabled { set.insert(device.uid) } else { set.remove(device.uid) }
+        settings.audioBridgeDisabled = set
+        device.bridgeUnresponsive = false
+        refreshBridges()
+    }
+
+    func isBridgeDisabled(_ device: AudioDeviceModel) -> Bool {
+        settings.audioBridgeDisabled.contains(device.uid)
+    }
+
     init(settings: SettingsStore, displayManager: DisplayManager) {
         self.settings = settings
         self.displayManager = displayManager
@@ -195,7 +208,10 @@ final class AudioDeviceManager {
     /// DDC 降級（gammaOnly）時也在此清掉失效的橋接。
     func refreshBridges() {
         for device in devices where !device.canSetVolume {
-            let target = bridgeTarget(forDeviceNamed: device.name)
+            // 使用者標記不支援 DDC 音量 → 不橋接，滑桿誠實停用
+            let target = settings.audioBridgeDisabled.contains(device.uid)
+                ? nil
+                : bridgeTarget(forDeviceNamed: device.name)
             if device.bridgedDisplayID != target?.id {
                 let isNewBridge = device.bridgedDisplayID == nil
                 device.bridgedDisplayID = target?.id

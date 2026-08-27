@@ -76,7 +76,10 @@ struct VolumeSliderRow: View {
             // 無法橋接／螢幕不理指令（寫後驗證戳破）／可用但音量鍵未接管。
             if !device.canSetVolume {
                 Group {
-                    if device.bridgedDisplayID == nil {
+                    if manager.isBridgeDisabled(device) {
+                        Text("已標記為不支援 DDC 音量（右鍵可重新啟用）")
+                            .foregroundStyle(.secondary)
+                    } else if device.bridgedDisplayID == nil {
                         Text("螢幕的 DDC 不可用，音量無法控制")
                             .foregroundStyle(.secondary)
                     } else if device.bridgeUnresponsive {
@@ -97,6 +100,13 @@ struct VolumeSliderRow: View {
                 Button("取消隱藏此裝置") { manager.setHidden(false, for: device) }
             } else {
                 Button("隱藏此裝置") { manager.setHidden(true, for: device) }
+            }
+            if !device.canSetVolume {
+                if manager.isBridgeDisabled(device) {
+                    Button("重新啟用 DDC 音量橋接") { manager.setBridgeDisabled(false, for: device) }
+                } else {
+                    Button("標記此螢幕不支援 DDC 音量") { manager.setBridgeDisabled(true, for: device) }
+                }
             }
         }
     }
