@@ -124,6 +124,11 @@ private struct PeerRemoteControls: View {
                     .frame(width: 16)
                 Slider(value: brightnessBinding, in: 0...1)
                     .controlSize(.mini)
+                Text(brightness, format: .percent.precision(.fractionLength(0)))
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, alignment: .trailing)
             }
             HStack(spacing: 8) {
                 Image(systemName: "speaker.wave.2")
@@ -132,6 +137,11 @@ private struct PeerRemoteControls: View {
                     .frame(width: 16)
                 Slider(value: volumeBinding, in: 0...1)
                     .controlSize(.mini)
+                Text(volume, format: .percent.precision(.fractionLength(0)))
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, alignment: .trailing)
             }
         }
         .padding(.leading, 13)

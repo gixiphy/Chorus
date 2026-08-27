@@ -46,6 +46,11 @@ struct DisplaySliderRow: View {
                 Image(systemName: "sun.max")
                     .imageScale(.small)
                     .foregroundStyle(.secondary)
+                Text(model.brightness, format: .percent.precision(.fractionLength(0)))
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 38, alignment: .trailing)
             }
         }
     }

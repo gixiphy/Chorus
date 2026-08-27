@@ -64,6 +64,11 @@ struct VolumeSliderRow: View {
                 Image(systemName: "speaker.wave.3")
                     .imageScale(.small)
                     .foregroundStyle(.secondary)
+                Text(device.volume, format: .percent.precision(.fractionLength(0)))
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 38, alignment: .trailing)
             }
         }
         .contextMenu {
