@@ -2,6 +2,8 @@ import SwiftUI
 
 struct MenuBarView: View {
     @Environment(AppState.self) private var appState
+    /// 暫時展開被隱藏的音訊裝置（右鍵可取消隱藏）；關閉選單不保留。
+    @State private var showHiddenDevices = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -49,9 +51,24 @@ struct MenuBarView: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(appState.audioManager.visibleDevices) { device in
+                    ForEach(listedAudioDevices) { device in
                         VolumeSliderRow(device: device, manager: appState.audioManager)
+                            .opacity(appState.audioManager.isHidden(device) ? 0.55 : 1)
                     }
+                }
+                if hiddenCount > 0 {
+                    Button {
+                        showHiddenDevices.toggle()
+                    } label: {
+                        Label(
+                            showHiddenDevices ? "收合隱藏的裝置" : "顯示 \(hiddenCount) 個隱藏裝置",
+                            systemImage: showHiddenDevices ? "eye.slash" : "eye"
+                        )
+                        .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("展開後在裝置上按右鍵可取消隱藏")
                 }
             }
 
@@ -70,6 +87,14 @@ struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 300)
+    }
+
+    private var hiddenCount: Int {
+        appState.audioManager.devices.count - appState.audioManager.visibleDevices.count
+    }
+
+    private var listedAudioDevices: [AudioDeviceModel] {
+        showHiddenDevices ? appState.audioManager.devices : appState.audioManager.visibleDevices
     }
 }
 
