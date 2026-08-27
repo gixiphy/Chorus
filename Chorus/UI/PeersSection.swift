@@ -130,7 +130,7 @@ private struct PeerRemoteControls: View {
                     .font(.caption2)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
-                    .frame(width: 34, alignment: .trailing)
+                    .frame(width: 38, alignment: .trailing)
             }
             HStack(spacing: 8) {
                 Image(systemName: "speaker.wave.2")
@@ -143,7 +143,7 @@ private struct PeerRemoteControls: View {
                     .font(.caption2)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
-                    .frame(width: 34, alignment: .trailing)
+                    .frame(width: 38, alignment: .trailing)
             }
         }
         .padding(.leading, 13)
