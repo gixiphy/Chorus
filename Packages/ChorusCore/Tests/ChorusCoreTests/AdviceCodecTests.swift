@@ -77,11 +77,28 @@ func cliPromptAssembly() {
     )
     let prompt = AdvicePrompt.cliPrompt(
         context: context,
-        photoPath: "/tmp/desk.jpg",
+        photoPaths: ["/tmp/desk.jpg"],
         readInstruction: "用 Read 工具讀取後再分析"
     )
     #expect(prompt.contains(AdvicePrompt.systemPrompt))
     #expect(prompt.contains("id=display:AAA"))
     #expect(prompt.contains("桌面照片：/tmp/desk.jpg（用 Read 工具讀取後再分析）"))
     #expect(prompt.contains(AdvicePrompt.toolInputSchemaJSON))
+}
+
+@Test("cliPrompt：多張照片列編號清單，標注第一張為背景照")
+func cliPromptMultiPhoto() {
+    let context = AdviceContext(
+        displays: [.init(id: "display:AAA", name: "內建", backend: "displayServices")],
+        curve: AmbientCurve()
+    )
+    let prompt = AdvicePrompt.cliPrompt(
+        context: context,
+        photoPaths: ["/tmp/a.jpg", "/tmp/b.jpg", "/tmp/c.jpg"],
+        readInstruction: "用 Read 工具讀取後再分析"
+    )
+    #expect(prompt.contains("桌面照片共 3 張"))
+    #expect(prompt.contains("第 1 張是配置圖背景照"))
+    #expect(prompt.contains("1. /tmp/a.jpg"))
+    #expect(prompt.contains("3. /tmp/c.jpg"))
 }

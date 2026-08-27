@@ -104,17 +104,28 @@ public enum AdvicePrompt {
     /// API forced tool_use 在 CLI 情境改為「指示＋本地驗證」——schema 常數同源，
     /// `sanitized(for:)` 仍是最後防線。`readInstruction` 由引擎決定
     /// （claude 有 Read 工具，其他 CLI 用通用措辭）。
+    /// 多張照片：第一張是配置圖背景照（節點座標以它為準），其餘是補充視角。
     public static func cliPrompt(
         context: AdviceContext,
-        photoPath: String,
+        photoPaths: [String],
         readInstruction: String
     ) -> String {
-        """
+        let photoLines: String
+        if photoPaths.count <= 1 {
+            photoLines = "桌面照片：\(photoPaths.first ?? "(無)")（\(readInstruction)）"
+        } else {
+            var lines = ["桌面照片共 \(photoPaths.count) 張（\(readInstruction)；第 1 張是配置圖背景照，顯示器座標以它為準，其餘為補充視角）："]
+            for (index, path) in photoPaths.enumerated() {
+                lines.append("\(index + 1). \(path)")
+            }
+            photoLines = lines.joined(separator: "\n")
+        }
+        return """
         \(systemPrompt)
 
         \(contextDescription(context))
 
-        桌面照片：\(photoPath)（\(readInstruction)）
+        \(photoLines)
 
         只輸出一個 JSON 物件（不要 markdown fence、不要其他文字），必須符合以下 JSON Schema：
         \(toolInputSchemaJSON)

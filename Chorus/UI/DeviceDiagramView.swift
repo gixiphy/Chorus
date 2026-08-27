@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 struct DeviceDiagramView: View {
     @Environment(AppState.self) private var appState
     @State private var showingImporter = false
+    @State private var showingExtraImporter = false
     @State private var showingFirstUseConfirm = false
 
     var body: some View {
@@ -28,6 +29,17 @@ struct DeviceDiagramView: View {
                 let accessing = url.startAccessingSecurityScopedResource()
                 appState.diagram.importBackground(from: url)
                 if accessing { url.stopAccessingSecurityScopedResource() }
+            }
+        }
+        .fileImporter(
+            isPresented: $showingExtraImporter,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: true
+        ) { result in
+            if case let .success(urls) = result {
+                let accessed = urls.filter { $0.startAccessingSecurityScopedResource() }
+                appState.advisor.importExtraPhotos(from: urls)
+                for url in accessed { url.stopAccessingSecurityScopedResource() }
             }
         }
         .sheet(item: $advisor.result) { result in
@@ -65,6 +77,7 @@ struct DeviceDiagramView: View {
                     .controlSize(.small)
             } else {
                 analyzeButton
+                extraPhotosControl
                 if !appState.advisor.history.isEmpty {
                     Button("上次分析結果") { appState.advisor.showLatestHistory() }
                         .controlSize(.small)
@@ -80,6 +93,30 @@ struct DeviceDiagramView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+    }
+
+    /// 補充視角照片：與背景照一起送分析（上限共 4 張），給模型更多光源線索。
+    @ViewBuilder
+    private var extraPhotosControl: some View {
+        let count = appState.advisor.extraPhotos.count
+        Button {
+            showingExtraImporter = true
+        } label: {
+            Label(count > 0 ? "補充照片 \(count)" : "補充照片…", systemImage: "photo.on.rectangle.angled")
+        }
+        .controlSize(.small)
+        .disabled(count >= LightingAdvisor.maxPhotos - 1)
+        .help("加入其他視角或時段的桌面照片，隨背景照一起分析（最多共 \(LightingAdvisor.maxPhotos) 張）")
+        if count > 0 {
+            Button {
+                appState.advisor.clearExtraPhotos()
+            } label: {
+                Image(systemName: "xmark.circle")
+            }
+            .buttonStyle(.plain)
+            .controlSize(.small)
+            .help("清除全部補充照片")
+        }
     }
 
     @ViewBuilder

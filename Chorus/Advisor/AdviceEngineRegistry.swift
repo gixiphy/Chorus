@@ -9,9 +9,11 @@ struct KnownCLIEngine: Identifiable, Sendable {
     let executableName: String
     let displayName: String
     let codec: AdviceOutputCodec
-    /// agy 的非 TTY bug：PTY transport 落地（接入層 E1）前標「待接入」不可選。
-    let requiresPTY: Bool
-    /// headless／讀圖行為尚未驗證（gemini/codex）：可選，標「實驗性」。
+    /// 接入尚未打通（接入層 E1 處理）前標「待接入」不可選。
+    /// agy 現況（1.1.7 實測）：pipe 輸出正常（舊 PTY bug 已修），
+    /// 但 headless 權限規則下 read_file 讀圖拿不到輸出，vision 流程未通。
+    let pendingIntegration: Bool
+    /// headless／讀圖行為尚未驗證（codex）：可選，標「實驗性」。
     let experimental: Bool
     /// 給 prompt 的照片讀取措辭（claude 有 Read 工具，其他用通用措辭）。
     let readInstruction: String
@@ -22,8 +24,6 @@ struct KnownCLIEngine: Identifiable, Sendable {
         switch id {
         case "claude":
             (["-p", "--output-format", "json", "--allowedTools", "Read"], prompt)
-        case "gemini":
-            (["-p", prompt], nil)
         case "codex":
             (["exec", prompt], nil)
         default:
@@ -31,26 +31,23 @@ struct KnownCLIEngine: Identifiable, Sendable {
         }
     }
 
+    /// Gemini CLI 不在目錄中：Google 已於 2026-06-18 停用（個人帳號停止服務），
+    /// 官方遷移目標即 Antigravity CLI（agy）。
     static let catalog: [KnownCLIEngine] = [
         KnownCLIEngine(
             id: "claude", executableName: "claude", displayName: "Claude Code",
-            codec: .jsonEnvelope, requiresPTY: false, experimental: false,
+            codec: .jsonEnvelope, pendingIntegration: false, experimental: false,
             readInstruction: "用 Read 工具讀取後再分析"
         ),
         KnownCLIEngine(
             id: "agy", executableName: "agy", displayName: "Antigravity",
-            codec: .plainStdout, requiresPTY: true, experimental: false,
-            readInstruction: "請先讀取這張照片再分析"
-        ),
-        KnownCLIEngine(
-            id: "gemini", executableName: "gemini", displayName: "Gemini CLI",
-            codec: .plainStdout, requiresPTY: false, experimental: true,
-            readInstruction: "請先讀取這張照片再分析"
+            codec: .plainStdout, pendingIntegration: true, experimental: false,
+            readInstruction: "請先讀取照片再分析"
         ),
         KnownCLIEngine(
             id: "codex", executableName: "codex", displayName: "Codex CLI",
-            codec: .plainStdout, requiresPTY: false, experimental: true,
-            readInstruction: "請先讀取這張照片再分析"
+            codec: .plainStdout, pendingIntegration: false, experimental: true,
+            readInstruction: "請先讀取照片再分析"
         ),
     ]
 }
@@ -65,8 +62,8 @@ final class AdviceEngineRegistry {
         let url: URL
         var version: String?
         var id: String { engine.id }
-        /// PTY 需求未落地的引擎偵測到也不可選。
-        var selectable: Bool { !engine.requiresPTY }
+        /// 接入未打通的引擎偵測到也不可選。
+        var selectable: Bool { !engine.pendingIntegration }
     }
 
     private(set) var detected: [DetectedEngine] = []

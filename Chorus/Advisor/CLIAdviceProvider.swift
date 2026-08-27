@@ -10,15 +10,20 @@ enum CLIProcessRunner {
         let stderr: String
     }
 
-    /// 白名單環境（PATH/HOME/TERM）；PATH 前置執行檔目錄，讓 CLI 找得到自帶 runtime。
+    /// 白名單環境；PATH 前置執行檔目錄，讓 CLI 找得到自帶 runtime。
+    /// USER 必要：claude CLI 靠它查 Keychain 憑證，缺了會誤報「未登入」。
     static func whitelistedEnvironment(executableDirectory: String) -> [String: String] {
         let inherited = ProcessInfo.processInfo.environment
         let basePath = inherited["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        return [
+        var environment = [
             "PATH": "\(executableDirectory):\(basePath):/opt/homebrew/bin:/usr/local/bin",
             "HOME": inherited["HOME"] ?? NSHomeDirectory(),
             "TERM": inherited["TERM"] ?? "xterm-256color",
+            "USER": inherited["USER"] ?? NSUserName(),
+            "LOGNAME": inherited["LOGNAME"] ?? NSUserName(),
         ]
+        if let tmpdir = inherited["TMPDIR"] { environment["TMPDIR"] = tmpdir }
+        return environment
     }
 
     /// 執行到結束；逾時或取消都 terminate 子行程。
@@ -140,10 +145,10 @@ struct CLIAdviceProvider: LightingAdviceProvider {
     let executable: URL
     var timeout: Duration = .seconds(120)
 
-    func advise(photoPath: String, context: AdviceContext) async throws -> LightingAdvice {
+    func advise(photoPaths: [String], context: AdviceContext) async throws -> LightingAdvice {
         let basePrompt = AdvicePrompt.cliPrompt(
             context: context,
-            photoPath: photoPath,
+            photoPaths: photoPaths,
             readInstruction: engine.readInstruction
         )
         do {

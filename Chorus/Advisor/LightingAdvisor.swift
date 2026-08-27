@@ -67,6 +67,50 @@ final class LightingAdvisor {
             directory = directory.appendingPathComponent("instance-\(name)", isDirectory: true)
         }
         historyURL = directory.appendingPathComponent("advisor-history.json")
+        extraPhotosDirectory = directory.appendingPathComponent("advisor-extra-photos", isDirectory: true)
+        loadExtraPhotos()
+    }
+
+    // MARK: - 補充照片（多角度；第一張分析照恆為配置圖背景照）
+
+    /// 補充視角照片（不含背景照）。持久化於 Application Support。
+    private(set) var extraPhotos: [URL] = []
+    @ObservationIgnored private let extraPhotosDirectory: URL
+    /// 背景照＋補充照的總數上限（控制 CLI 呼叫成本）。
+    static let maxPhotos = 4
+
+    func importExtraPhotos(from sources: [URL]) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: extraPhotosDirectory, withIntermediateDirectories: true)
+        for source in sources {
+            guard extraPhotos.count < Self.maxPhotos - 1 else { break }
+            let ext = source.pathExtension.isEmpty ? "png" : source.pathExtension
+            let destination = extraPhotosDirectory.appendingPathComponent("\(UUID().uuidString).\(ext)")
+            if (try? fm.copyItem(at: source, to: destination)) != nil {
+                extraPhotos.append(destination)
+            }
+        }
+    }
+
+    func clearExtraPhotos() {
+        for url in extraPhotos {
+            try? FileManager.default.removeItem(at: url)
+        }
+        extraPhotos = []
+    }
+
+    private func loadExtraPhotos() {
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: extraPhotosDirectory, includingPropertiesForKeys: [.creationDateKey]
+        )) ?? []
+        extraPhotos = contents
+            .sorted { url, other in
+                let a = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+                let b = (try? other.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+                return a < b
+            }
+            .prefix(Self.maxPhotos - 1)
+            .map { $0 }
     }
 
     // MARK: - 分析
@@ -86,14 +130,14 @@ final class LightingAdvisor {
             return
         }
         let provider = CLIAdviceProvider(engine: engine.engine, executable: engine.url)
-        run(provider: provider, photoURL: photoURL)
+        run(provider: provider, photoURLs: [photoURL] + extraPhotos)
     }
 
     func cancelAnalysis() {
         analysisTask?.cancel()
     }
 
-    private func run(provider: any LightingAdviceProvider, photoURL: URL?) {
+    private func run(provider: any LightingAdviceProvider, photoURLs: [URL]) {
         isAnalyzing = true
         lastErrorMessage = nil
         let context = buildContext()
@@ -102,22 +146,21 @@ final class LightingAdvisor {
                 self?.isAnalyzing = false
                 self?.analysisTask = nil
             }
-            var thumbnailURL: URL?
-            defer { if let thumbnailURL { try? FileManager.default.removeItem(at: thumbnailURL) } }
+            var thumbnailURLs: [URL] = []
+            defer { for url in thumbnailURLs { try? FileManager.default.removeItem(at: url) } }
             do {
-                let photoPath: String
-                if let photoURL {
+                var photoPaths: [String] = []
+                for photoURL in photoURLs.prefix(Self.maxPhotos) {
                     let thumb = try Self.makeThumbnail(from: photoURL)
-                    thumbnailURL = thumb
-                    photoPath = thumb.path
-                } else {
-                    photoPath = "(無照片)"
+                    thumbnailURLs.append(thumb)
+                    photoPaths.append(thumb.path)
                 }
-                let raw = try await provider.advise(photoPath: photoPath, context: context)
+                if photoPaths.isEmpty { photoPaths = ["(無照片)"] }
+                let raw = try await provider.advise(photoPaths: photoPaths, context: context)
                 guard let self, !Task.isCancelled else { return }
                 let advice = raw.sanitized(for: context)
                 let entry = AdviceResult(advice: advice, context: context, date: Date(), fromHistory: false)
-                self.appendHistory(advice: advice, photoURL: photoURL)
+                self.appendHistory(advice: advice, photoURL: photoURLs.first)
                 self.result = entry
             } catch is CancellationError {
                 // 使用者取消：不顯示錯誤
@@ -348,7 +391,7 @@ final class LightingAdvisor {
         guard !isAnalyzing,
               let data = adviceJSON.data(using: .utf8),
               let advice = try? JSONDecoder().decode(LightingAdvice.self, from: data) else { return }
-        run(provider: FakeAdviceProvider(advice: advice), photoURL: nil)
+        run(provider: FakeAdviceProvider(advice: advice), photoURLs: [])
     }
 
     /// applyAdvice：無頭套用目前結果的全部建議（E2E 斷言用）。

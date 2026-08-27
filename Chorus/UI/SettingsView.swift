@@ -266,9 +266,9 @@ private struct AdvisorSettingsTab: View {
     private func statusText(engine: KnownCLIEngine, detected: AdviceEngineRegistry.DetectedEngine?) -> some View {
         if detected == nil {
             Text("未安裝").font(.caption).foregroundStyle(.secondary)
-        } else if engine.requiresPTY {
+        } else if engine.pendingIntegration {
             Text("待接入").font(.caption).foregroundStyle(.orange)
-                .help("此 CLI 需要 PTY 包裝，接入層完成後開放選用")
+                .help("此 CLI 的 headless 讀圖流程尚未打通，接入層完成後開放選用")
         } else {
             Text("已安裝").font(.caption).foregroundStyle(.green)
         }

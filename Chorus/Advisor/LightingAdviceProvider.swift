@@ -5,7 +5,8 @@ import Foundation
 /// 實作：CLIAdviceProvider（正式）、FakeAdviceProvider（DEBUG/測試）。
 /// 回傳值未經 sanitized —— LightingAdvisor 一律再過 `sanitized(for:)`。
 protocol LightingAdviceProvider: Sendable {
-    func advise(photoPath: String, context: AdviceContext) async throws -> LightingAdvice
+    /// `photoPaths`：第一張是配置圖背景照，其餘為補充視角（多角度／細節）。
+    func advise(photoPaths: [String], context: AdviceContext) async throws -> LightingAdvice
 }
 
 /// 引擎層錯誤 → UI 訊息的映射來源（設計文件 §3 錯誤映射）。
