@@ -21,6 +21,8 @@ struct AdviceResult: Identifiable {
 final class LightingAdvisor {
     private(set) var isAnalyzing = false
     private(set) var lastErrorMessage: String?
+    /// 錯誤訊息旁的協助動作（複製登入指令／開設定）；隨訊息一起設定與清除。
+    private(set) var lastErrorAssist: AdviceError.Assist?
     /// 設定後 UI 開建議 sheet；關閉時清 nil。
     var result: AdviceResult?
 
@@ -140,6 +142,7 @@ final class LightingAdvisor {
     private func run(provider: any LightingAdviceProvider, photoURLs: [URL]) {
         isAnalyzing = true
         lastErrorMessage = nil
+        lastErrorAssist = nil
         let context = buildContext()
         analysisTask = Task { [weak self] in
             defer {
@@ -166,6 +169,7 @@ final class LightingAdvisor {
                 // 使用者取消：不顯示錯誤
             } catch let error as AdviceError {
                 self?.lastErrorMessage = error.userMessage
+                self?.lastErrorAssist = error.assist
             } catch {
                 self?.lastErrorMessage = "分析失敗：\(error.localizedDescription)"
             }

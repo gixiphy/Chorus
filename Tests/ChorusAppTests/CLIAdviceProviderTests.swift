@@ -97,6 +97,46 @@ struct CLIAdviceProviderTests {
         }
     }
 
+    @Test("非零退出＋stdout envelope 帶 401 → notLoggedIn（claude 出錯時 stderr 是空的）")
+    func authErrorInStdoutEnvelope() async throws {
+        let stub = try makeStub("""
+        cat > /dev/null
+        echo '{"type":"result","is_error":true,"result":"Failed to authenticate. API Error: 401 OAuth access token has been revoked."}'
+        exit 1
+        """)
+        let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
+        do {
+            _ = try await provider.advise(photoPaths: ["/tmp/a.jpg"], context: context)
+            Issue.record("預期丟錯")
+        } catch let error as AdviceError {
+            guard case .notLoggedIn = error else {
+                Issue.record("預期 notLoggedIn，得到 \(error)")
+                return
+            }
+        }
+    }
+
+    @Test("非零退出＋stderr 空白 → 從 stdout envelope 取錯誤訊息")
+    func stdoutEnvelopeFallbackMessage() async throws {
+        let stub = try makeStub("""
+        cat > /dev/null
+        echo '{"type":"result","is_error":true,"result":"模型服務暫時無法使用"}'
+        exit 1
+        """)
+        let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
+        do {
+            _ = try await provider.advise(photoPaths: ["/tmp/a.jpg"], context: context)
+            Issue.record("預期丟錯")
+        } catch let error as AdviceError {
+            guard case let .processFailed(status, message) = error else {
+                Issue.record("預期 processFailed，得到 \(error)")
+                return
+            }
+            #expect(status == 1)
+            #expect(message.contains("模型服務暫時無法使用"))
+        }
+    }
+
     @Test("非零退出＋一般錯誤 → processFailed 帶 stderr")
     func genericErrorMapping() async throws {
         let stub = try makeStub("""

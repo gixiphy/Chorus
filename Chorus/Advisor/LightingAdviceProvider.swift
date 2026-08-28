@@ -27,13 +27,42 @@ enum AdviceError: Error {
         case let .engineNotFound(engineID):
             "未找到 \(engineID) CLI，請確認已安裝（設定 → 分析引擎）"
         case let .notLoggedIn(engineID):
-            "請先在終端執行一次 \(engineID) 完成登入"
+            "\(engineID) 未登入或憑證已失效，請在終端重新登入後再試"
         case .timedOut:
             "分析逾時，可重試"
         case let .processFailed(status, stderr):
-            "分析失敗（退出碼 \(status)）：\(stderr.prefix(200))"
+            stderr.isEmpty
+                ? "分析失敗（退出碼 \(status)），CLI 未提供錯誤訊息"
+                : "分析失敗（退出碼 \(status)）：\(stderr.prefix(200))"
         case let .decodeFailed(raw):
             "模型回覆無法解析：\(raw.prefix(300))"
+        }
+    }
+
+    /// UI 可附帶的協助動作（錯誤訊息旁的按鈕）。
+    enum Assist: Equatable {
+        /// 複製登入指令到剪貼簿，讓使用者到終端貼上執行。
+        case copyLoginCommand(String)
+        /// 開啟設定 → 分析引擎。
+        case openEngineSettings
+    }
+
+    var assist: Assist? {
+        switch self {
+        case let .notLoggedIn(engineID):
+            .copyLoginCommand(Self.loginCommand(for: engineID))
+        case .engineNotFound:
+            .openEngineSettings
+        case .timedOut, .processFailed, .decodeFailed:
+            nil
+        }
+    }
+
+    private static func loginCommand(for engineID: String) -> String {
+        switch engineID {
+        case "claude": "claude /login"
+        case "codex": "codex login"
+        default: engineID
         }
     }
 }

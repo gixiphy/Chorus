@@ -198,16 +198,32 @@ struct CLIAdviceProvider: LightingAdviceProvider {
         return try AdviceCodec.decode(stdout: output.stdout, codec: engine.codec)
     }
 
-    private static let authMarkers =
-        ["not logged in", "login", "log in", "authentication", "unauthorized", "api key", "credential"]
+    private static let authMarkers = [
+        "not logged in", "login", "log in", "authentication", "authenticate",
+        "unauthorized", "oauth", "revoked", "401", "api key", "credential",
+    ]
 
-    /// 非零退出：stderr／stdout 含認證字樣 → 未登入；其餘帶 stderr 摘要。
+    /// 非零退出：stderr／stdout 含認證字樣 → 未登入；其餘帶錯誤摘要。
+    /// claude `--output-format json` 出錯時 stderr 是空的、訊息在 stdout 的
+    /// envelope `result` 欄位，stderr 空白時退回從 stdout 取。
     private static func mapNonZeroExit(engineID: String, output: Output) -> AdviceError {
         let combined = (output.stderr + "\n" + output.stdout).lowercased()
         if authMarkers.contains(where: combined.contains) {
             return .notLoggedIn(engineID: engineID)
         }
-        return .processFailed(status: output.status, stderr: sanitizedStderr(output.stderr))
+        var message = output.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if message.isEmpty {
+            message = envelopeResultText(from: output.stdout)
+                ?? output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return .processFailed(status: output.status, stderr: sanitizedStderr(message))
+    }
+
+    private static func envelopeResultText(from stdout: String) -> String? {
+        guard let data = stdout.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return object["result"] as? String
     }
 
     /// stderr 入 UI／log 前過濾疑似 token 字樣（安全紀律 §5）。

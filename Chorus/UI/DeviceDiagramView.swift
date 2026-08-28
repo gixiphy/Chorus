@@ -112,7 +112,7 @@ struct DeviceDiagramView: View {
             if appState.advisor.isAnalyzing {
                 ProgressView()
                     .controlSize(.small)
-                Text("分析中…（CLI 冷啟與推理較慢，預期 20–60 秒）")
+                Text("分析中…（預期 20–60 秒；若跳出鑰匙圈授權，請選「永遠允許」）")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -121,9 +121,12 @@ struct DeviceDiagramView: View {
             } else {
                 analyzeButton
                 if !appState.advisor.extraPhotos.isEmpty {
-                    Text("含 \(appState.advisor.extraPhotos.count) 張補充照片")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        ForEach(appState.advisor.extraPhotos, id: \.self) { url in
+                            PhotoThumbnailView(url: url)
+                        }
+                    }
+                    .help("補充照片：分析時與背景照一併提供（點擊可放大）")
                 }
                 if !appState.advisor.history.isEmpty {
                     Button("上次分析結果") { appState.advisor.showLatestHistory() }
@@ -134,12 +137,34 @@ struct DeviceDiagramView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .lineLimit(2)
+                        .help(message)
+                    errorAssistButton
                 }
                 Spacer()
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+    }
+
+    /// 錯誤訊息旁的協助按鈕：未登入 → 複製登入指令；找不到引擎 → 開設定。
+    @ViewBuilder
+    private var errorAssistButton: some View {
+        switch appState.advisor.lastErrorAssist {
+        case let .copyLoginCommand(command):
+            Button("複製登入指令") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(command, forType: .string)
+            }
+            .controlSize(.small)
+            .help("複製「\(command)」，到終端機貼上執行完成登入後再重試")
+        case .openEngineSettings:
+            SettingsLink { Text("開啟設定") }
+                .controlSize(.small)
+                .help("設定 → 分析引擎：確認 CLI 已安裝或指定路徑")
+        case nil:
+            EmptyView()
+        }
     }
 
     @ViewBuilder
@@ -192,13 +217,8 @@ struct DeviceDiagramView: View {
 
     @ViewBuilder
     private var background: some View {
-        if let url = appState.diagram.backgroundImageURL,
-           let image = NSImage(contentsOf: url) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
-                .opacity(0.35)
-                .allowsHitTesting(false)
+        if let url = appState.diagram.backgroundImageURL {
+            DiagramBackgroundView(url: url)
         }
     }
 
@@ -264,6 +284,64 @@ struct DeviceDiagramView: View {
                     for: key
                 )
             }
+    }
+}
+
+/// 配置圖背景照：完整顯示（scaledToFit，不裁切）；載入一次快取，
+/// 避免拖動節點時每次重繪都從磁碟重讀。
+private struct DiagramBackgroundView: View {
+    let url: URL
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                // 節點卡片有 material 底，照片可以清楚顯示；留一點淡化避免搶走節點。
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .opacity(0.8)
+            }
+        }
+        .allowsHitTesting(false)
+        .task(id: url) { image = NSImage(contentsOf: url) }
+    }
+}
+
+/// 補充照片縮圖：點擊以 popover 放大預覽（完整照片，不裁切）。
+private struct PhotoThumbnailView: View {
+    let url: URL
+    @State private var image: NSImage?
+    @State private var showingPreview = false
+
+    var body: some View {
+        Button {
+            showingPreview = true
+        } label: {
+            Group {
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Rectangle().fill(.quaternary)
+                }
+            }
+            .frame(width: 44, height: 30)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.quaternary))
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showingPreview) {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 520, maxHeight: 390)
+                    .padding(6)
+            }
+        }
+        .task(id: url) { image = NSImage(contentsOf: url) }
     }
 }
 

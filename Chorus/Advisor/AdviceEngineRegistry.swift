@@ -71,11 +71,14 @@ final class AdviceEngineRegistry {
     @ObservationIgnored private let settings: SettingsStore
 
     /// GUI app 的 PATH 通常只有系統目錄，補上常見安裝位置。
+    /// 家目錄安裝（官方 installer 位置）排在 Homebrew 之前：同一台機器可能有多份
+    /// 安裝，優先挑終端實際在用的那顆，鑰匙圈授權（永遠允許）才共用得到，
+    /// 否則每次分析都會再跳一次鑰匙圈授權視窗。
     private static let knownDirectories = [
-        "/opt/homebrew/bin", "/usr/local/bin",
         NSHomeDirectory() + "/.local/bin",
-        NSHomeDirectory() + "/bin",
         NSHomeDirectory() + "/.claude/local",
+        NSHomeDirectory() + "/bin",
+        "/opt/homebrew/bin", "/usr/local/bin",
     ]
 
     init(settings: SettingsStore) {
