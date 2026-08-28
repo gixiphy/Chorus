@@ -27,6 +27,9 @@ final class AudioDeviceManager {
     @ObservationIgnored private var bridgeVerifyTasks: [String: Task<Void, Never>] = [:]
     /// A/B 旁通用的暫時 EQ（不持久化，見 `setEQOverride`）。
     @ObservationIgnored private var eqOverrides: [String: EQSettings] = [:]
+    /// 上一輪 snapshot 看到的裝置。**優先權切換只在這一份變動時觸發**——
+    /// 每個 snapshot 都搶預設裝置會讓使用者根本選不動別的裝置。
+    @ObservationIgnored private var knownUIDs: Set<String> = []
 
     var defaultDevice: AudioDeviceModel? {
         devices.first(where: \.isDefault)
@@ -277,11 +280,18 @@ final class AudioDeviceManager {
                 updated.append(model)
             }
         }
-        let changedSet = Set(updated.map(\.uid)) != Set(devices.map(\.uid))
+        let presentUIDs = Set(updated.map(\.uid))
+        let changedSet = presentUIDs != knownUIDs
+        let arrived = presentUIDs.subtracting(knownUIDs)
+        knownUIDs = presentUIDs
         devices = updated
         refreshBridges()
         sortDevices()
-        if changedSet { tapEngine?.audioDevicesChanged() }
+        if changedSet {
+            tapEngine?.audioDevicesChanged()
+            restoreVolumes(forArrived: arrived)
+            applyOutputPriority()
+        }
     }
 
     /// 重算所有無軟體音量裝置的 DDC 橋接。
@@ -351,6 +361,54 @@ final class AudioDeviceManager {
             muted: usesSoftwareVolume ? device.muted : false,
             eq: effectiveEQ(for: device.uid)
         )
+    }
+
+    // MARK: - 裝置優先順序（B6-7）
+
+    func priorityIndex(of device: AudioDeviceModel) -> Int? {
+        settings.outputPriority.firstIndex(of: device.uid)
+    }
+
+    func addToPriority(_ device: AudioDeviceModel) {
+        guard !settings.outputPriority.contains(device.uid) else { return }
+        settings.outputPriority.append(device.uid)
+    }
+
+    func removeFromPriority(_ device: AudioDeviceModel) {
+        settings.outputPriority.removeAll { $0 == device.uid }
+    }
+
+    func movePriority(_ device: AudioDeviceModel, up: Bool) {
+        guard let index = priorityIndex(of: device) else { return }
+        let target = up ? index - 1 : index + 1
+        guard settings.outputPriority.indices.contains(target) else { return }
+        settings.outputPriority.swapAt(index, target)
+    }
+
+    /// 順位最前、且現在接著的裝置成為預設輸出。
+    ///
+    /// 只在**裝置清單變動時**呼叫（插拔耳機、AirPlay 上下線）。
+    /// 每次 snapshot 都跑的話，使用者手動切到別的裝置會在一秒內被搶回來
+    /// ——那是 bug 不是功能。規則本身在 `OutputPriority`（純函式、有測試）。
+    private func applyOutputPriority() {
+        let target = OutputPriority.preferred(
+            order: settings.outputPriority,
+            present: Set(devices.map(\.uid)),
+            current: defaultDevice?.uid
+        )
+        guard let target, let device = devices.first(where: { $0.uid == target }) else { return }
+        setAsDefault(device)
+    }
+
+    /// 剛接上的裝置還原上次的音量。
+    private func restoreVolumes(forArrived arrived: Set<String>) {
+        for uid in OutputPriority.devicesToRestore(order: settings.outputPriority, arrived: arrived) {
+            guard let device = devices.first(where: { $0.uid == uid }),
+                  device.canSetVolume,
+                  let remembered = settings.lastVolume(for: uid)
+            else { continue }
+            writeVolume(remembered, to: device)
+        }
     }
 
     // MARK: - 每裝置等化（B6-5）

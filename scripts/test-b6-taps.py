@@ -333,7 +333,29 @@ def main():
     ok, _ = wait_for(lambda d: tap_state(d) == "active", 10)
     record("重新啟用回 active", ok)
 
-    print("\n[10] 停用與重啟後恢復", flush=True)
+    print("\n[10] B6-7：提示音音量走動詞層（場景要用到）", flush=True)
+    original = (dump() or {}).get("alertVolume")
+    response = control({"verb": "get", "target": "system", "property": "alertVolume"})
+    values = [r.get("value") for r in (response or {}).get("results", [])]
+    record("get alertVolume 讀得到系統現值",
+           bool(values) and original is not None and abs(values[0] - original) < 1e-6)
+
+    # 這是 NSGlobalDomain 的系統設定——測完一定要還原，別把使用者的機器改掉
+    try:
+        response = control({"verb": "set", "target": "system",
+                            "property": "alertVolume", "value": "30%"})
+        ok, _ = wait_for(lambda d: abs(d.get("alertVolume", -1) - 0.3) < 1e-6, 10)
+        record("set alertVolume 生效", ok and (response or {}).get("ok") is True)
+        record("與輸出音量分開（裝置音量沒被動到）",
+               (control({"verb": "get", "target": "allDevices"}) or {}).get("ok") is True)
+    finally:
+        if original is not None:
+            control({"verb": "set", "target": "system", "property": "alertVolume",
+                     "value": f"{original}"})
+    ok, _ = wait_for(lambda d: abs(d.get("alertVolume", -1) - original) < 0.01, 10)
+    record("測完還原使用者原本的提示音音量", ok)
+
+    print("\n[11] 停用與重啟後恢復", flush=True)
     notify("appGain", "com.apple.Music|0.3")
     ok, _ = wait_for(lambda d: tapped(d) == ["com.apple.Music"], 10)
     record("重新調一個 App", ok)

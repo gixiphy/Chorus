@@ -35,6 +35,7 @@ final class SettingsStore {
         static let appAudio = "chorus.audio.appSettings"
         static let softwareVolume = "chorus.audio.softwareVolumeDevices"
         static let deviceEQ = "chorus.audio.deviceEQ"
+        static let outputPriority = "chorus.audio.outputPriority"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
         static let automationServer = "chorus.automation.serverEnabled"
@@ -201,6 +202,15 @@ final class SettingsStore {
         }
     }
 
+    /// 輸出裝置的偏好順位（device UID，前面優先，B6-7）。**空陣列＝功能關閉**。
+    ///
+    /// 有順位時：偏好的裝置一接上就自動成為預設輸出，並還原它上次的音量。
+    /// 只在**裝置清單真的變動**時作用——否則使用者手動選了別的裝置，
+    /// 下一個 snapshot 就會被我們搶回去。
+    var outputPriority: [String] {
+        didSet { defaults.set(outputPriority, forKey: Key.outputPriority) }
+    }
+
     /// 螢幕長亮時是否連系統待機一起擋（預設只擋螢幕待機）。
     var keepAwakePreventsSystemSleep: Bool {
         didSet { defaults.set(keepAwakePreventsSystemSleep, forKey: Key.keepAwakeSystemSleep) }
@@ -267,6 +277,7 @@ final class SettingsStore {
         } else {
             deviceEQ = [:]
         }
+        outputPriority = defaults.stringArray(forKey: Key.outputPriority) ?? []
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)

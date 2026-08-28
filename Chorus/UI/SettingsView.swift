@@ -705,6 +705,18 @@ private struct AudioSettingsTab: View {
     @State private var busy = false
     @State private var errorMessage: String?
 
+    /// 已在順位裡的裝置，依順位排。已拔掉的也留著顯示——不然使用者
+    /// 看不到自己設過什麼，也刪不掉。
+    private var prioritisedDevices: [AudioDeviceModel] {
+        appState.settings.outputPriority.compactMap { uid in
+            appState.audioManager.devices.first { $0.uid == uid }
+        }
+    }
+
+    private var unprioritisedDevices: [AudioDeviceModel] {
+        appState.audioManager.devices.filter { appState.audioManager.priorityIndex(of: $0) == nil }
+    }
+
     var body: some View {
         Form {
             Section("各 App 音量與等化") {
@@ -728,6 +740,66 @@ private struct AudioSettingsTab: View {
                     }
                 }
                 Text("開啟後系統會詢問「系統音訊錄製」權限。音訊只在本機處理，不會傳送到任何地方；未被調整的 App 完全不經過 Chorus。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("裝置優先順序") {
+                Text("接上時自動成為預設輸出，並還原上次的音量。只在裝置插拔時作用——手動選的裝置不會被搶走。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if appState.settings.outputPriority.isEmpty {
+                    Text("尚未設定順位（功能關閉）")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(prioritisedDevices) { device in
+                    HStack(spacing: 6) {
+                        Text("\((appState.audioManager.priorityIndex(of: device) ?? 0) + 1).")
+                            .font(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                        Text(device.name).font(.callout)
+                        Spacer()
+                        Button { appState.audioManager.movePriority(device, up: true) } label: {
+                            Image(systemName: "chevron.up")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(appState.audioManager.priorityIndex(of: device) == 0)
+                        Button { appState.audioManager.movePriority(device, up: false) } label: {
+                            Image(systemName: "chevron.down")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(appState.audioManager.priorityIndex(of: device)
+                            == appState.settings.outputPriority.count - 1)
+                        Button("移除") { appState.audioManager.removeFromPriority(device) }
+                            .controlSize(.small)
+                    }
+                }
+                if !unprioritisedDevices.isEmpty {
+                    Menu("加入裝置…") {
+                        ForEach(unprioritisedDevices) { device in
+                            Button(device.name) { appState.audioManager.addToPriority(device) }
+                        }
+                    }
+                    .controlSize(.small)
+                }
+            }
+            Section("提示音") {
+                HStack {
+                    Text("提示音音量")
+                    Slider(
+                        value: Binding(
+                            get: { appState.alertVolume.volume },
+                            set: { appState.alertVolume.setVolume($0) }
+                        ),
+                        in: 0...1
+                    )
+                    Text(appState.alertVolume.volume, format: .percent.precision(.fractionLength(0)))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, alignment: .trailing)
+                }
+                Text("與輸出音量分開的系統設定——「會議」場景可以只關提示音、不動音樂。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -25,6 +25,7 @@ final class AppState {
     let sceneStore: SceneStore
     let tapEngine: TapEngine
     let autoEq: AutoEqCatalog
+    let alertVolume: AlertVolumeController
     let automationEvents: AutomationEventHub
     let automationServer: ControlHTTPServer
 
@@ -115,6 +116,7 @@ final class AppState {
         #endif
         tapEngine = TapEngine(backend: tapBackend, registry: tapRegistry, settings: settings)
         autoEq = AutoEqCatalog(instance: instance)
+        alertVolume = AlertVolumeController()
         audioManager.tapEngine = tapEngine
         tapEngine.stateChangedHandler = { [weak audioManager] in
             audioManager?.refreshBridges()
@@ -127,6 +129,7 @@ final class AppState {
             displayManager: displayManager,
             audioManager: audioManager,
             tapEngine: tapEngine,
+            alertVolume: alertVolume,
             autoBrightness: autoBrightness,
             keepAwake: keepAwake,
             coordinator: coordinator,

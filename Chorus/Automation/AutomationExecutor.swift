@@ -14,6 +14,7 @@ final class AutomationExecutor {
     private unowned let displayManager: DisplayManager
     private unowned let audioManager: AudioDeviceManager
     private unowned let tapEngine: TapEngine
+    private unowned let alertVolume: AlertVolumeController
     private unowned let autoBrightness: AutoBrightnessController
     private unowned let keepAwake: KeepAwakeController
     private unowned let coordinator: ControlCoordinator
@@ -26,6 +27,7 @@ final class AutomationExecutor {
         displayManager: DisplayManager,
         audioManager: AudioDeviceManager,
         tapEngine: TapEngine,
+        alertVolume: AlertVolumeController,
         autoBrightness: AutoBrightnessController,
         keepAwake: KeepAwakeController,
         coordinator: ControlCoordinator,
@@ -37,6 +39,7 @@ final class AutomationExecutor {
         self.displayManager = displayManager
         self.audioManager = audioManager
         self.tapEngine = tapEngine
+        self.alertVolume = alertVolume
         self.autoBrightness = autoBrightness
         self.keepAwake = keepAwake
         self.coordinator = coordinator
@@ -168,6 +171,13 @@ final class AutomationExecutor {
                 value: device.muted ? "on" : "off"
             ))
         }
+        // 提示音音量（B6-7）。ROADMAP 的「會議」場景＝關提示音但不動音樂，
+        // 少了這一條那個場景就表達不出來
+        alertVolume.refresh()
+        requests.append(ControlRequest(
+            verb: .set, target: .system, property: .alertVolume,
+            value: Self.percent(alertVolume.volume)
+        ))
         return ControlScene(name: name, requests: requests)
     }
 
@@ -243,7 +253,7 @@ final class AutomationExecutor {
             autoBrightness.setDisplayOffset(value, for: display.uuid)
             return result(display.name, property, .number(value))
 
-        case .volume, .mute, .keepAwake, .autoBrightness:
+        case .volume, .mute, .keepAwake, .autoBrightness, .alertVolume:
             // validator 的相容性矩陣已擋掉，這裡不可能走到
             throw ControlError.targetKindMismatch(property: property, target: request.target.stringValue)
         }
@@ -445,6 +455,7 @@ final class AutomationExecutor {
                 result("system", .keepAwake, .number(KeepAwakePlanner.encode(keepAwake.mode))),
                 result("system", .autoBrightness, .bool(settings.autoBrightnessEnabled)),
                 result("system", .ambientOffset, .number(settings.ambientDeviceOffset)),
+                result("system", .alertVolume, .number(alertVolume.volume)),
                 ControlResult(target: "system", property: "keepAwakeHolding",
                               value: .bool(keepAwake.isHolding)),
             ]
@@ -485,6 +496,15 @@ final class AutomationExecutor {
             }
             let value = try resolved(request.value, current: current, range: -0.5...0.5)
             autoBrightness.setDeviceOffset(value)
+            return [result("system", property, .number(value))]
+
+        case .alertVolume:
+            alertVolume.refresh() // 系統設定可能剛被別人改過
+            if request.verb == .get {
+                return [result("system", property, .number(alertVolume.volume))]
+            }
+            let value = try resolved(request.value, current: alertVolume.volume, range: 0...1)
+            alertVolume.setVolume(value)
             return [result("system", property, .number(value))]
 
         default:

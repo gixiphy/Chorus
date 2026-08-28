@@ -514,6 +514,8 @@ final class TestHooks {
                     "isDefault": device.isDefault,
                 ] as [String: Any]
             },
+            "alertVolume": appState.alertVolume.volume,
+            "outputPriority": appState.settings.outputPriority,
             "scenarios": [
                 "active": appState.scenarios.activeScenario.map { $0.name as Any } ?? NSNull(),
                 "names": appState.scenarios.scenarios.map(\.name),

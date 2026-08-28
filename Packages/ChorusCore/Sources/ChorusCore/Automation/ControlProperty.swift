@@ -27,10 +27,13 @@ public enum ControlProperty: String, Codable, Sendable, CaseIterable, Hashable {
     case keepAwake
     case autoBrightness
     case ambientOffset
+    /// 提示音（beep）音量，與輸出音量分開（B6-7）。
+    /// 存在的理由是場景：「會議模式」要關掉提示音而**不動音樂**。
+    case alertVolume
 
     public var valueKind: ControlValueKind {
         switch self {
-        case .brightness, .contrast: .unitInterval
+        case .brightness, .contrast, .alertVolume: .unitInterval
         case .volume: .gain
         case .mute, .power, .autoBrightness: .boolean
         case .input: .rawCode
@@ -45,7 +48,7 @@ public enum ControlProperty: String, Codable, Sendable, CaseIterable, Hashable {
         // 與 DisplayManager.setInput 的 one-shot 紀律一致——不提供 get。
         case .input: [.set]
         case .mute, .power, .keepAwake, .autoBrightness: [.get, .set, .toggle]
-        case .brightness, .volume, .contrast, .ambientOffset: [.get, .set]
+        case .brightness, .volume, .contrast, .ambientOffset, .alertVolume: [.get, .set]
         }
     }
 
@@ -53,7 +56,7 @@ public enum ControlProperty: String, Codable, Sendable, CaseIterable, Hashable {
         switch self {
         case .brightness, .contrast, .input, .power: [.display]
         case .volume, .mute: [.audioDevice, .app]
-        case .keepAwake, .autoBrightness: [.system]
+        case .keepAwake, .autoBrightness, .alertVolume: [.system]
         case .ambientOffset: [.display, .system]
         }
     }
@@ -64,7 +67,7 @@ public enum ControlProperty: String, Codable, Sendable, CaseIterable, Hashable {
         switch self {
         case .brightness, .contrast, .input, .power: .allDisplays
         case .volume, .mute: .defaultOutput
-        case .keepAwake, .autoBrightness: .system
+        case .keepAwake, .autoBrightness, .alertVolume: .system
         // 差異值預設套整機——per-display 要明講是哪一台，
         // 不小心把全部螢幕的差異值一起改掉會很難察覺
         case .ambientOffset: .system
