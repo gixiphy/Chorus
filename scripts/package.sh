@@ -39,6 +39,17 @@ ditto dist/Chorus.xcarchive/Products/Applications/Chorus.app dist/Chorus.app
 # 建置產物的權限可能不是 world-readable；內嵌的 HAL driver 由 _coreaudiod 讀取，
 # 少了 go+r 安裝後就載不進去。在打包前先正規化。
 chmod -R go+rX dist/Chorus.app
+# 建置產物會帶著 com.apple.FinderInfo 等擴充屬性，codesign --strict 會判為
+# 「detritus not allowed」而驗證失敗——之後送 Developer ID 公證會直接被擋。
+xattr -cr dist/Chorus.app
+
+# 硬性驗證：巢狀 code（HAL driver、chorus CLI）都要簽得過才算打包成功。
+if ! codesign --verify --deep --strict dist/Chorus.app; then
+  echo "簽章驗證失敗，不產出 zip" >&2
+  exit 1
+fi
+echo "▸ 簽章驗證通過（含巢狀 driver 與 CLI）"
+
 ZIP="dist/Chorus-$VERSION-b$NEXT_BUILD.zip"
 ditto -c -k --keepParent dist/Chorus.app "$ZIP"
 echo "▸ 已打包 $ZIP"
