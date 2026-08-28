@@ -74,10 +74,11 @@ struct ChorusCLI {
     private static let valuedTargetFlags: Set<String> = [
         "--display", "--display-like", "--display-uuid",
         "--device", "--device-like", "--device-uid",
+        "--app", "--app-like",
     ]
     private static let valuelessTargetFlags: Set<String> = [
         "--display-with-mouse", "--display-with-focus", "--builtin-display",
-        "--all-displays", "--default-output", "--all-devices", "--system",
+        "--all-displays", "--default-output", "--all-devices", "--all-apps", "--system",
     ]
 
     private static func targetFlag(_ flag: String, argument: String?) -> ControlTarget? {
@@ -94,6 +95,9 @@ struct ChorusCLI {
         case let ("--device-uid", uid?): .deviceUID(uid)
         case ("--default-output", _): .defaultOutput
         case ("--all-devices", _): .allDevices
+        case ("--all-apps", _): .allApps
+        case let ("--app", bundleID?): .app(bundleID: bundleID)
+        case let ("--app-like", text?): .appLike(text)
         case ("--system", _): .system
         default: nil
         }
@@ -192,7 +196,7 @@ struct ChorusCLI {
         switch result.value {
         case let .number(number):
             return switch kind {
-            case .unitInterval, .signedUnit: "\(Int((number * 100).rounded()))%"
+            case .unitInterval, .signedUnit, .gain: "\(Int((number * 100).rounded()))%"
             default: trimmed(number)
             }
         case let .bool(flag): return flag ? "on" : "off"
@@ -229,12 +233,14 @@ struct ChorusCLI {
           --display-with-mouse    --display-with-focus    --builtin-display
           --all-displays          --device <名稱>         --device-like <片段>
           --device-uid <uid>      --default-output        --all-devices
+          --app <bundle id>       --app-like <片段>       --all-apps
           --system                --peer <已配對裝置名稱>
 
         屬性：
           \(ControlProperty.allCases.map { "--\($0.rawValue)" }.joined(separator: "  "))
 
         值：0.8、80%、+10%、-0.1、on/off、30m／1h／forever、MCCS 代碼
+            逐 App 音量最高 400%（超過 100% 的部分會過 soft limiter）
 
         選項：
           --json    輸出原始 JSON（給腳本用）
@@ -244,6 +250,10 @@ struct ChorusCLI {
           chorus set --display-like DELL --brightness +10%
           chorus set --peer 客廳 --all-displays --power off
           chorus toggle --mute
+          chorus get --all-apps
+          chorus set --app com.apple.Music --volume 40%
+          chorus toggle --app-like Music --mute
+          chorus set --peer 客廳 --app com.spotify.client --mute on
           chorus listen
 
         介面需在 Chorus 設定頁「自動化介面」開啟。token 由 App 寫入

@@ -93,6 +93,8 @@ public enum ControlError: Error, Sendable, Equatable, Hashable {
         case let .missingValue(property):
             switch property.valueKind {
             case .unitInterval: "例如 0.8、80% 或 +10%"
+            // per-app 可以到 400%；裝置音量在 executor 那層才夾回 100%
+            case .gain: "例如 0.8、80%、+10%（逐 App 最高 400%）"
             case .signedUnit: "例如 -0.2 或 15%"
             case .boolean: "on 或 off"
             case .duration: "off、30m、1h 或 forever"

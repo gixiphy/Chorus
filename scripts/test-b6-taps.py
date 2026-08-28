@@ -77,6 +77,13 @@ def tapped(data):
     return (data or {}).get("tapEngine", {}).get("tapped")
 
 
+def control(request):
+    """送出一個 ControlRequest 走完整動詞層（驗證 → 解析 → 執行），回 lastControl。"""
+    notify("control", json.dumps(request, ensure_ascii=False, sort_keys=True))
+    time.sleep(1.6)  # state dump 每秒寫一次
+    return (dump() or {}).get("lastControl")
+
+
 def device_tap(data):
     return (data or {}).get("tapEngine", {}).get("deviceTap")
 
@@ -268,7 +275,65 @@ def main():
     ok, _ = wait_for(lambda d: device_tap(d) is None, 10)
     record("兩者都關 → 一個 tap 都不留", ok)
 
-    print("\n[8] 停用與重啟後恢復", flush=True)
+    print("\n[8] B6-6：動詞層的 app: 定位（跨機遙控走同一條）", flush=True)
+    response = control({"verb": "set", "target": "app:com.apple.Music",
+                        "property": "volume", "value": "40%"})
+    record("set app:<bundle> volume 走到引擎",
+           (response or {}).get("ok") is True
+           and app_gain_is(dump(), "com.apple.Music", 0.4))
+
+    response = control({"verb": "set", "target": "app:com.apple.Music",
+                        "property": "volume", "value": "250%"})
+    record("per-app 收得下 250%（裝置音量的 0–1 上限不套在這裡）",
+           app_gain_is(dump(), "com.apple.Music", 2.5))
+
+    response = control({"verb": "toggle", "target": "appLike:Music", "property": "mute"})
+    record("appLike 以顯示名稱比對 → toggle mute",
+           app_settings(dump()).get("com.apple.Music", {}).get("muted") is True)
+
+    response = control({"verb": "get", "target": "app:com.apple.Music", "property": "volume"})
+    values = [r.get("value") for r in (response or {}).get("results", [])]
+    record("get 回讀現值", bool(values) and abs(values[0] - 2.5) < 1e-6)
+
+    response = control({"verb": "get", "target": "allApps"})
+    bundles = sorted(r.get("value") for r in (response or {}).get("results", [])
+                     if r.get("property") == "bundleID")
+    record("allApps 列舉（遙控端不必猜 bundle id）",
+           bundles == ["com.apple.Music", "com.apple.Safari"])
+
+    response = control({"verb": "set", "target": "appLike:Photoshop",
+                        "property": "volume", "value": "40%"})
+    error = (response or {}).get("error") or {}
+    record("找不到的 App → targetNotFound，hint 列出可選的",
+           error.get("code") == "targetNotFound" and "Music" in (error.get("hint") or ""))
+
+    response = control({"verb": "set", "target": "app:com.apple.Music",
+                        "property": "brightness", "value": "50%"})
+    record("app 不吃亮度（相容性矩陣擋在驗證階段）",
+           ((response or {}).get("error") or {}).get("code") == "targetKindMismatch")
+
+    notify("appReset", "com.apple.Music")
+    notify("appReset", "com.apple.Safari")
+
+    print("\n[9] 權限未到手時 app: 整組不可用（降級表）", flush=True)
+    notify("tapEngine", "0")
+    ok, _ = wait_for(lambda d: tap_state(d) == "off", 10)
+    response = control({"verb": "set", "target": "app:com.apple.Music",
+                        "property": "volume", "value": "40%"})
+    error = (response or {}).get("error") or {}
+    record("回 unsupported 並說明怎麼開啟",
+           ok and error.get("code") == "unsupported" and "App 音訊接管" in (error.get("message") or ""))
+
+    response = control({"verb": "get", "target": "allDevices"})
+    record("同一時間裝置音量完全不受影響（降級表最後兩列）",
+           (response or {}).get("ok") is True)
+
+    notify("tapEngine", "1")
+    notify("tapTick")
+    ok, _ = wait_for(lambda d: tap_state(d) == "active", 10)
+    record("重新啟用回 active", ok)
+
+    print("\n[10] 停用與重啟後恢復", flush=True)
     notify("appGain", "com.apple.Music|0.3")
     ok, _ = wait_for(lambda d: tapped(d) == ["com.apple.Music"], 10)
     record("重新調一個 App", ok)

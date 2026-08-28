@@ -264,6 +264,9 @@ final class ControlHTTPServer {
                 ControlRequest(verb: .get, target: .allDisplays)
             ).merging(with: [
                 executor.execute(ControlRequest(verb: .get, target: .allDevices)),
+                // 逐 App 音訊未啟用時這一則會失敗——merging 只收成功的結果，
+                // 所以功能沒開的機器拿到的 state 就是少了這一段，不是整包壞掉
+                executor.execute(ControlRequest(verb: .get, target: .allApps)),
                 executor.execute(ControlRequest(verb: .get, target: .system)),
             ]))
 

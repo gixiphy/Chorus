@@ -2,6 +2,10 @@
 public enum ControlValueKind: String, Codable, Sendable, Hashable {
     /// 0–1；百分比與 offset 皆收（見 ControlValue 的收值規則）。
     case unitInterval
+    /// 0–4x 的增益（音量）。與 `unitInterval` 分開的唯一理由是**上限**：
+    /// per-app 音量可以 boost 到 4x（B6-2），而裝置音量到 1 為止——
+    /// 夾範圍是 executor 依目標種類做的，值層只負責不要提早把 2.0 砍成 1.0。
+    case gain
     /// -0.5…+0.5 的差異值（ambientOffset）。
     case signedUnit
     case boolean
@@ -26,7 +30,8 @@ public enum ControlProperty: String, Codable, Sendable, CaseIterable, Hashable {
 
     public var valueKind: ControlValueKind {
         switch self {
-        case .brightness, .volume, .contrast: .unitInterval
+        case .brightness, .contrast: .unitInterval
+        case .volume: .gain
         case .mute, .power, .autoBrightness: .boolean
         case .input: .rawCode
         case .keepAwake: .duration
@@ -74,7 +79,7 @@ public enum ControlProperty: String, Codable, Sendable, CaseIterable, Hashable {
                 case .display: "顯示器"
                 case .audioDevice: "音訊裝置"
                 case .system: "system（整機）"
-                case .app: "app（尚未啟用）"
+                case .app: "app（逐 App 音訊）"
                 }
             }
             .sorted()

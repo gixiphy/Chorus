@@ -38,7 +38,7 @@ struct ControlTargetTests {
             .displayWithMouse, .displayWithFocus, .builtinDisplay, .allDisplays,
             .device(name: "D"), .deviceLike("E"), .deviceUID("F"),
             .defaultOutput, .allDevices, .system,
-            .app(bundleID: "com.x.y"), .appLike("Music"),
+            .app(bundleID: "com.x.y"), .appLike("Music"), .allApps,
         ]
         for target in targets {
             #expect(ControlTarget.parse(target.stringValue) == target)
@@ -294,5 +294,82 @@ struct ControlRequestCodingTests {
         let failedJSON = String(decoding: try JSONEncoder().encode(failed), as: UTF8.self)
         #expect(failedJSON.contains("targetNotFound"))
         #expect(failedJSON.contains("ASUS VS207"))
+    }
+}
+
+
+/// B6-6：逐 App 音訊在動詞層的形狀。
+@Suite("Per-app 音訊的動詞層")
+struct PerAppAutomationTests {
+    @Test("app 定位解析得過，種類是 .app")
+    func appTargetsParse() {
+        #expect(ControlTarget.parse("app:com.apple.Music") == .app(bundleID: "com.apple.Music"))
+        #expect(ControlTarget.parse("appLike:Music") == .appLike("Music"))
+        #expect(ControlTarget.parse("allApps") == .allApps)
+        #expect(ControlTarget.allApps.kind == .app)
+        #expect(ControlTarget.allApps.isPlural)
+        #expect(!ControlTarget.app(bundleID: "com.x").isPlural)
+    }
+
+    @Test("volume／mute 可以套在 app 上，brightness 不行")
+    func compatibilityMatrix() throws {
+        let volume = ControlRequest(
+            verb: .set, target: .app(bundleID: "com.apple.Music"), property: .volume, value: "40%"
+        )
+        #expect(throws: Never.self) { try ControlRequestValidator.validate(volume) }
+
+        let mute = ControlRequest(verb: .toggle, target: .appLike("Music"), property: .mute)
+        #expect(throws: Never.self) { try ControlRequestValidator.validate(mute) }
+
+        let brightness = ControlRequest(
+            verb: .set, target: .app(bundleID: "com.apple.Music"), property: .brightness, value: "50%"
+        )
+        #expect(throws: ControlError.targetKindMismatch(property: .brightness, target: "app:com.apple.Music")) {
+            try ControlRequestValidator.validate(brightness)
+        }
+    }
+
+    @Test("音量收到 400%——per-app 可以 boost，值層不該提早砍成 100%")
+    func gainAcceptsBoost() throws {
+        let request = ControlRequest(
+            verb: .set, target: .app(bundleID: "com.apple.Music"), property: .volume, value: "250%"
+        )
+        let validated = try ControlRequestValidator.validate(request)
+        #expect(validated.value == .absolute(2.5))
+
+        // 上限仍在：400% 是天花板
+        let tooLoud = ControlRequest(
+            verb: .set, target: .app(bundleID: "com.apple.Music"), property: .volume, value: "900%"
+        )
+        #expect(try ControlRequestValidator.validate(tooLoud).value == .absolute(4))
+    }
+
+    @Test("裝置音量的 0–1 由 executor 夾——值層只負責不要提早砍掉")
+    func deviceVolumeStillParsesWide() throws {
+        let request = ControlRequest(
+            verb: .set, target: .defaultOutput, property: .volume, value: "250%"
+        )
+        #expect(try ControlRequestValidator.validate(request).value == .absolute(2.5))
+    }
+
+    @Test("per-app 遙控鍵編碼往返；不進 LWW 是 executor／coordinator 的事")
+    func appKeysRoundTrip() throws {
+        let keys: [ControlKey] = [
+            .appVolume(bundleID: "com.apple.Music"),
+            .appMute(bundleID: "com.spotify.client"),
+        ]
+        for key in keys {
+            let data = try JSONEncoder().encode(key)
+            #expect(try JSONDecoder().decode(ControlKey.self, from: data) == key)
+        }
+    }
+
+    @Test("錯誤訊息裡的 app 目標不再寫「尚未啟用」")
+    func hintMentionsPerAppAudio() {
+        let hint = ControlError.targetKindMismatch(property: .volume, target: "allDisplays").hint ?? ""
+        #expect(hint.contains("app"))
+        #expect(!hint.contains("尚未啟用"))
+        #expect(ControlTarget.syntaxHint.contains("app:<bundle id>"))
+        #expect(ControlTarget.syntaxHint.contains("allApps"))
     }
 }

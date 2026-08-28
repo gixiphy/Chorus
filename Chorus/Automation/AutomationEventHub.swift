@@ -46,6 +46,9 @@ final class AutomationEventHub {
         case let .contrast(uuid): ("contrast", uuid ?? "allDisplays")
         case let .displayPower(uuid): ("power", uuid ?? "allDisplays")
         case .keepAwake: ("keepAwake", "system")
+        // 目標寫成動詞層的定位語法，訂閱者拿到就能直接回一個請求
+        case let .appVolume(bundleID): ("volume", "app:\(bundleID)")
+        case let .appMute(bundleID): ("mute", "app:\(bundleID)")
         }
         publish(kind: "change", payload: ["property": property, "target": target, "value": value])
     }

@@ -33,6 +33,10 @@ public extension ControlValue {
         case .duration: try parseDuration(trimmed, original: text)
         case .unitInterval:
             try parseScalar(trimmed, original: text, range: 0...1, allowsRelative: true)
+        case .gain:
+            // 上限 4x（per-app boost）。裝置音量的 0–1 由 executor 再夾一次
+            // ——同一個屬性在不同目標上的合法範圍不同，那是目標的事
+            try parseScalar(trimmed, original: text, range: 0...4, allowsRelative: true)
         case .signedUnit:
             // 差異值本身就有正負號，前導 +/- 是**絕對值的一部分**，不是相對增減。
             // 否則 `ambientOffset -0.2`（合法的絕對值）會被讀成「再減 0.2」。

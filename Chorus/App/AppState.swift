@@ -100,30 +100,6 @@ final class AppState {
         coordinator.attachAutoController(autoBrightness)
         coordinator.attachKeepAwake(keepAwake)
 
-        sceneStore = SceneStore(defaults: instance.defaults)
-        automation = AutomationExecutor(
-            settings: settings,
-            displayManager: displayManager,
-            audioManager: audioManager,
-            autoBrightness: autoBrightness,
-            keepAwake: keepAwake,
-            coordinator: coordinator,
-            pairedPeers: pairedPeers,
-            sessionManager: sessionManager,
-            scenes: sceneStore
-        )
-
-        automationEvents = AutomationEventHub()
-        automationServer = ControlHTTPServer(
-            settings: settings,
-            keychain: KeychainStore(service: instance.keychainService),
-            executor: automation,
-            events: automationEvents,
-            scenes: sceneStore
-        )
-        coordinator.automationEvents = automationEvents
-        displayManager.automationEvents = automationEvents
-
         let tapRegistry = AudioProcessRegistry()
         #if DEBUG
         let tapBackend: any TapBackend
@@ -143,6 +119,32 @@ final class AppState {
         tapEngine.stateChangedHandler = { [weak audioManager] in
             audioManager?.refreshBridges()
         }
+        coordinator.tapEngine = tapEngine
+
+        sceneStore = SceneStore(defaults: instance.defaults)
+        automation = AutomationExecutor(
+            settings: settings,
+            displayManager: displayManager,
+            audioManager: audioManager,
+            tapEngine: tapEngine,
+            autoBrightness: autoBrightness,
+            keepAwake: keepAwake,
+            coordinator: coordinator,
+            pairedPeers: pairedPeers,
+            sessionManager: sessionManager,
+            scenes: sceneStore
+        )
+
+        automationEvents = AutomationEventHub()
+        automationServer = ControlHTTPServer(
+            settings: settings,
+            keychain: KeychainStore(service: instance.keychainService),
+            executor: automation,
+            events: automationEvents,
+            scenes: sceneStore
+        )
+        coordinator.automationEvents = automationEvents
+        displayManager.automationEvents = automationEvents
 
         // 「接著這台螢幕時防睡眠」是唯一跨重啟保留的模式
         if let uuid = settings.keepAwakeDisplayUUID {

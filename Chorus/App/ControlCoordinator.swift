@@ -21,6 +21,8 @@ final class ControlCoordinator {
     @ObservationIgnored private weak var audioManager: AudioDeviceManager?
     @ObservationIgnored private weak var autoController: AutoBrightnessController?
     @ObservationIgnored private weak var keepAwake: KeepAwakeController?
+    /// 逐 App 音量遙控的收件人（B6-6）。
+    @ObservationIgnored weak var tapEngine: TapEngine?
     /// 自動化事件流（SSE／CLI listen）。本機任何來源的變更都往這裡發一份。
     @ObservationIgnored weak var automationEvents: AutomationEventHub?
 
@@ -196,6 +198,10 @@ final class ControlCoordinator {
         case .keepAwake:
             // 螢幕綁定模式是本機設定，不跨機——decode 一律回計時／無限期／關閉
             keepAwake?.activate(KeepAwakePlanner.decode(value))
+        case let .appVolume(bundleID):
+            tapEngine?.setGain(Float(value), bundleID: bundleID)
+        case let .appMute(bundleID):
+            tapEngine?.setMuted(value > 0.5, bundleID: bundleID)
         case .input(nil), .contrast(nil):
             break // 語意層無意義（預留）
         }
@@ -238,6 +244,9 @@ final class ControlCoordinator {
         // 電源與防睡眠是動作而非可收斂的狀態——用 LWW 同步會讓兩台機器
         // 互相把對方的螢幕關掉／打開。
         case .input, .contrast, .displayPower, .keepAwake: false
+        // per-app 是遙控不是鏡射（DESIGN／PLAN B6-6）：兩台機器上的
+        // 「音樂 App 的音量」不是同一個東西，用 LWW 同步只會互相覆蓋
+        case .appVolume, .appMute: false
         }
     }
 

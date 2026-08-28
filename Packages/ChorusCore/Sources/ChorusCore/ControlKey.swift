@@ -20,4 +20,12 @@ public enum ControlKey: Codable, Sendable, Hashable {
     /// 防睡眠。value 依 `KeepAwakePlanner.encode`：0 = 關、負值 = 無限期、正值 = 秒數。
     /// `nil` 為唯一有意義的形式（整機層級），識別碼僅為型別一致保留。
     case keepAwake(displayUUID: String?)
+    /// 逐 App 音量（B6-6）。value 是 0–4 的增益。
+    ///
+    /// **command 專用，不進 LWW**：per-app 狀態是單機的——「把客廳那台的
+    /// 音樂 App 關小聲」是遙控，不是要兩台機器收斂到同一個值。
+    /// bundle id 不是可選的：沒有「語意層的某個 App」這種東西。
+    case appVolume(bundleID: String)
+    /// 逐 App 靜音。value：1 = 靜音、0 = 取消靜音。
+    case appMute(bundleID: String)
 }

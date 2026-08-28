@@ -4,7 +4,7 @@ public enum ControlTargetKind: String, Codable, Sendable, Hashable {
     case display
     case audioDevice
     case system
-    /// B6-6 的 per-app 音訊。目前只保留定位語法，executor 一律回 unsupported。
+    /// per-app 音訊（B6-6）。
     case app
 }
 
@@ -29,10 +29,13 @@ public enum ControlTarget: Sendable, Equatable, Hashable {
     /// 整機層級（防睡眠、自動亮度、場景）。
     case system
 
-    /// B6-6 擴充點：per-app 音量／靜音。**先預留 key 再實作**
-    /// （與 ControlKey 的既有慣例一致）。解析得過，執行時回 unsupported。
+    /// per-app 音量／靜音（B6-6）。`app:` 精確定位不要求 App 正在跑
+    /// ——先設定好、App 一開就生效；`appLike:` 只比對現在有音訊的 App。
     case app(bundleID: String)
     case appLike(String)
+    /// 列舉：目前有音訊的 App ＋ 已被調整過的 App。
+    /// **這是 LLM 的入口**——沒有它，遙控端只能用猜的去湊 bundle id。
+    case allApps
 
     public var kind: ControlTargetKind {
         switch self {
@@ -43,7 +46,7 @@ public enum ControlTarget: Sendable, Equatable, Hashable {
             .audioDevice
         case .system:
             .system
-        case .app, .appLike:
+        case .app, .appLike, .allApps:
             .app
         }
     }
@@ -51,7 +54,7 @@ public enum ControlTarget: Sendable, Equatable, Hashable {
     /// 這個目標可能對應多個實體（影響回應是單筆還是陣列）。
     public var isPlural: Bool {
         switch self {
-        case .allDisplays, .allDevices, .displayLike, .deviceLike, .appLike: true
+        case .allDisplays, .allDevices, .allApps, .displayLike, .deviceLike, .appLike: true
         default: false
         }
     }
@@ -68,6 +71,7 @@ public extension ControlTarget {
         "alldisplays": .allDisplays,
         "defaultoutput": .defaultOutput,
         "alldevices": .allDevices,
+        "allapps": .allApps,
         "system": .system,
     ]
 
@@ -115,6 +119,7 @@ public extension ControlTarget {
         case .system: "system"
         case let .app(bundleID): "app:\(bundleID)"
         case let .appLike(text): "appLike:\(text)"
+        case .allApps: "allApps"
         }
     }
 
@@ -122,7 +127,8 @@ public extension ControlTarget {
     static var syntaxHint: String {
         "display:<名稱>、displayLike:<片段>、displayUUID:<uuid>、displayWithMouse、"
             + "displayWithFocus、builtinDisplay、allDisplays、device:<名稱>、"
-            + "deviceLike:<片段>、deviceUID:<uid>、defaultOutput、allDevices、system"
+            + "deviceLike:<片段>、deviceUID:<uid>、defaultOutput、allDevices、"
+            + "app:<bundle id>、appLike:<片段>、allApps、system"
     }
 }
 

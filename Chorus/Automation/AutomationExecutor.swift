@@ -13,6 +13,7 @@ final class AutomationExecutor {
     private let settings: SettingsStore
     private unowned let displayManager: DisplayManager
     private unowned let audioManager: AudioDeviceManager
+    private unowned let tapEngine: TapEngine
     private unowned let autoBrightness: AutoBrightnessController
     private unowned let keepAwake: KeepAwakeController
     private unowned let coordinator: ControlCoordinator
@@ -24,6 +25,7 @@ final class AutomationExecutor {
         settings: SettingsStore,
         displayManager: DisplayManager,
         audioManager: AudioDeviceManager,
+        tapEngine: TapEngine,
         autoBrightness: AutoBrightnessController,
         keepAwake: KeepAwakeController,
         coordinator: ControlCoordinator,
@@ -34,6 +36,7 @@ final class AutomationExecutor {
         self.settings = settings
         self.displayManager = displayManager
         self.audioManager = audioManager
+        self.tapEngine = tapEngine
         self.autoBrightness = autoBrightness
         self.keepAwake = keepAwake
         self.coordinator = coordinator
@@ -68,9 +71,7 @@ final class AutomationExecutor {
         case .display: try runOnDisplays(request)
         case .audioDevice: try runOnDevices(request)
         case .system: try runOnSystem(request)
-        case .app: throw ControlError.unsupported(
-            "per-app 音訊控制尚未啟用（M12/B6-6）；目前可用的目標種類：顯示器、音訊裝置、system"
-        )
+        case .app: try runOnApps(request)
         }
     }
 
@@ -318,6 +319,124 @@ final class AutomationExecutor {
         ]
     }
 
+    // MARK: - 逐 App 音訊（B6-6）
+
+    /// per-app 音量／靜音。**引擎沒有權限時整組不可用**——回一個帶
+    /// 指引的 unsupported，而不是靜靜地把指令吞掉（DESIGN §6 降級表：
+    /// 這一組會消失，裝置音量與亮度完全不受影響）。
+    private func runOnApps(_ request: ValidatedControlRequest) throws(ControlError) -> [ControlResult] {
+        guard tapEngine.state == .active else {
+            throw ControlError.unsupported(engineHint)
+        }
+        let bundles = try resolveApps(request.target)
+        var results: [ControlResult] = []
+        for bundleID in bundles {
+            let name = tapEngine.registry.displayName(bundleID: bundleID)
+            let setting = tapEngine.setting(for: bundleID)
+            guard let property = request.property else {
+                results.append(contentsOf: describeApp(bundleID: bundleID))
+                continue
+            }
+            switch property {
+            case .volume:
+                if request.verb == .get {
+                    results.append(result(name, property, .number(Double(setting.gain))))
+                    continue
+                }
+                // 0–4x：per-app 可以 boost，>1 在 realtime 端過 soft limiter
+                let value = try resolved(
+                    request.value, current: Double(setting.gain), range: 0...Double(GainRamp.maxGain)
+                )
+                tapEngine.setGain(Float(value), bundleID: bundleID)
+                results.append(result(name, property, .number(value)))
+
+            case .mute:
+                if request.verb == .get {
+                    results.append(result(name, property, .bool(setting.muted)))
+                    continue
+                }
+                let target = request.verb == .toggle
+                    ? !setting.muted
+                    : try boolean(request.value, property: .mute)
+                tapEngine.setMuted(target, bundleID: bundleID)
+                results.append(result(name, property, .bool(target)))
+
+            default:
+                throw ControlError.targetKindMismatch(property: property, target: request.target.stringValue)
+            }
+        }
+        return results
+    }
+
+    private func describeApp(bundleID: String) -> [ControlResult] {
+        let name = tapEngine.registry.displayName(bundleID: bundleID)
+        let setting = tapEngine.setting(for: bundleID)
+        var results = [
+            result(name, .volume, .number(Double(setting.gain))),
+            result(name, .mute, .bool(setting.muted)),
+            ControlResult(target: name, property: "bundleID", value: .string(bundleID)),
+            ControlResult(target: name, property: "audible",
+                          value: .bool(tapEngine.registry.entry(bundleID: bundleID)?.isAudible ?? false)),
+            ControlResult(target: name, property: "tapped",
+                          value: .bool(tapEngine.tappedBundles.contains(bundleID))),
+        ]
+        if let route = setting.outputDeviceUID {
+            results.append(ControlResult(target: name, property: "outputDevice", value: .string(route)))
+        }
+        return results
+    }
+
+    /// 候選來源有兩份：**現在有音訊行程的 App**，以及**已經被調整過的 App**
+    /// （可能已退出——設定還在，遙控端要改得回來）。
+    private func resolveApps(_ target: ControlTarget) throws(ControlError) -> [String] {
+        tapEngine.registry.refresh()
+        let running = tapEngine.registry.controllableProcesses.compactMap(\.bundleID)
+        let adjusted = settings.appAudio.adjustedBundleIDs
+        var seen = Set<String>()
+        let all = (running + adjusted).filter { seen.insert($0).inserted }
+
+        let matches: [String] = switch target {
+        case .allApps:
+            all
+        case let .app(bundleID):
+            // 精確定位不要求 App 正在跑：先設定好、App 一開就生效
+            [bundleID]
+        case let .appLike(text):
+            all.filter {
+                Self.contains(tapEngine.registry.displayName(bundleID: $0), text) || Self.contains($0, text)
+            }
+        default:
+            []
+        }
+        guard !matches.isEmpty else {
+            throw ControlError.targetNotFound(
+                target.stringValue,
+                hint: all.isEmpty
+                    ? "目前沒有任何有音訊的 App"
+                    : "目前有音訊的 App：" + all
+                        .map { tapEngine.registry.displayName(bundleID: $0) }
+                        .joined(separator: "、")
+            )
+        }
+        return matches.sorted()
+    }
+
+    /// 引擎沒到 active 時，各種原因的指引各不相同——照實講哪一種。
+    private var engineHint: String {
+        switch tapEngine.state {
+        case .off:
+            "逐 App 音訊未啟用。請到 Chorus 設定 → 音訊開啟「App 音訊接管」"
+        case .probing:
+            "正在確認系統音訊錄製權限——播放任何聲音即可完成檢查"
+        case .denied:
+            "系統音訊錄製權限被拒。請到系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製 開啟 Chorus"
+        case let .failed(message):
+            "逐 App 音訊目前不可用：\(message)"
+        case .active:
+            ""
+        }
+    }
+
     // MARK: - 整機
 
     private func runOnSystem(_ request: ValidatedControlRequest) throws(ControlError) -> [ControlResult] {
@@ -561,11 +680,15 @@ extension AutomationExecutor {
         case (.mute, .defaultOutput): .mute(deviceUID: nil)
         case let (.mute, .deviceUID(uid)): .mute(deviceUID: uid)
         case (.keepAwake, .system): .keepAwake(displayUUID: nil)
+        // per-app 是遙控不是鏡射：走 command 通道、不進 LWW 收斂
+        case let (.volume, .app(bundleID)): .appVolume(bundleID: bundleID)
+        case let (.mute, .app(bundleID)): .appMute(bundleID: bundleID)
         default:
             throw ControlError.unsupported(
                 "跨機的「\(property.rawValue)」不支援「\(target.stringValue)」這種定位。"
                     + "可用組合：allDisplays／displayUUID:<uuid> 配 brightness・power・input・contrast，"
-                    + "defaultOutput／deviceUID:<uid> 配 volume・mute，system 配 keepAwake"
+                    + "defaultOutput／deviceUID:<uid> 配 volume・mute，app:<bundle id> 配 volume・mute，"
+                    + "system 配 keepAwake"
             )
         }
     }
