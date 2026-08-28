@@ -1,3 +1,4 @@
+import ChorusCore
 import CoreAudio
 import Foundation
 import Testing
@@ -70,15 +71,16 @@ struct TapEngineTests {
         #expect(engine.state == .active)
     }
 
-    @Test("active 前不能 tap；active 後 tap 建 playthrough session")
+    @Test("active 前不建 tap；active 後依設定自動建 playthrough session")
     func tapRequiresActive() {
         let (engine, backend, registry) = makeEngine(mode: .audio)
         injectAudibleApp(registry)
         engine.setEnabled(true)
-        engine.tap(bundleID: "com.apple.Music")
-        #expect(engine.tappedBundles.isEmpty) // probing 中拒絕
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles.isEmpty) // probing 中不建，但設定留著
+        #expect(engine.setting(for: "com.apple.Music").gain == 0.5)
         engine.healthTick()
-        engine.tap(bundleID: "com.apple.Music")
+        // 權限到手 → 對帳把設定套上（App 重啟自動恢復走的是同一條路）
         #expect(engine.tappedBundles == ["com.apple.Music"])
         #expect(backend.startedSessions.last?.kind == .playthrough)
         #expect(backend.startedSessions.last?.target == "com.apple.Music")
@@ -90,19 +92,19 @@ struct TapEngineTests {
         injectAudibleApp(registry)
         engine.setEnabled(true)
         engine.healthTick()
-        engine.tap(bundleID: "com.apple.Music")
+        engine.setGain(0.5, bundleID: "com.apple.Music")
         engine.setEnabled(false)
         #expect(engine.state == .off)
         #expect(engine.tappedBundles.isEmpty)
     }
 
-    @Test("預設輸出變更：per-app session 搬家（收舊建新）")
+    @Test("預設輸出變更：跟隨預設的 session 搬家（收舊建新）")
     func sessionsFollowDefaultOutput() {
         let (engine, backend, registry) = makeEngine(mode: .audio)
         injectAudibleApp(registry)
         engine.setEnabled(true)
         engine.healthTick()
-        engine.tap(bundleID: "com.apple.Music")
+        engine.setGain(0.5, bundleID: "com.apple.Music")
         let before = backend.startedSessions.count
         backend.simulateDefaultOutputChange()
         #expect(backend.startedSessions.count == before + 1)
@@ -115,7 +117,124 @@ struct TapEngineTests {
         injectAudibleApp(registry)
         engine.setEnabled(true)
         engine.healthTick()
-        engine.tap(bundleID: Bundle.main.bundleIdentifier ?? "com.hermes.Chorus")
+        engine.setGain(0.5, bundleID: Bundle.main.bundleIdentifier ?? "com.hermes.Chorus")
         #expect(engine.tappedBundles.isEmpty)
+        #expect(engine.lastTapError != nil) // 失敗有被說出來，不是靜靜消失
+        #expect(engine.state == .active)    // 但引擎不因此離開 active
+    }
+
+    // MARK: - B6-2：設定驅動的 session 對帳
+
+    @Test("沒調整就一個 tap 都沒有——歸零後 session 也收掉（DESIGN §2.3 規則 2）")
+    func neutralSettingsMeanNoTaps() {
+        let (engine, _, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        #expect(engine.tappedBundles.isEmpty)
+
+        engine.setGain(0.4, bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles == ["com.apple.Music"])
+
+        engine.setGain(1, bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles.isEmpty)
+    }
+
+    @Test("靜音也是一種調整：gain 回到 1 但仍靜音時 tap 要留著")
+    func muteAloneKeepsTheTap() {
+        let (engine, _, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setMuted(true, bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles == ["com.apple.Music"])
+        engine.setGain(1, bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles == ["com.apple.Music"])
+        engine.setMuted(false, bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles.isEmpty)
+    }
+
+    @Test("調整推到 session：增益與靜音都送到 realtime 端")
+    func adjustmentsReachTheSession() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(2.5, bundleID: "com.apple.Music")
+        engine.setMuted(true, bundleID: "com.apple.Music")
+        let session = backend.liveSessions["com.apple.Music"]
+        #expect(session?.lastGain == 2.5)
+        #expect(session?.lastMuted == true)
+    }
+
+    @Test("session 起步就在正確的增益上——不會先響一段全音量")
+    func sessionStartsAtTheConfiguredGain() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.2, bundleID: "com.apple.Music")
+        #expect(backend.liveSessions["com.apple.Music"]?.initialGain == 0.2)
+    }
+
+    @Test("gain 夾在 0–4x")
+    func gainIsClamped() {
+        let (engine, _, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(99, bundleID: "com.apple.Music")
+        #expect(engine.setting(for: "com.apple.Music").gain == GainRamp.maxGain)
+    }
+
+    @Test("重複調整同一個 App 不重建 session（重建會有可聽見的中斷）")
+    func repeatedAdjustmentsReuseTheSession() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        let after = backend.startedSessions.count
+        engine.setGain(0.6, bundleID: "com.apple.Music")
+        engine.setGain(0.7, bundleID: "com.apple.Music")
+        engine.setMuted(true, bundleID: "com.apple.Music")
+        #expect(backend.startedSessions.count == after)
+    }
+
+    @Test("reset 清掉所有調整，回到完全原生路徑")
+    func resetReturnsToNativePath() {
+        let (engine, _, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(2, bundleID: "com.apple.Music")
+        engine.setMuted(true, bundleID: "com.apple.Music")
+        engine.reset(bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles.isEmpty)
+        #expect(engine.setting(for: "com.apple.Music").isNeutral)
+    }
+
+    @Test("設定跨重啟保留：新引擎接上同一份設定，取得權限後自動恢復")
+    func settingsSurviveRestart() {
+        let backend = FakeTapBackend()
+        let registry = AudioProcessRegistry()
+        injectAudibleApp(registry)
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "tap-restart-\(UUID().uuidString)")!)
+
+        let first = TapEngine(backend: backend, registry: registry, settings: settings)
+        first.setEnabled(true)
+        first.healthTick()
+        first.setGain(0.3, bundleID: "com.apple.Music")
+        first.setEnabled(false)
+
+        // 模擬重啟：同一份 SettingsStore，全新引擎
+        settings.audioTapsEnabled = true
+        let second = TapEngine(backend: backend, registry: registry, settings: settings)
+        second.start()
+        #expect(second.state == .probing)
+        second.healthTick()
+        #expect(second.state == .active)
+        #expect(second.tappedBundles == ["com.apple.Music"])
+        #expect(second.setting(for: "com.apple.Music").gain == 0.3)
     }
 }

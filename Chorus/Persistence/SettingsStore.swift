@@ -32,6 +32,7 @@ final class SettingsStore {
         static let advisorModelIDs = "chorus.advisor.modelIDs"
         static let advisorModelCache = "chorus.advisor.modelCache"
         static let audioTaps = "chorus.audio.tapsEnabled"
+        static let appAudio = "chorus.audio.appSettings"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
         static let automationServer = "chorus.automation.serverEnabled"
@@ -165,6 +166,19 @@ final class SettingsStore {
         didSet { defaults.set(audioTapsEnabled, forKey: Key.audioTaps) }
     }
 
+    /// 逐 App 的音量／靜音／路由（bundle id → 設定，B6-2）。
+    /// 只存「有調整過」的 App——歸零就從表裡消失，因此這份表同時就是
+    /// 「哪些 App 需要 tap」的清單（DESIGN §2.3 規則 2）。
+    ///
+    /// 存 JSON 而不是 plist 字典：`AppAudioSetting` 之後還會長欄位
+    /// （B6-3 路由、B6-5 EQ），Codable 的往返比手工拆字典可靠。
+    var appAudio: AppAudioSettings {
+        didSet {
+            guard let data = try? JSONEncoder().encode(appAudio) else { return }
+            defaults.set(data, forKey: Key.appAudio)
+        }
+    }
+
     /// 螢幕長亮時是否連系統待機一起擋（預設只擋螢幕待機）。
     var keepAwakePreventsSystemSleep: Bool {
         didSet { defaults.set(keepAwakePreventsSystemSleep, forKey: Key.keepAwakeSystemSleep) }
@@ -218,6 +232,12 @@ final class SettingsStore {
         advisorModelIDs = (defaults.dictionary(forKey: Key.advisorModelIDs) as? [String: String]) ?? [:]
         advisorModelCache = (defaults.dictionary(forKey: Key.advisorModelCache) as? [String: [String]]) ?? [:]
         audioTapsEnabled = defaults.bool(forKey: Key.audioTaps)
+        if let data = defaults.data(forKey: Key.appAudio),
+           let decoded = try? JSONDecoder().decode(AppAudioSettings.self, from: data) {
+            appAudio = decoded
+        } else {
+            appAudio = AppAudioSettings()
+        }
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)

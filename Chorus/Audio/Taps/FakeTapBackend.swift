@@ -10,6 +10,8 @@ final class FakeTapBackend: TapBackend {
     enum Mode { case audio, zeros }
     var mode: Mode = .audio
     private(set) var startedSessions: [(kind: TapSessionKind, target: String)] = []
+    /// 各 bundle 目前的 session（測試查驗增益／靜音有沒有真的送到 realtime 端）。
+    private(set) var liveSessions: [String: FakeTapSession] = [:]
 
     func defaultOutputDeviceUID() -> String? { "fake-output-uid" }
 
@@ -21,12 +23,16 @@ final class FakeTapBackend: TapBackend {
         return FakeTapSession(kind: .captureOnly, backend: self)
     }
 
-    func startPlaythroughSession(bundleID: String, outputDeviceUID: String) throws -> any TapSession {
+    func startPlaythroughSession(
+        bundleID: String, outputDeviceUID: String, initialGain: Float
+    ) throws -> any TapSession {
         guard bundleID != Bundle.main.bundleIdentifier else {
             throw TapBackendError.refusedSelfTap
         }
         startedSessions.append((.playthrough, bundleID))
-        return FakeTapSession(kind: .playthrough, backend: self)
+        let session = FakeTapSession(kind: .playthrough, backend: self, initialGain: initialGain)
+        liveSessions[bundleID] = session
+        return session
     }
 
     private var outputChangedHandler: (@MainActor () -> Void)?
@@ -42,12 +48,17 @@ final class FakeTapSession: TapSession {
     private weak var backend: FakeTapBackend?
     private var accumulated = TapSessionStats()
     private(set) var stopped = false
-    private(set) var lastGain: Float = 1
+    private(set) var lastGain: Float
     private(set) var lastMuted = false
+    /// session 建立時的增益。與 `lastGain` 分開記，才驗得出「起步就在
+    /// 正確的值上」而不是「建完再滑過去」。
+    let initialGain: Float
 
-    init(kind: TapSessionKind, backend: FakeTapBackend) {
+    init(kind: TapSessionKind, backend: FakeTapBackend, initialGain: Float = 1) {
         self.kind = kind
         self.backend = backend
+        self.initialGain = initialGain
+        lastGain = initialGain
     }
 
     /// 每次讀 stats 前進約一秒的量（93 次回呼）；zeros 模式下非零數不動。

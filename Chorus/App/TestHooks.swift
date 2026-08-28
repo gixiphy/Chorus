@@ -194,10 +194,25 @@ final class TestHooks {
                 }
                 appState.tapEngine.registry.injectFake(entries)
             }
-        case "tapApp":
-            if let bundle = info["value"] { appState.tapEngine.tap(bundleID: bundle) }
-        case "untapApp":
-            if let bundle = info["value"] { appState.tapEngine.untap(bundleID: bundle) }
+        case "appGain":
+            // value = "bundle.id|1.5"。走與 UI 完全相同的路徑：設定變更 →
+            // 對帳 → session 建立／收掉（B6-2 起 tap 的唯一來源是設定）
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|")
+                if fields.count == 2, let gain = Float(fields[1]) {
+                    appState.tapEngine.setGain(gain, bundleID: String(fields[0]))
+                }
+            }
+        case "appMute":
+            // value = "bundle.id|1" / "bundle.id|0"
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|")
+                if fields.count == 2 {
+                    appState.tapEngine.setMuted(fields[1] == "1", bundleID: String(fields[0]))
+                }
+            }
+        case "appReset":
+            if let bundle = info["value"] { appState.tapEngine.reset(bundleID: bundle) }
         case "tapProbe":
             // B6-0 §1.2 的權限驗證：在 App 行程內建 tap＋aggregate＋IOProc
             // 抓 3 秒，回報每一步的 OSStatus 與峰值。全程 unmuted 不影響播放。
@@ -481,6 +496,16 @@ final class TestHooks {
                 "tapped": appState.tapEngine.tappedBundles,
                 "probeCallbacks": appState.tapEngine.probeStats.callbacks,
                 "probeNonZero": appState.tapEngine.probeStats.nonZeroCallbacks,
+                "lastTapError": appState.tapEngine.lastTapError.map { $0 as Any } ?? NSNull(),
+                "appSettings": Dictionary(uniqueKeysWithValues: appState.settings.appAudio
+                    .adjustedBundleIDs.map { bundleID in
+                        let entry = appState.settings.appAudio[bundleID]
+                        return (bundleID, [
+                            "gain": Double(entry.gain),
+                            "muted": entry.muted,
+                            "output": entry.outputDeviceUID as Any? ?? NSNull(),
+                        ] as [String: Any])
+                    }),
                 "processes": appState.tapEngine.registry.processes.map { entry in
                     ["name": entry.name, "bundle": entry.bundleID ?? "", "audible": entry.isAudible] as [String: Any]
                 },

@@ -32,6 +32,42 @@ final class AudioProcessRegistry {
         return processes.contains { $0.isAudible && $0.pid != ownPid }
     }
 
+    /// 選單列 per-app 清單的來源：有 bundle id、不是 Chorus 自己
+    /// （回音紀律：我們不 tap 自己），依名稱排序。
+    var controllableProcesses: [Entry] {
+        let ownBundle = Bundle.main.bundleIdentifier
+        return processes
+            .filter { $0.bundleID != nil && $0.bundleID != ownBundle }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    func entry(bundleID: String) -> Entry? {
+        processes.first { $0.bundleID == bundleID }
+    }
+
+    /// App 圖示。行程還在就用它的（最快也最準）；已退出的 App
+    /// （設定還留著、清單仍要顯示它）退回去查安裝位置。
+    func icon(bundleID: String) -> NSImage? {
+        if let pid = entry(bundleID: bundleID)?.pid,
+           let icon = NSRunningApplication(processIdentifier: pid)?.icon {
+            return icon
+        }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return nil
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
+    /// 顯示名稱。行程在就用行程的；不在就查安裝位置；都查不到就退回
+    /// bundle id 的最後一段（總比一串反轉網域好認）。
+    func displayName(bundleID: String) -> String {
+        if let entry = entry(bundleID: bundleID) { return entry.name }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            return FileManager.default.displayName(atPath: url.path)
+        }
+        return bundleID.split(separator: ".").last.map(String.init) ?? bundleID
+    }
+
     func refresh() {
         guard !isFake else { return }
         var listAddress = Self.address(kAudioHardwarePropertyProcessObjectList)

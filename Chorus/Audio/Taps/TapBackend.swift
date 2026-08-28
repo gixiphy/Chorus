@@ -51,9 +51,13 @@ protocol TapBackend: AnyObject {
     /// 正式 per-app：以 bundle id 定位（macOS 26 的 `bundleIDs`＋
     /// `processRestoreEnabled`，App 重啟由系統重綁）、mutedWhenTapped、
     /// 處理後寫回輸出裝置。
+    ///
+    /// `initialGain` 讓 session 從使用者設定的值起步。少了它，一個設成
+    /// 20% 的 App 每次重啟都會先響一段全音量再滑下去。
     func startPlaythroughSession(
         bundleID: String,
-        outputDeviceUID: String
+        outputDeviceUID: String,
+        initialGain: Float
     ) throws -> any TapSession
     /// 預設輸出裝置變更（session 要搬家）。
     func setDefaultOutputChangedHandler(_ handler: @escaping @MainActor () -> Void)

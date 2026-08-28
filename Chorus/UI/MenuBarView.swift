@@ -85,6 +85,8 @@ struct MenuBarView: View {
                 }
             }
 
+            AppVolumeSection()
+
             Divider()
 
             PeersSection()

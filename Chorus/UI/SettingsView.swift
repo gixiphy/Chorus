@@ -688,7 +688,7 @@ private struct AudioSettingsTab: View {
         case .probing:
             "確認權限中——播放任何聲音即可完成檢查（權限被拒不會有錯誤訊息，只能靠聲音判讀）。"
         case .active:
-            "就緒。個別 App 的音量控制將在後續版本出現在選單列。"
+            "就緒。選單列的「各 App 音量」可以逐一調整——沒調整過的 App 完全走原生路徑，不建立任何 tap。"
         case .denied:
             "偵測到系統音訊全為靜音——權限可能被拒。請到系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製 開啟 Chorus。"
         case let .failed(message):
@@ -707,7 +707,7 @@ private struct AudioSettingsTab: View {
 
     var body: some View {
         Form {
-            Section("各 App 音量與等化（建置中）") {
+            Section("各 App 音量與等化") {
                 Toggle("啟用 App 音訊接管", isOn: Binding(
                     get: { appState.settings.audioTapsEnabled },
                     set: { appState.tapEngine.setEnabled($0) }
