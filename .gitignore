@@ -12,3 +12,12 @@ docs/
 # Build artifacts 打包產物
 dist/
 .b1-work/
+.b3-work/
+.b4-work/
+
+# xcodebuild clean 會把中繼產物倒進 repo 根目錄
+*.o
+*.d
+*.dia
+*.swiftdeps
+*.swiftconstvalues
