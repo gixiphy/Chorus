@@ -31,8 +31,6 @@ struct SettingsView: View {
 private struct GeneralSettingsTab: View {
     @Environment(AppState.self) private var appState
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    /// 安裝結果或（不可寫時）使用者可自行貼進終端機的指令。
-    @State private var cliInstallMessage: String?
 
     /// 一條場景動作的人話描述。刻意貼近 CLI 的寫法，
     /// 使用者看得懂這一行，也就知道怎麼在終端重現它。
@@ -62,66 +60,6 @@ private struct GeneralSettingsTab: View {
                 Text("\(short) (build \(build))")
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-            }
-            Section("自動化介面") {
-                Toggle("啟用 localhost 控制介面", isOn: Binding(
-                    get: { appState.settings.automationServerEnabled },
-                    set: { enabled in
-                        appState.settings.automationServerEnabled = enabled
-                        appState.automationServer.updateActivation()
-                    }
-                ))
-                if appState.settings.automationServerEnabled {
-                    LabeledContent("狀態") {
-                        if let error = appState.automationServer.lastError {
-                            Text("啟動失敗：\(error)").foregroundStyle(.red)
-                        } else if appState.automationServer.isRunning {
-                            Text("執行中 · http://127.0.0.1:\(String(appState.settings.automationServerPort))")
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        } else {
-                            Text("啟動中…").foregroundStyle(.secondary)
-                        }
-                    }
-                    LabeledContent("Token") {
-                        HStack {
-                            Text(appState.automationServer.currentToken())
-                                .font(.caption.monospaced())
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .textSelection(.enabled)
-                            Button("重新產生") {
-                                appState.automationServer.regenerateToken()
-                            }
-                            .controlSize(.small)
-                        }
-                    }
-                }
-                if appState.settings.automationServerEnabled {
-                    LabeledContent("命令列工具") {
-                        HStack {
-                            Button("安裝 chorus 到 /usr/local/bin") {
-                                cliInstallMessage = switch appState.automationServer.installCLISymlink() {
-                                case let .installed(path): "已安裝到 \(path)"
-                                case let .needsManualCommand(command): command
-                                }
-                            }
-                            .controlSize(.small)
-                        }
-                    }
-                    if let message = cliInstallMessage {
-                        Text(message)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-                Text(
-                    "只在回送介面（127.0.0.1）上接受連線，需要 Bearer token。"
-                        + "跨機控制一律走已配對的加密同步通道，不經這個介面。"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
             Section("場景") {
                 if appState.sceneStore.scenes.isEmpty {
@@ -638,11 +576,6 @@ private struct AdvisorSettingsTab: View {
                     .fixedSize()
                     .help("從 \(engine.displayName) 回報的清單挑選")
                 }
-                Text(engine.modelHint)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
                 Spacer(minLength: 0)
             }
         }
@@ -999,6 +932,8 @@ private struct AudioSettingsTab: View {
 
 private struct SyncSettingsTab: View {
     @Environment(AppState.self) private var appState
+    /// 安裝結果或（不可寫時）使用者可自行貼進終端機的指令。
+    @State private var cliInstallMessage: String?
 
     var body: some View {
         @Bindable var settings = appState.settings
@@ -1028,6 +963,66 @@ private struct SyncSettingsTab: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+            Section("自動化介面") {
+                Toggle("啟用 localhost 控制介面", isOn: Binding(
+                    get: { appState.settings.automationServerEnabled },
+                    set: { enabled in
+                        appState.settings.automationServerEnabled = enabled
+                        appState.automationServer.updateActivation()
+                    }
+                ))
+                if appState.settings.automationServerEnabled {
+                    LabeledContent("狀態") {
+                        if let error = appState.automationServer.lastError {
+                            Text("啟動失敗：\(error)").foregroundStyle(.red)
+                        } else if appState.automationServer.isRunning {
+                            Text("執行中 · http://127.0.0.1:\(String(appState.settings.automationServerPort))")
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        } else {
+                            Text("啟動中…").foregroundStyle(.secondary)
+                        }
+                    }
+                    LabeledContent("Token") {
+                        HStack {
+                            Text(appState.automationServer.currentToken())
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Button("重新產生") {
+                                appState.automationServer.regenerateToken()
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+                if appState.settings.automationServerEnabled {
+                    LabeledContent("命令列工具") {
+                        HStack {
+                            Button("安裝 chorus 到 /usr/local/bin") {
+                                cliInstallMessage = switch appState.automationServer.installCLISymlink() {
+                                case let .installed(path): "已安裝到 \(path)"
+                                case let .needsManualCommand(command): command
+                                }
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                    if let message = cliInstallMessage {
+                        Text(message)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                Text(
+                    "只在回送介面（127.0.0.1）上接受連線，需要 Bearer token。"
+                        + "跨機控制一律走已配對的加密同步通道，不經這個介面。"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
