@@ -1,8 +1,8 @@
 # Chorus
 
 macOS 選單列 App：控制螢幕亮度與音量，並在**同一區網的多台 Mac 之間即時同步**。
-類似 [Lunar](https://lunar.fyi) 的亮度控制，加上跨機同步作為核心特色；音訊功能將於
-Phase 2 擴充至 [SoundSource](https://rogueamoeba.com/soundsource/) 類的 per-app 控制。
+類似 [Lunar](https://lunar.fyi) 的亮度控制，加上跨機同步作為核心特色；音訊側已擴充到
+[SoundSource](https://rogueamoeba.com/soundsource/) 類的 per-app 控制（CoreAudio process taps）。
 
 ## 功能（MVP）
 
@@ -14,6 +14,25 @@ Phase 2 擴充至 [SoundSource](https://rogueamoeba.com/soundsource/) 類的 per
   音量，其他配對的 Mac 即時跟進；亦可從選單直接遙控特定一台
 - **配對**：一次性 PIN（SAS）確認 Curve25519 ECDH 金鑰交換 → 32-byte PSK 存
   Keychain；日常連線走 TLS 1.2 PSK，未配對連線一律拒絕
+
+## 音訊深化（M12，CoreAudio process taps）
+
+**預設關閉**，需要系統音訊錄製權限（`NSAudioCaptureUsageDescription`）。
+沒有調整過的 App 完全走原生路徑——**一個 tap 都不建立**。
+
+- **逐 App 音量／靜音／boost**：0–4x，>1x 過 soft limiter；增益變更走 ~10 ms
+  斜坡不爆音；設定以 bundle id 為鍵，App 重啟自動恢復
+- **逐 App 路由**：指定輸出裝置；目標裝置拔掉時暫時退回系統預設，插回來自動接回
+- **軟體音量**：裝置音量的第三後端（DDC 橋接 → driver 數位衰減 → 排除式全域 tap
+  → 誠實停用），預設不啟用
+- **等化器**：每輸出裝置 biquad cascade（peaking／low・high shelf），
+  手動 10 段或 [AutoEq](https://github.com/jaakkopasanen/AutoEq) 耳機校正；
+  必套 negative preamp 防削波
+- **裝置優先順序**：偏好裝置接上即成為預設輸出並還原音量
+- **提示音音量**：與輸出音量分開（場景可以只關提示音）
+- **跨機**：`chorus set --peer 客廳 --app com.spotify.client --mute on`
+
+權限被拒時 per-app 與等化整組隱藏；裝置音量、亮度、同步完全不受影響。
 
 ## 開發
 
@@ -55,3 +74,7 @@ DEBUG 版可用 DistributedNotificationCenter `com.hermes.Chorus.test` 驅動配
 
 `Chorus/Display/Vendor/AppleSiliconDDC.swift` vendored 自
 [waydabber/AppleSiliconDDC](https://github.com/waydabber/AppleSiliconDDC)（MIT）。
+
+等化器的耳機校正資料來自 [AutoEq](https://github.com/jaakkopasanen/AutoEq)（MIT）；
+biquad 係數公式取自公開的 Audio EQ Cookbook（Robert Bristow-Johnson）。
+`AudioDriver/` 底本為 [proxy-audio-device](https://github.com/briankendall/proxy-audio-device)（Unlicense）。
