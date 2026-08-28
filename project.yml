@@ -52,7 +52,11 @@ targets:
     sources: [CLI]
     settings:
       base:
+        # 執行檔叫 chorus，但**模組名必須另取**：兩者同在 Products/Debug，
+        # chorus.swiftmodule 會在不分大小寫的檔案系統上蓋掉 app 的
+        # Chorus.swiftmodule，測試的 @testable import Chorus 就解析不到。
         PRODUCT_NAME: chorus
+        PRODUCT_MODULE_NAME: ChorusCLI
         SWIFT_VERSION: "6.0"
     dependencies:
       - package: ChorusCore
