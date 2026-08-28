@@ -197,12 +197,13 @@ struct DeviceDiagramView: View {
 
     private var canvas: some View {
         GeometryReader { geometry in
+            let rect = contentRect(in: geometry.size)
             ZStack {
-                background
+                background(in: rect)
                 ForEach(Array(nodes.enumerated()), id: \.element.key) { index, node in
                     DiagramNodeView(node: node)
-                        .position(position(for: node.key, index: index, in: geometry.size))
-                        .gesture(dragGesture(for: node.key, in: geometry.size))
+                        .position(position(for: node.key, index: index, in: rect))
+                        .gesture(dragGesture(for: node.key, in: rect))
                 }
                 if nodes.isEmpty {
                     Text("沒有可顯示的裝置")
@@ -215,10 +216,38 @@ struct DeviceDiagramView: View {
         .clipped()
     }
 
+    /// 照片在畫布上實際佔用的矩形（等比縮放置中）；沒有照片時就是整塊畫布。
+    /// 節點座標一律以這個矩形為基準——照片是直式而視窗是橫式時，兩側會留白，
+    /// 若仍以整塊畫布換算，節點會飄在照片外，送去分析的「照片座標」也就失真。
+    private func contentRect(in size: CGSize) -> CGRect {
+        guard let url = appState.diagram.backgroundImageURL,
+              let image = DiagramImageCache.image(for: url),
+              image.size.width > 0, image.size.height > 0
+        else { return CGRect(origin: .zero, size: size) }
+        let scale = min(size.width / image.size.width, size.height / image.size.height)
+        let fitted = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        return CGRect(
+            x: (size.width - fitted.width) / 2,
+            y: (size.height - fitted.height) / 2,
+            width: fitted.width,
+            height: fitted.height
+        )
+    }
+
+    /// 背景照完整顯示（不裁切），並描一道邊讓可擺放區域一眼可辨。
     @ViewBuilder
-    private var background: some View {
-        if let url = appState.diagram.backgroundImageURL {
-            DiagramBackgroundView(url: url)
+    private func background(in rect: CGRect) -> some View {
+        if let url = appState.diagram.backgroundImageURL,
+           let image = DiagramImageCache.image(for: url) {
+            // 節點卡片有 material 底，照片可以清楚顯示；留一點淡化避免搶走節點。
+            Image(nsImage: image)
+                .resizable()
+                .opacity(0.85)
+                .frame(width: rect.width, height: rect.height)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                .position(x: rect.midX, y: rect.midY)
+                .allowsHitTesting(false)
         }
     }
 
@@ -262,10 +291,13 @@ struct DeviceDiagramView: View {
         return result
     }
 
-    /// 已存座標優先；沒有就以格狀排列給預設位置。
-    private func position(for key: String, index: Int, in size: CGSize) -> CGPoint {
+    /// 已存座標優先；沒有就以格狀排列給預設位置。座標是照片矩形內的比例。
+    private func position(for key: String, index: Int, in rect: CGRect) -> CGPoint {
         let normalized = appState.diagram.position(for: key) ?? defaultPosition(index: index)
-        return CGPoint(x: normalized.x * size.width, y: normalized.y * size.height)
+        return CGPoint(
+            x: rect.minX + normalized.x * rect.width,
+            y: rect.minY + normalized.y * rect.height
+        )
     }
 
     private func defaultPosition(index: Int) -> CGPoint {
@@ -275,12 +307,16 @@ struct DeviceDiagramView: View {
         return CGPoint(x: 0.22 + Double(column) * 0.28, y: 0.25 + Double(row) * 0.32)
     }
 
-    private func dragGesture(for key: String, in size: CGSize) -> some Gesture {
+    /// 拖曳位置換回照片矩形內的比例（超出範圍由 DiagramStore 夾在 0…1）。
+    private func dragGesture(for key: String, in rect: CGRect) -> some Gesture {
         DragGesture()
             .onChanged { value in
-                guard size.width > 0, size.height > 0 else { return }
+                guard rect.width > 0, rect.height > 0 else { return }
                 appState.diagram.setPosition(
-                    CGPoint(x: value.location.x / size.width, y: value.location.y / size.height),
+                    CGPoint(
+                        x: (value.location.x - rect.minX) / rect.width,
+                        y: (value.location.y - rect.minY) / rect.height
+                    ),
                     for: key
                 )
             }
@@ -300,24 +336,6 @@ private enum DiagramImageCache {
         guard let image = NSImage(contentsOf: url) else { return nil }
         entries[url] = (modified, image)
         return image
-    }
-}
-
-/// 配置圖背景照：完整顯示（scaledToFit，不裁切）。
-/// 同步載入——非同步載入在初始內容為空、尺寸為零時不保證觸發，照片會整片不見。
-private struct DiagramBackgroundView: View {
-    let url: URL
-
-    @ViewBuilder
-    var body: some View {
-        if let image = DiagramImageCache.image(for: url) {
-            // 節點卡片有 material 底，照片可以清楚顯示；留一點淡化避免搶走節點。
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .opacity(0.8)
-                .allowsHitTesting(false)
-        }
     }
 }
 
