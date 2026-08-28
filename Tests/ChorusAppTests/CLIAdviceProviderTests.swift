@@ -11,6 +11,10 @@ struct CLIAdviceProviderTests {
     {"sceneSummary":"測試場景","offsets":[{"displayID":"display:AAA","offset":0.1,"reason":"理由"}],"warnings":[]}
     """
 
+    /// 嵌進 envelope 的字串欄位時要先逃逸引號（shell 單引號會原樣保留反斜線）。
+    private static let escapedAdviceJSON =
+        validAdviceJSON.replacingOccurrences(of: "\"", with: "\\\"")
+
     private let context = AdviceContext(
         displays: [.init(id: "display:AAA", name: "內建", backend: "displayServices")],
         curve: AmbientCurve()
@@ -47,7 +51,7 @@ struct CLIAdviceProviderTests {
     func successPath() async throws {
         let stub = try makeStub(envelopeScript(result: Self.validAdviceJSON))
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
-        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/desk.jpg")], context: context)
+        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/desk.jpg")], context: context, sandbox: nil)
         #expect(advice.offsets.count == 1)
         #expect(advice.offsets[0].displayID == "display:AAA")
     }
@@ -61,7 +65,7 @@ struct CLIAdviceProviderTests {
         \(envelopeScript(result: Self.validAdviceJSON).replacingOccurrences(of: "cat > /dev/null\n", with: ""))
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
-        _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/desk-photo.jpg")], context: context)
+        _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/desk-photo.jpg")], context: context, sandbox: nil)
         let prompt = try String(contentsOf: capture, encoding: .utf8)
         #expect(prompt.contains("桌面照片：/tmp/desk-photo.jpg（用 Read 工具讀取後再分析）"))
         #expect(prompt.contains("JSON Schema"))
@@ -74,7 +78,7 @@ struct CLIAdviceProviderTests {
         let fenced = "```json\n\(Self.validAdviceJSON)\n```"
         let stub = try makeStub(envelopeScript(result: fenced))
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
-        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
+        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil)
         #expect(advice.sceneSummary == "測試場景")
     }
 
@@ -87,7 +91,7 @@ struct CLIAdviceProviderTests {
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         do {
-            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case .notLoggedIn = error else {
@@ -106,7 +110,7 @@ struct CLIAdviceProviderTests {
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         do {
-            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case .notLoggedIn = error else {
@@ -125,7 +129,7 @@ struct CLIAdviceProviderTests {
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         do {
-            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case let .processFailed(status, message) = error else {
@@ -146,7 +150,7 @@ struct CLIAdviceProviderTests {
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         do {
-            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case let .processFailed(status, stderr) = error else {
@@ -168,7 +172,7 @@ struct CLIAdviceProviderTests {
         provider.timeout = .milliseconds(500)
         let started = Date()
         do {
-            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case .timedOut = error else {
@@ -193,7 +197,7 @@ struct CLIAdviceProviderTests {
         fi
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
-        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
+        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil)
         #expect(advice.offsets.count == 1)
         try? FileManager.default.removeItem(at: marker)
     }
@@ -206,7 +210,7 @@ struct CLIAdviceProviderTests {
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         do {
-            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case let .decodeFailed(raw) = error else {
@@ -217,22 +221,133 @@ struct CLIAdviceProviderTests {
         }
     }
 
-    @Test("plainStdout 引擎：prompt 走 argv、整段 stdout 直接 decode")
-    func plainStdoutEngine() async throws {
+    /// 把整組 argv 逐行寫出來，斷言各引擎的呼叫契約。
+    private func captureArgv(engineID: String, photos: [String]) async throws -> [String] {
         let capture = FileManager.default.temporaryDirectory
             .appendingPathComponent("chorus-argv-\(UUID().uuidString).txt")
         let stub = try makeStub("""
-        printf '%s' "$2" > "\(capture.path)"
+        printf '%s@@ARG@@' "$@" > "\(capture.path)"
         cat <<'CHORUS_EOF'
         \(Self.validAdviceJSON)
         CHORUS_EOF
         """)
-        let codex = KnownCLIEngine.catalog.first { $0.id == "codex" }!
-        let provider = CLIAdviceProvider(engine: codex, executable: stub)
-        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/desk.jpg")], context: context)
-        #expect(advice.offsets.count == 1)
-        let argvPrompt = try String(contentsOf: capture, encoding: .utf8)
-        #expect(argvPrompt.contains("桌面照片：/tmp/desk.jpg"))
+        let engine = KnownCLIEngine.catalog.first { $0.id == engineID }!
+        let provider = CLIAdviceProvider(engine: engine, executable: stub)
+        _ = try await provider.advise(
+            photos: photos.map { LabeledPhoto(path: $0) },
+            context: context,
+            sandbox: nil
+        )
+        let argv = try String(contentsOf: capture, encoding: .utf8)
+            .components(separatedBy: "@@ARG@@")
+            .dropLast() // printf 在最後一個引數後也會補一個分隔符
+            .map { $0 }
         try? FileManager.default.removeItem(at: capture)
+        return argv
+    }
+
+    @Test("codex：影像以 --image 直接附加，prompt 排最後")
+    func codexAttachesImages() async throws {
+        let argv = try await captureArgv(engineID: "codex", photos: ["/tmp/a.jpg", "/tmp/b.jpg"])
+        #expect(argv.first == "exec")
+        // 每張圖一組 --image <path>
+        for path in ["/tmp/a.jpg", "/tmp/b.jpg"] {
+            guard let index = argv.firstIndex(of: path) else {
+                Issue.record("argv 缺少 \(path)")
+                return
+            }
+            #expect(argv[index - 1] == "--image")
+        }
+        // 沙箱目錄不是 git repo，少了這個旗標 codex 會直接拒跑
+        #expect(argv.contains("--skip-git-repo-check"))
+        #expect(argv.contains("read-only"))
+        // 附加模式的 prompt 不該再叫模型去讀某個路徑
+        let prompt = argv.last ?? ""
+        #expect(prompt.contains("附加於本次訊息"))
+        // 附加模式不該再把路徑寫進 prompt——模型已經看得到圖，
+        // 叫它去讀路徑只會誘發多餘（且會被權限擋下）的工具呼叫
+        #expect(!prompt.contains("/tmp/a.jpg"))
+    }
+
+    @Test("opencode：訊息必須排在 -f 前面，否則會被當成檔案路徑吃掉")
+    func opencodeArgumentOrder() async throws {
+        let argv = try await captureArgv(engineID: "opencode", photos: ["/tmp/a.jpg"])
+        #expect(argv.first == "run")
+        guard let fileFlag = argv.firstIndex(of: "-f"),
+              let prompt = argv.firstIndex(where: { $0.contains("附加於本次訊息") })
+        else {
+            Issue.record("argv 形狀不符：\(argv)")
+            return
+        }
+        // 實測：訊息排在 -f 後面會得到 "File not found: <整段訊息>"
+        #expect(prompt < fileFlag)
+        #expect(argv[fileFlag + 1] == "/tmp/a.jpg")
+    }
+
+    @Test("agy：以 --add-dir 明示授權沙箱，並帶上 schema 檔")
+    func agyGrantsSandbox() async throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-agy-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let capture = sandbox.appendingPathComponent("argv.txt")
+        let stub = try makeStub("""
+        printf '%s@@ARG@@' "$@" > "\(capture.path)"
+        printf '%s' '{"status":"SUCCESS","response":"\(Self.escapedAdviceJSON)"}'
+        """)
+        let agy = KnownCLIEngine.catalog.first { $0.id == "agy" }!
+        let provider = CLIAdviceProvider(engine: agy, executable: stub)
+        _ = try await provider.advise(
+            photos: [LabeledPhoto(path: sandbox.appendingPathComponent("p.jpg").path)],
+            context: context,
+            sandbox: sandbox
+        )
+        let argv = try String(contentsOf: capture, encoding: .utf8)
+            .components(separatedBy: "@@ARG@@").dropLast().map { $0 }
+        guard let addDir = argv.firstIndex(of: "--add-dir") else {
+            Issue.record("缺少 --add-dir：\(argv)")
+            return
+        }
+        #expect(argv[addDir + 1] == sandbox.path)
+        // 絕不使用全域放行
+        #expect(!argv.contains("--dangerously-skip-permissions"))
+        #expect(argv.contains("--json-schema"))
+    }
+
+    @Test("grok：textEnvelope 取 text 欄位")
+    func grokTextEnvelope() async throws {
+        let stub = try makeStub("""
+        printf '%s' '{"text":"\(Self.escapedAdviceJSON)","stopReason":"end_turn"}'
+        """)
+        let grok = KnownCLIEngine.catalog.first { $0.id == "grok" }!
+        let provider = CLIAdviceProvider(engine: grok, executable: stub)
+        let advice = try await provider.advise(
+            photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil
+        )
+        #expect(advice.offsets.count == 1)
+    }
+
+    @Test("退出碼 0 但回應為空 → emptyResponse，並把 stderr 的原因接出來")
+    func emptyResponseSurfacesStderr() async throws {
+        let stub = try makeStub("""
+        echo 'a tool required the "read_file" permission that headless mode cannot prompt for' >&2
+        printf '%s' '{"status":"SUCCESS","response":""}'
+        """)
+        let agy = KnownCLIEngine.catalog.first { $0.id == "agy" }!
+        let provider = CLIAdviceProvider(engine: agy, executable: stub)
+        do {
+            _ = try await provider.advise(
+                photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil
+            )
+            Issue.record("預期丟錯")
+        } catch let error as AdviceError {
+            guard case let .emptyResponse(engineID, detail) = error else {
+                Issue.record("預期 emptyResponse，得到 \(error)")
+                return
+            }
+            #expect(engineID == "agy")
+            #expect(detail.contains("read_file"))
+        }
     }
 }

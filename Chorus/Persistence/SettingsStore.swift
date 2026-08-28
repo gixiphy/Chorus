@@ -29,6 +29,7 @@ final class SettingsStore {
         static let advisorEngineID = "chorus.advisor.engineID"
         static let advisorCustomPaths = "chorus.advisor.customPaths"
         static let advisorConfirmed = "chorus.advisor.confirmed"
+        static let advisorModelIDs = "chorus.advisor.modelIDs"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
         static let automationServer = "chorus.automation.serverEnabled"
@@ -141,6 +142,15 @@ final class SettingsStore {
         didSet { defaults.set(advisorConfirmed, forKey: Key.advisorConfirmed) }
     }
 
+    /// 各引擎的自訂模型字串（engine id → 模型名）。留空＝用 CLI 自己的預設。
+    ///
+    /// 刻意**不做**「執行 `<cli> models` 列出可選項」：只有 agy 有這種指令，
+    /// 而它實測會無限期卡住（1.1.22）；其餘 CLI 根本沒有列舉介面。
+    /// 一個自由輸入欄位對五個引擎都成立，也不必為了一份清單去打網路。
+    var advisorModelIDs: [String: String] {
+        didSet { defaults.set(advisorModelIDs, forKey: Key.advisorModelIDs) }
+    }
+
     /// 螢幕長亮時是否連系統待機一起擋（預設只擋螢幕待機）。
     var keepAwakePreventsSystemSleep: Bool {
         didSet { defaults.set(keepAwakePreventsSystemSleep, forKey: Key.keepAwakeSystemSleep) }
@@ -191,6 +201,7 @@ final class SettingsStore {
         advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"
         advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)
+        advisorModelIDs = (defaults.dictionary(forKey: Key.advisorModelIDs) as? [String: String]) ?? [:]
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)

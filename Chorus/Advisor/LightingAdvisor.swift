@@ -162,7 +162,11 @@ final class LightingAdvisor {
             lastErrorMessage = "未找到可用的分析引擎（設定 → 分析引擎）"
             return
         }
-        let provider = CLIAdviceProvider(engine: engine.engine, executable: engine.url)
+        let provider = CLIAdviceProvider(
+            engine: engine.engine,
+            executable: engine.url,
+            model: settings.advisorModelIDs[engine.id]
+        )
         // 第一張恆為背景照（座標基準），標註各自跟著自己那張走。
         var photos = [(url: photoURL, label: diagram.backgroundLabel)]
         photos += extraPhotos.map { (url: $0, label: label(for: $0)) }
@@ -183,17 +187,19 @@ final class LightingAdvisor {
                 self?.isAnalyzing = false
                 self?.analysisTask = nil
             }
-            var thumbnailURLs: [URL] = []
-            defer { for url in thumbnailURLs { try? FileManager.default.removeItem(at: url) } }
+            // 每次分析一個專屬沙箱：縮圖與 schema 檔都只放這裡。
+            // 需要明示授權才能讀檔的 CLI（agy --add-dir）以它為授權範圍，
+            // 授權到的剛好是這幾張圖，而不是整個共用 temp 目錄。
+            let sandbox = Self.makeSandbox()
+            defer { if let sandbox { try? FileManager.default.removeItem(at: sandbox) } }
             do {
                 var photos: [LabeledPhoto] = []
                 for photo in photoURLs.prefix(Self.maxPhotos) {
-                    let thumb = try Self.makeThumbnail(from: photo.url)
-                    thumbnailURLs.append(thumb)
+                    let thumb = try Self.makeThumbnail(from: photo.url, in: sandbox)
                     photos.append(LabeledPhoto(path: thumb.path, label: photo.label))
                 }
                 if photos.isEmpty { photos = [LabeledPhoto(path: "(無照片)")] }
-                let raw = try await provider.advise(photos: photos, context: context)
+                let raw = try await provider.advise(photos: photos, context: context, sandbox: sandbox)
                 guard let self, !Task.isCancelled else { return }
                 let advice = raw.sanitized(for: context)
                 let entry = AdviceResult(advice: advice, context: context, date: Date(), fromHistory: false)
@@ -380,7 +386,24 @@ final class LightingAdvisor {
     // MARK: - 縮圖
 
     /// 背景照 → 長邊 ≤1344px、JPEG q0.7 的暫存檔；分析完即刪（呼叫端 defer）。
-    private nonisolated static func makeThumbnail(from source: URL) throws -> URL {
+    /// 本次分析的沙箱目錄。建不出來就回 nil——縮圖退回共用 temp 目錄，
+    /// 分析照常進行（只有需要 --add-dir 的引擎會因此讀不到圖並誠實報錯）。
+    private nonisolated static func makeSandbox() -> URL? {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-advisor-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: url,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    private nonisolated static func makeThumbnail(from source: URL, in sandbox: URL?) throws -> URL {
         guard let image = NSImage(contentsOf: source) else {
             throw AdviceError.processFailed(status: 0, stderr: "無法讀取背景照片")
         }
@@ -415,8 +438,8 @@ final class LightingAdvisor {
         ) else {
             throw AdviceError.processFailed(status: 0, stderr: "無法產生縮圖")
         }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chorus-advisor-\(UUID().uuidString).jpg")
+        let directory = sandbox ?? FileManager.default.temporaryDirectory
+        let url = directory.appendingPathComponent("photo-\(UUID().uuidString).jpg")
         try jpeg.write(to: url)
         return url
     }

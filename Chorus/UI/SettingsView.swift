@@ -501,8 +501,11 @@ private struct AdvisorSettingsTab: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 if let detected, detected.selectable {
+                    // 勾選狀態看的是**實際會用到的**引擎，不是設定值本身：
+                    // 選定的引擎被移除時 registry 會回落 claude，若這裡只比對
+                    // 設定值就會一個都不打勾，看起來像沒有引擎可用。
                     Toggle(isOn: Binding(
-                        get: { appState.settings.advisorEngineID == engine.id },
+                        get: { appState.advisor.registry.activeEngine?.id == engine.id },
                         set: { on in if on { appState.settings.advisorEngineID = engine.id } }
                     )) {
                         Text(engine.displayName).fontWeight(.medium)
@@ -525,6 +528,7 @@ private struct AdvisorSettingsTab: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                modelPicker(engine)
             } else {
                 TextField(
                     "自訂 \(engine.executableName) 路徑（例：/opt/homebrew/bin/\(engine.executableName)）",
@@ -535,6 +539,40 @@ private struct AdvisorSettingsTab: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// 自訂模型欄位。留空＝不帶 `--model`，交給 CLI 自己決定。
+    /// 用自由輸入而非下拉選單：只有 agy 有列舉指令且實測會卡住，
+    /// 其餘 CLI 根本沒有列舉介面——一個欄位對五個引擎都成立。
+    @ViewBuilder
+    private func modelPicker(_ engine: KnownCLIEngine) -> some View {
+        if engine.supportsModelSelection {
+            // 一行到底、與上方路徑行同為 caption 級：直接把字串當 TextField 的
+            // label 會被 Form 排進 leading 欄並折行，每個引擎的列高就不一樣了。
+            HStack(spacing: 6) {
+                Text("模型")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("", text: Binding(
+                    get: { appState.settings.advisorModelIDs[engine.id] ?? "" },
+                    set: { name in
+                        var ids = appState.settings.advisorModelIDs
+                        let trimmed = name.trimmingCharacters(in: .whitespaces)
+                        if trimmed.isEmpty {
+                            ids.removeValue(forKey: engine.id)
+                        } else {
+                            ids[engine.id] = trimmed
+                        }
+                        appState.settings.advisorModelIDs = ids
+                    }
+                ), prompt: Text("預設"))
+                .labelsHidden()
+                .font(.caption)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 200)
+                Spacer(minLength: 0)
+            }
+        }
     }
 
     @ViewBuilder

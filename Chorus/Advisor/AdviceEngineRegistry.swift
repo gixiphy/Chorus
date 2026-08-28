@@ -4,31 +4,99 @@ import Observation
 
 /// 已知 CLI 目錄的一筆（DESIGN-ai-provider-layer §0.1）。
 /// 偵測到誰就在設定頁列誰；預設引擎＝claude（存在時）。
+///
+/// 每一筆的參數組都是**實測**出來的，不是照文件抄的——各家 headless 行為
+/// 差異很大（誰需要權限旗標、圖片怎麼送、回應在 stdout 還是 envelope 的哪個
+/// 欄位），猜錯的症狀往往是「跑完了但沒有輸出」這種難查的失敗。
 struct KnownCLIEngine: Identifiable, Sendable {
     let id: String
     let executableName: String
     let displayName: String
     let codec: AdviceOutputCodec
-    /// 接入尚未打通（接入層 E1 處理）前標「待接入」不可選。
-    /// agy 現況（1.1.7 實測）：pipe 輸出正常（舊 PTY bug 已修），
-    /// 但 headless 權限規則下 read_file 讀圖拿不到輸出，vision 流程未通。
+    /// 照片怎麼送到模型手上；決定 prompt 要不要講路徑。
+    let photoDelivery: AdvicePrompt.PhotoDelivery
+    /// 接入尚未打通前標「待接入」不可選。
     let pendingIntegration: Bool
-    /// headless／讀圖行為尚未驗證（codex）：可選，標「實驗性」。
+    /// headless／讀圖行為尚未在本機驗證過：可選，標「實驗性」。
     let experimental: Bool
-    /// 給 prompt 的照片讀取措辭（claude 有 Read 工具，其他用通用措辭）。
+    /// 支援 `--model`／`-m`：設定頁給一個自訂模型欄位。
+    let supportsModelSelection: Bool
+    /// 給 prompt 的照片讀取措辭（僅 `.pathInPrompt` 用得到）。
     let readInstruction: String
+    /// 未登入時提示使用者到終端執行的指令。
+    let loginCommand: String
+
+    /// 單發呼叫需要的執行期資訊。
+    struct RunContext {
+        /// 這次分析的照片沙箱目錄——只放本次要看的縮圖與 schema 檔。
+        /// 需要明示宣告工作目錄的 CLI（agy `--add-dir`、codex `--cd`、
+        /// grok `--cwd`、opencode `--dir`）都指向這裡。
+        var sandbox: URL?
+        /// 寫在沙箱裡的 JSON Schema 檔（吃 schema 檔的引擎才用）。
+        var schemaFile: URL?
+        /// 使用者填的模型字串；留空＝用 CLI 自己的預設。
+        var model: String?
+        /// 縮圖路徑，依序對應 prompt 裡的標註。
+        var photoPaths: [String] = []
+        /// 子行程逾時；CLI 自帶 timeout 參數的會設得比它略短，
+        /// 讓 CLI 自己乾淨收尾而不是被我們 SIGTERM。
+        var timeout: Duration = .seconds(120)
+    }
 
     /// 單發呼叫的參數與 prompt 傳遞方式。
     /// claude 走 stdin（prompt 長，避開 argv）；其餘以參數帶 prompt。
-    func invocation(prompt: String) -> (arguments: [String], stdin: String?) {
+    func invocation(prompt: String, run: RunContext) -> (arguments: [String], stdin: String?) {
         switch id {
         case "claude":
-            (["-p", "--output-format", "json", "--allowedTools", "Read"], prompt)
+            return (["-p", "--output-format", "json", "--allowedTools", "Read"], prompt)
+
+        case "agy":
+            var arguments = ["-p", prompt, "--output-format", "json"]
+            // headless 無法互動式詢問權限，read_file 會被自動拒絕（實測 1.1.19／1.1.22：
+            // 退出碼 0、status 仍是 SUCCESS、response 空字串，原因只在 stderr）。
+            // --add-dir 明示宣告工作目錄即可放行，範圍限於本次分析的沙箱；
+            // 不用 --dangerously-skip-permissions（那會放行所有工具）。
+            if let sandbox = run.sandbox { arguments += ["--add-dir", sandbox.path] }
+            if let schema = run.schemaFile { arguments += ["--json-schema", schema.path] }
+            if let model = run.model, !model.isEmpty { arguments += ["--model", model] }
+            arguments += ["--print-timeout", "\(Self.innerTimeoutSeconds(run))s"]
+            return (arguments, nil)
+
+        case "grok":
+            // 讀檔不需要額外權限旗標（實測 1.0.5 直接可用）。
+            var arguments = ["-p", prompt, "--output-format", "json"]
+            if let sandbox = run.sandbox { arguments += ["--cwd", sandbox.path] }
+            if let model = run.model, !model.isEmpty { arguments += ["--model", model] }
+            return (arguments, nil)
+
         case "codex":
-            (["exec", prompt], nil)
+            // --image 直接附加影像：不經讀檔工具，也就沒有權限問題。
+            // --skip-git-repo-check 必要——沙箱目錄不是 git repo。
+            var arguments = ["exec"]
+            for path in run.photoPaths { arguments += ["--image", path] }
+            arguments += ["--sandbox", "read-only", "--skip-git-repo-check"]
+            if let sandbox = run.sandbox { arguments += ["--cd", sandbox.path] }
+            if let model = run.model, !model.isEmpty { arguments += ["--model", model] }
+            arguments.append(prompt)
+            return (arguments, nil)
+
+        case "opencode":
+            // -f 是陣列選項：**訊息必須排在它前面**，否則訊息會被當成檔案路徑
+            // 吃掉（實測會直接回 "File not found: <整段訊息>"）。
+            var arguments = ["run", "--dir", run.sandbox?.path ?? FileManager.default.temporaryDirectory.path]
+            if let model = run.model, !model.isEmpty { arguments += ["--model", model] }
+            arguments.append(prompt)
+            for path in run.photoPaths { arguments += ["-f", path] }
+            return (arguments, nil)
+
         default:
-            (["-p", prompt], nil)
+            return (["-p", prompt], nil)
         }
+    }
+
+    /// CLI 自己的逾時：比我們的 watchdog 早 10 秒收手，讓它吐錯誤而不是被砍。
+    private static func innerTimeoutSeconds(_ run: RunContext) -> Int {
+        max(Int(run.timeout.components.seconds) - 10, 30)
     }
 
     /// Gemini CLI 不在目錄中：Google 已於 2026-06-18 停用（個人帳號停止服務），
@@ -36,18 +104,38 @@ struct KnownCLIEngine: Identifiable, Sendable {
     static let catalog: [KnownCLIEngine] = [
         KnownCLIEngine(
             id: "claude", executableName: "claude", displayName: "Claude Code",
-            codec: .jsonEnvelope, pendingIntegration: false, experimental: false,
-            readInstruction: "用 Read 工具讀取後再分析"
+            codec: .jsonEnvelope, photoDelivery: .pathInPrompt,
+            pendingIntegration: false, experimental: false, supportsModelSelection: false,
+            readInstruction: "用 Read 工具讀取後再分析",
+            loginCommand: "claude /login"
         ),
         KnownCLIEngine(
             id: "agy", executableName: "agy", displayName: "Antigravity",
-            codec: .plainStdout, pendingIntegration: true, experimental: false,
-            readInstruction: "請先讀取照片再分析"
+            codec: .responseEnvelope, photoDelivery: .pathInPrompt,
+            pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            readInstruction: "請先讀取照片再分析",
+            loginCommand: "agy"
+        ),
+        KnownCLIEngine(
+            id: "grok", executableName: "grok", displayName: "Grok Build",
+            codec: .textEnvelope, photoDelivery: .pathInPrompt,
+            pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            readInstruction: "請先讀取照片再分析",
+            loginCommand: "grok"
         ),
         KnownCLIEngine(
             id: "codex", executableName: "codex", displayName: "Codex CLI",
-            codec: .plainStdout, pendingIntegration: false, experimental: true,
-            readInstruction: "請先讀取照片再分析"
+            codec: .plainStdout, photoDelivery: .attached,
+            pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            readInstruction: "照片已附加",
+            loginCommand: "codex login"
+        ),
+        KnownCLIEngine(
+            id: "opencode", executableName: "opencode", displayName: "OpenCode",
+            codec: .plainStdout, photoDelivery: .attached,
+            pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            readInstruction: "照片已附加",
+            loginCommand: "opencode auth login"
         ),
     ]
 }
@@ -77,6 +165,8 @@ final class AdviceEngineRegistry {
     private static let knownDirectories = [
         NSHomeDirectory() + "/.local/bin",
         NSHomeDirectory() + "/.claude/local",
+        NSHomeDirectory() + "/.grok/bin",
+        NSHomeDirectory() + "/.codex/bin",
         NSHomeDirectory() + "/bin",
         "/opt/homebrew/bin", "/usr/local/bin",
     ]

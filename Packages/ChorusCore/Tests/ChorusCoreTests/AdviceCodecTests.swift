@@ -102,3 +102,125 @@ func cliPromptMultiPhoto() {
     #expect(prompt.contains("1. /tmp/a.jpg"))
     #expect(prompt.contains("3. /tmp/c.jpg"))
 }
+
+@Suite("responseEnvelope codec（agy）")
+struct ResponseEnvelopeCodecTests {
+    @Test("優先吃 structured_output——CLI 依 --json-schema 驗過的結果")
+    func prefersStructuredOutput() throws {
+        // response 文字刻意放不一樣的內容：若解析走錯路徑，斷言會抓到
+        let stdout = """
+        {"status":"SUCCESS","response":"這段文字不該被採用",
+         "structured_output":{"sceneSummary":"來自 structured_output",
+         "offsets":[{"displayID":"display:A","offset":0.1,"reason":"r"}],"warnings":[]}}
+        """
+        let advice = try AdviceCodec.decode(stdout: stdout, codec: .responseEnvelope)
+        #expect(advice.sceneSummary == "來自 structured_output")
+        #expect(advice.offsets.count == 1)
+    }
+
+    /// envelope 以 JSONSerialization 組，內層引號的逃逸交給它——
+    /// 手寫巢狀 JSON 字面值極易寫錯，測到的會是測資而不是程式。
+    private func envelope(response: String) -> String {
+        let object: [String: Any] = ["status": "SUCCESS", "response": response]
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    @Test("沒有 structured_output 時退回 response 文字")
+    func fallsBackToResponseText() throws {
+        let inner = #"{"sceneSummary":"來自 response","offsets":[],"warnings":[]}"#
+        let advice = try AdviceCodec.decode(
+            stdout: envelope(response: inner), codec: .responseEnvelope
+        )
+        #expect(advice.sceneSummary == "來自 response")
+    }
+
+    @Test("response 文字外包 fence 也剝得掉")
+    func stripsFenceInResponse() throws {
+        let inner = "```json\n" + #"{"sceneSummary":"F","offsets":[],"warnings":[]}"# + "\n```"
+        let advice = try AdviceCodec.decode(
+            stdout: envelope(response: inner), codec: .responseEnvelope
+        )
+        #expect(advice.sceneSummary == "F")
+    }
+
+    @Test("status 是 SUCCESS 但 response 為空 → emptyOutput（實測的權限被拒形狀）")
+    func emptyResponseDespiteSuccessStatus() {
+        // agy 1.1.19 headless read_file 被拒時就是這個形狀：
+        // 退出碼 0、status SUCCESS、response 空字串，原因只在 stderr。
+        // 若信 status 就會把失敗當成功，是這個 codec 最關鍵的一條。
+        #expect(throws: AdviceDecodeError.emptyOutput) {
+            try AdviceCodec.decode(
+                stdout: #"{"status":"SUCCESS","response":""}"#,
+                codec: .responseEnvelope
+            )
+        }
+        // 只有空白／換行也算空
+        let whitespaceOnly = "{\"status\":\"SUCCESS\",\"response\":\"  \\n \"}"
+        #expect(throws: AdviceDecodeError.emptyOutput) {
+            try AdviceCodec.decode(stdout: whitespaceOnly, codec: .responseEnvelope)
+        }
+    }
+
+    @Test("structured_output 存在但形狀不符 → 直接失敗，不偷偷退回文字路徑")
+    func malformedStructuredOutputFailsLoud() {
+        #expect(throws: AdviceDecodeError.self) {
+            try AdviceCodec.decode(
+                stdout: #"{"status":"SUCCESS","response":"x","structured_output":{"nope":1}}"#,
+                codec: .responseEnvelope
+            )
+        }
+    }
+
+    @Test("envelope 不是合法 JSON → envelopeParseFailed")
+    func malformedEnvelope() {
+        #expect(throws: AdviceDecodeError.self) {
+            try AdviceCodec.decode(stdout: "not json at all", codec: .responseEnvelope)
+        }
+    }
+}
+
+@Suite("JSON 夾在旁白中的擷取")
+struct EmbeddedJSONTests {
+    private let valid = #"{"sceneSummary":"S","offsets":[],"warnings":[]}"#
+
+    @Test("模型在 JSON 前加旁白仍解析得出（實測 grok 會這樣）")
+    func narrationBeforeJSON() throws {
+        let text = "先讀取桌面照片，再依光環境提出建議。\n" + valid
+        let advice = try AdviceCodec.decode(stdout: text, codec: .plainStdout)
+        #expect(advice.sceneSummary == "S")
+    }
+
+    @Test("旁白在前後都有也可以")
+    func narrationAround() throws {
+        let advice = try AdviceCodec.decode(
+            stdout: "開始。\n" + valid + "\n以上是我的建議。", codec: .plainStdout
+        )
+        #expect(advice.sceneSummary == "S")
+    }
+
+    @Test("字串字面值裡的大括號不影響深度計算")
+    func bracesInsideStrings() {
+        let text = #"prefix {"a":"has { brace","b":{"c":1}} suffix"#
+        #expect(AdviceCodec.firstJSONObject(in: text) == #"{"a":"has { brace","b":{"c":1}}"#)
+    }
+
+    @Test("逃逸的引號不會誤判字串結束")
+    func escapedQuotes() {
+        let text = #"{"a":"say \"hi\"","b":1}"#
+        #expect(AdviceCodec.firstJSONObject(in: text) == text)
+    }
+
+    @Test("沒有成對括號時回 nil，不硬湊")
+    func unbalanced() {
+        #expect(AdviceCodec.firstJSONObject(in: "no json here") == nil)
+        #expect(AdviceCodec.firstJSONObject(in: "{ unclosed") == nil)
+    }
+
+    @Test("完全沒有可解析的 JSON 仍照常丟 adviceParseFailed")
+    func stillFailsLoud() {
+        #expect(throws: AdviceDecodeError.self) {
+            try AdviceCodec.decode(stdout: "抱歉，我無法完成。", codec: .plainStdout)
+        }
+    }
+}

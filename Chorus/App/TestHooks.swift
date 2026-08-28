@@ -189,6 +189,17 @@ final class TestHooks {
                     appState.keepAwake.activate(KeepAwakePlanner.decode(value))
                 }
             }
+        case "analyzeReal":
+            // value = "<engineID>:<照片路徑>"；設定引擎與背景照後跑**真實**分析
+            // （不走 FakeAdviceProvider）。E1 的 agy 端到端驗收用。
+            if let raw = info["value"] {
+                let parts = raw.split(separator: ":", maxSplits: 1)
+                if parts.count == 2 {
+                    appState.settings.advisorEngineID = String(parts[0])
+                    appState.diagram.importBackground(from: URL(fileURLWithPath: String(parts[1])))
+                    appState.advisor.analyze()
+                }
+            }
         case "applyAdvice":
             appState.advisor.debugApplyAll()
         case "undoAdvice":
@@ -279,6 +290,7 @@ final class TestHooks {
                 "historyCount": appState.advisor.history.count,
                 "lastError": appState.advisor.lastErrorMessage.map { $0 as Any } ?? NSNull(),
                 "activeEngine": appState.advisor.registry.activeEngine.map { $0.id as Any } ?? NSNull(),
+                "sceneSummary": appState.advisor.result?.advice.sceneSummary as Any? ?? NSNull(),
             ] as [String: Any],
             "keepAwake": [
                 "mode": Self.describe(appState.keepAwake.mode),

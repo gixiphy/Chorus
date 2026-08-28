@@ -7,7 +7,14 @@ import Foundation
 protocol LightingAdviceProvider: Sendable {
     /// `photos`：第一張是配置圖背景照，其餘為補充視角（多角度／不同照明情境）；
     /// 每張可帶使用者手寫的照明情境標註。
-    func advise(photos: [LabeledPhoto], context: AdviceContext) async throws -> LightingAdvice
+    /// `sandbox`：本次分析的專屬目錄，縮圖與 schema 檔都在裡面。
+    /// 需要明示授權才能讀檔的 CLI（agy 的 `--add-dir`）以它為授權範圍——
+    /// 剛好是這幾張圖，不是整個 temp 目錄。
+    func advise(
+        photos: [LabeledPhoto],
+        context: AdviceContext,
+        sandbox: URL?
+    ) async throws -> LightingAdvice
 }
 
 /// 引擎層錯誤 → UI 訊息的映射來源（設計文件 §3 錯誤映射）。
@@ -22,6 +29,9 @@ enum AdviceError: Error {
     case processFailed(status: Int32, stderr: String)
     /// 重試一次後仍無法解析；帶模型原始回覆供顯示與回報。
     case decodeFailed(raw: String)
+    /// CLI 跑完了但沒有產出任何回應（agy headless 權限被拒是典型情況：
+    /// status 仍是 SUCCESS、response 為空，真正原因只在 stderr）。
+    case emptyResponse(engineID: String, detail: String)
 
     var userMessage: String {
         switch self {
@@ -37,6 +47,10 @@ enum AdviceError: Error {
                 : "分析失敗（退出碼 \(status)）：\(stderr.prefix(200))"
         case let .decodeFailed(raw):
             "模型回覆無法解析：\(raw.prefix(300))"
+        case let .emptyResponse(engineID, detail):
+            detail.isEmpty
+                ? "\(engineID) 沒有產出回應，可重試"
+                : "\(engineID) 沒有產出回應：\(detail.prefix(300))"
         }
     }
 
@@ -54,16 +68,14 @@ enum AdviceError: Error {
             .copyLoginCommand(Self.loginCommand(for: engineID))
         case .engineNotFound:
             .openEngineSettings
-        case .timedOut, .processFailed, .decodeFailed:
+        case .timedOut, .processFailed, .decodeFailed, .emptyResponse:
             nil
         }
     }
 
+    /// 未登入時給使用者貼到終端的指令。與 KnownCLIEngine.catalog 的
+    /// loginCommand 同源——這裡只認 id，避免錯誤型別反過來依賴引擎目錄。
     private static func loginCommand(for engineID: String) -> String {
-        switch engineID {
-        case "claude": "claude /login"
-        case "codex": "codex login"
-        default: engineID
-        }
+        KnownCLIEngine.catalog.first { $0.id == engineID }?.loginCommand ?? engineID
     }
 }

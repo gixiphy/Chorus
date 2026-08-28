@@ -128,19 +128,10 @@ public enum AdvicePrompt {
     public static func cliPrompt(
         context: AdviceContext,
         photos: [LabeledPhoto],
-        readInstruction: String
+        readInstruction: String,
+        delivery: PhotoDelivery = .pathInPrompt
     ) -> String {
-        let photoLines: String
-        if photos.count <= 1 {
-            let entry = photos.first.map { $0.path + labelSuffix($0.label) } ?? "(無)"
-            photoLines = "桌面照片：\(entry)（\(readInstruction)）"
-        } else {
-            var lines = ["桌面照片共 \(photos.count) 張（\(readInstruction)；第 1 張是配置圖背景照，顯示器座標以它為準，其餘為補充視角）："]
-            for (index, photo) in photos.enumerated() {
-                lines.append("\(index + 1). \(photo.path)\(labelSuffix(photo.label))")
-            }
-            photoLines = lines.joined(separator: "\n")
-        }
+        let photoLines = photoSection(photos: photos, readInstruction: readInstruction, delivery: delivery)
         return """
         \(systemPrompt)
 
@@ -151,6 +142,46 @@ public enum AdvicePrompt {
         只輸出一個 JSON 物件（不要 markdown fence、不要其他文字），必須符合以下 JSON Schema：
         \(toolInputSchemaJSON)
         """
+    }
+
+    /// 照片怎麼送到模型手上。決定 prompt 要不要講路徑與「請先讀取」。
+    public enum PhotoDelivery: Sendable, Equatable {
+        /// 路徑寫進 prompt，由模型自己用讀檔工具取（claude／agy／grok）。
+        case pathInPrompt
+        /// CLI 以參數直接附加影像（codex `--image`、opencode `-f`）——
+        /// 模型已經看得到圖，再叫它「去讀某個路徑」只會誘發多餘的工具呼叫。
+        case attached
+    }
+
+    private static func photoSection(
+        photos: [LabeledPhoto],
+        readInstruction: String,
+        delivery: PhotoDelivery
+    ) -> String {
+        guard !photos.isEmpty else { return "桌面照片：(無)" }
+        switch delivery {
+        case .attached:
+            if photos.count == 1 {
+                let suffix = labelSuffix(photos[0].label)
+                return "桌面照片已附加於本次訊息\(suffix.isEmpty ? "" : "\(suffix)")。"
+            }
+            var lines = ["桌面照片共 \(photos.count) 張，已依序附加於本次訊息"
+                + "（第 1 張是配置圖背景照，顯示器座標以它為準，其餘為補充視角）："]
+            for (index, photo) in photos.enumerated() {
+                let suffix = labelSuffix(photo.label)
+                lines.append("第 \(index + 1) 張\(suffix.isEmpty ? "" : suffix)")
+            }
+            return lines.joined(separator: "\n")
+        case .pathInPrompt:
+            if photos.count == 1 {
+                return "桌面照片：\(photos[0].path)\(labelSuffix(photos[0].label))（\(readInstruction)）"
+            }
+            var lines = ["桌面照片共 \(photos.count) 張（\(readInstruction)；第 1 張是配置圖背景照，顯示器座標以它為準，其餘為補充視角）："]
+            for (index, photo) in photos.enumerated() {
+                lines.append("\(index + 1). \(photo.path)\(labelSuffix(photo.label))")
+            }
+            return lines.joined(separator: "\n")
+        }
     }
 
     /// 標註接在照片路徑後；未標註回空字串，輸出與未加此功能前一致。
