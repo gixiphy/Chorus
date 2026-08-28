@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -324,15 +325,34 @@ def main():
         record("壞請求 → 400＋可讀錯誤",
                bool(body) and body.get("ok") is False and bool(body.get("error", {}).get("message")))
 
-        # SSE：開一條事件流，改亮度，確認收得到
-        proc = subprocess.Popen(["curl", "-sN", "--max-time", "8"] + auth + [f"{base}/v1/events"],
+        # SSE：開一條事件流，改亮度，確認收得到。
+        # 連線建立與事件送達都沒有保證時間，固定 sleep 會 flaky（指令可能早於
+        # 訂閱生效，或 terminate 早於事件 flush），所以改成輪詢：背景執行緒把
+        # stdout 收進 buffer，主迴圈重複下指令直到看見 brightness 事件或逾時。
+        # 亮度值交替，免得同值被判定為「沒變」而不發事件。
+        proc = subprocess.Popen(["curl", "-sN", "--max-time", "30"] + auth + [f"{base}/v1/events"],
                                 stdout=subprocess.PIPE, text=True)
-        time.sleep(1.5)
-        control({"verb": "set", "target": f"displayUUID:{display_uuid}",
-                 "property": "brightness", "value": "65%"})
-        time.sleep(1.5)
+        chunks = []
+
+        def drain(pipe):
+            for line in iter(pipe.readline, ""):
+                chunks.append(line)
+
+        reader = threading.Thread(target=drain, args=(proc.stdout,), daemon=True)
+        reader.start()
+
+        deadline = time.monotonic() + 10
+        percent = 65
+        while True:
+            # control() 自帶 1.6 秒等待，剛好當作輪詢節奏
+            control({"verb": "set", "target": f"displayUUID:{display_uuid}",
+                     "property": "brightness", "value": f"{percent}%"})
+            percent = 60 if percent == 65 else 65
+            if "brightness" in "".join(chunks) or time.monotonic() >= deadline:
+                break
         proc.terminate()
-        stream = proc.stdout.read() if proc.stdout else ""
+        reader.join(timeout=2)
+        stream = "".join(chunks)
         record("GET /v1/events 推送變更事件",
                "data:" in stream and "brightness" in stream,
                f"收到 {len(stream)} bytes")
