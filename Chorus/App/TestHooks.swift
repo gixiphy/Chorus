@@ -20,6 +20,21 @@ final class TestHooks {
     /// tapProbe 的結果（B6-1 權限驗證：spike 從終端機跑不算數，
     /// TCC 歸屬的是負責行程，要在 Chorus.app 內實測）。
     private var tapProbeResult: [String: Any]?
+    /// 裝置級處理的 E2E 暫存（軟體音量與 EQ 共用一條 session，
+    /// 所以兩個 hook 都要把完整的三件事一起送過去）。
+    private var pendingDeviceUID: String?
+    private var pendingDeviceGain: Float = 1
+    private var pendingDeviceMuted = false
+    private var pendingDeviceEQ: EQSettings?
+
+    private func pushDeviceProcessing(_ appState: AppState) {
+        appState.tapEngine.updateDeviceProcessing(
+            deviceUID: pendingDeviceUID,
+            gain: pendingDeviceGain,
+            muted: pendingDeviceMuted,
+            eq: pendingDeviceEQ
+        )
+    }
 
     init(appState: AppState) {
         self.appState = appState
@@ -235,12 +250,18 @@ final class TestHooks {
             if let raw = info["value"] {
                 let fields = raw.split(separator: "|", omittingEmptySubsequences: false)
                 if fields.count == 3 {
-                    appState.tapEngine.updateSoftwareVolume(
-                        deviceUID: fields[0].isEmpty ? nil : String(fields[0]),
-                        gain: Float(fields[1]) ?? 1,
-                        muted: fields[2] == "1"
-                    )
+                    pendingDeviceUID = fields[0].isEmpty ? nil : String(fields[0])
+                    pendingDeviceGain = Float(fields[1]) ?? 1
+                    pendingDeviceMuted = fields[2] == "1"
+                    pushDeviceProcessing(appState)
                 }
+            }
+        case "deviceEQ":
+            // value = AutoEq 的 ParametricEQ 內容（留空＝拆掉 EQ）。
+            // 走與「貼上校正檔」完全相同的解析路徑
+            if let raw = info["value"] {
+                pendingDeviceEQ = raw.isEmpty ? nil : AutoEqParser.parse(raw, sourceName: "TestHooks")
+                pushDeviceProcessing(appState)
             }
         case "appReset":
             if let bundle = info["value"] { appState.tapEngine.reset(bundleID: bundle) }
@@ -528,8 +549,9 @@ final class TestHooks {
                 "probeCallbacks": appState.tapEngine.probeStats.callbacks,
                 "probeNonZero": appState.tapEngine.probeStats.nonZeroCallbacks,
                 "lastTapError": appState.tapEngine.lastTapError.map { $0 as Any } ?? NSNull(),
-                "softwareVolumeDevice": appState.tapEngine
-                    .softwareVolumeDeviceUID as Any? ?? NSNull(),
+                "deviceTap": appState.tapEngine.deviceTapUID as Any? ?? NSNull(),
+                "deviceEQBands": pendingDeviceEQ?.bands.count ?? 0,
+                "deviceEQPreamp": pendingDeviceEQ?.effectivePreampDB ?? 0,
                 "appSettings": Dictionary(uniqueKeysWithValues: appState.settings.appAudio
                     .adjustedBundleIDs.map { bundleID in
                         let entry = appState.settings.appAudio[bundleID]

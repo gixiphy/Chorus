@@ -59,13 +59,14 @@ final class TapEngine {
     /// 每條 session 實際建在哪個裝置的 UID 上。存它才分得出「設定改了但
     /// 裝置沒變」（推 atomic 就好）與「裝置換了」（非重建不可）。
     @ObservationIgnored private var sessionOutputUIDs: [String: String] = [:]
-    /// 裝置級軟體音量的一條全域 session（B6-4）。
+    /// 裝置級處理的一條全域 session（B6-4 軟體音量＋B6-5 等化共用）。
     @ObservationIgnored private var globalSession: (any TapSession)?
     @ObservationIgnored private var globalOutputUID: String?
     @ObservationIgnored private var globalExclusions: [AudioObjectID] = []
-    @ObservationIgnored private var softwareVolumeTarget: String?
-    @ObservationIgnored private var softwareVolumeGain: Float = 1
-    @ObservationIgnored private var softwareVolumeMuted = false
+    @ObservationIgnored private var deviceTarget: String?
+    @ObservationIgnored private var deviceGain: Float = 1
+    @ObservationIgnored private var deviceMuted = false
+    @ObservationIgnored private var deviceEQ: EQSettings?
     @ObservationIgnored private var monitor = TapHealthMonitor()
     @ObservationIgnored private var lastProbeStats = TapSessionStats()
     @ObservationIgnored private var tickTask: Task<Void, Never>?
@@ -151,19 +152,25 @@ final class TapEngine {
         reconcileSessions()
     }
 
-    // MARK: - 裝置級軟體音量（B6-4，三後端矩陣的第三條）
+    // MARK: - 裝置級處理（B6-4 軟體音量＋B6-5 等化）
 
     /// 目前有沒有一條裝置級全域 tap 在跑，跑在哪個裝置上。
-    private(set) var softwareVolumeDeviceUID: String?
+    ///
+    /// **軟體音量與 EQ 共用同一條**：兩者都是「這個裝置的全部音訊」，
+    /// 各開一條就是同一路音訊被 tap 兩次（DESIGN §2.2 明確禁止）。
+    private(set) var deviceTapUID: String?
 
     /// AudioDeviceManager 的唯一入口：`deviceUID` 為 `nil` ＝ 收掉。
     ///
-    /// 增益不存在這裡——裝置音量的持久化本來就在 `SettingsStore.lastVolume`，
-    /// 再存一份只會多一個會不同步的來源。
-    func updateSoftwareVolume(deviceUID: String?, gain: Float, muted: Bool) {
-        softwareVolumeTarget = deviceUID
-        softwareVolumeGain = AppAudioSetting.clampGain(gain)
-        softwareVolumeMuted = muted
+    /// 增益不存在這裡——裝置音量的持久化本來就在 `SettingsStore.lastVolume`、
+    /// EQ 在 `SettingsStore.deviceEQ`，再存一份只會多一個會不同步的來源。
+    func updateDeviceProcessing(
+        deviceUID: String?, gain: Float, muted: Bool, eq: EQSettings?
+    ) {
+        deviceTarget = deviceUID
+        deviceGain = AppAudioSetting.clampGain(gain)
+        deviceMuted = muted
+        deviceEQ = eq
         reconcileGlobalSession()
     }
 
@@ -173,7 +180,7 @@ final class TapEngine {
     /// 已被 per-app tap 捕獲的行程要從全域 tap 排除，Chorus 自己更要
     /// （否則我們寫回的音訊會被自己抓走＝回授）。
     private func reconcileGlobalSession() {
-        guard state == .active, let target = softwareVolumeTarget,
+        guard state == .active, let target = deviceTarget,
               backend.outputDeviceUIDs().contains(target)
         else {
             stopGlobalSession()
@@ -184,8 +191,7 @@ final class TapEngine {
 
         // 排除清單綁在 tap 建立時，改不了——內容變了只能收舊建新
         if globalSession != nil, globalOutputUID == target, globalExclusions == excluded {
-            globalSession?.setGain(softwareVolumeGain)
-            globalSession?.setMuted(softwareVolumeMuted)
+            pushDeviceProcessing()
             return
         }
         stopGlobalSession()
@@ -193,16 +199,22 @@ final class TapEngine {
             globalSession = try backend.startGlobalVolumeSession(
                 outputDeviceUID: target,
                 excludingProcessObjects: excluded,
-                initialGain: softwareVolumeGain
+                initialGain: deviceGain
             )
-            globalSession?.setMuted(softwareVolumeMuted)
             globalOutputUID = target
             globalExclusions = excluded
-            softwareVolumeDeviceUID = target
+            deviceTapUID = target
+            pushDeviceProcessing()
         } catch {
-            lastTapError = "軟體音量啟動失敗：\(error)"
+            lastTapError = "裝置級處理啟動失敗：\(error)"
             stopGlobalSession()
         }
+    }
+
+    private func pushDeviceProcessing() {
+        globalSession?.setGain(deviceGain)
+        globalSession?.setMuted(deviceMuted)
+        globalSession?.setEQ(deviceEQ)
     }
 
     private func stopGlobalSession() {
@@ -210,7 +222,7 @@ final class TapEngine {
         globalSession = nil
         globalOutputUID = nil
         globalExclusions = []
-        softwareVolumeDeviceUID = nil
+        deviceTapUID = nil
     }
 
     // MARK: - session 對帳

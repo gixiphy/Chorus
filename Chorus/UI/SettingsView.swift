@@ -731,6 +731,40 @@ private struct AudioSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section("輸出裝置等化") {
+                if case .active = appState.tapEngine.state {
+                    Text("每個輸出裝置一組。耳機校正（AutoEq）的主場景本來就不經虛擬裝置——直接對那支耳機開。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(appState.audioManager.devices) { device in
+                        DisclosureGroup {
+                            EQPanelView(device: device)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(device.name).font(.callout)
+                                if device.isDefault {
+                                    Text("預設")
+                                        .font(.caption2)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(.quaternary, in: Capsule())
+                                }
+                                Spacer()
+                                if appState.audioManager.eqSettings(for: device).isActive {
+                                    Image(systemName: "waveform.path.ecg")
+                                        .imageScale(.small)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // 權限沒到手就整組隱藏功能本體，只留一句為什麼（DESIGN §6）
+                    Text("需要先開啟上方的「App 音訊接管」——等化與 per-app 音量走同一套系統音訊擷取權限。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Section("螢幕音量（虛擬輸出裝置）") {
                 explanation
                 switch appState.virtualDriver.status {

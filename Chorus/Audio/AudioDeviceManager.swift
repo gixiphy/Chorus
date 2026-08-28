@@ -1,3 +1,4 @@
+import ChorusCore
 import CoreAudio
 import Foundation
 import Observation
@@ -24,6 +25,8 @@ final class AudioDeviceManager {
     @ObservationIgnored private var recentLocalSets: [String: (value: Double, at: ContinuousClock.Instant)] = [:]
     /// DDC 音量寫後驗證任務（每裝置一個，拖曳中重排程）。
     @ObservationIgnored private var bridgeVerifyTasks: [String: Task<Void, Never>] = [:]
+    /// A/B 旁通用的暫時 EQ（不持久化，見 `setEQOverride`）。
+    @ObservationIgnored private var eqOverrides: [String: EQSettings] = [:]
 
     var defaultDevice: AudioDeviceModel? {
         devices.first(where: \.isDefault)
@@ -166,7 +169,7 @@ final class AudioDeviceManager {
                 mirrorVirtualVolume(clamped)
             }
         } else if device.softwareVolumeActive {
-            pushSoftwareVolume(device)
+            pushDeviceProcessing(device)
         } else if let displayID = device.bridgedDisplayID {
             // 螢幕可能處於 DDC 靜音（0x8D）而我們不知道——調音量＝想聽到聲音，
             // 比照 macOS 語意一併送解除靜音（DDC 層的重複值去重讓它幾乎免費）
@@ -208,7 +211,7 @@ final class AudioDeviceManager {
                 mirrorVirtualMute(muted)
             }
         } else if device.softwareVolumeActive {
-            pushSoftwareVolume(device)
+            pushDeviceProcessing(device)
         } else if let displayID = device.bridgedDisplayID {
             displayManager?.ddc.write(
                 displayID,
@@ -303,34 +306,92 @@ final class AudioDeviceManager {
         refreshSoftwareVolume()
     }
 
-    /// 決定軟體音量目前生效在哪個裝置上（最多一個）。
+    /// 決定裝置級處理（軟體音量＋EQ）目前生效在哪個裝置上（最多一個）。
     ///
-    /// 條件是三後端矩陣的完整順位：使用者為它開了開關、前兩條都走不通、
-    /// 它是目前的預設輸出、而且引擎有權限。少任何一項就不生效——
-    /// 滑桿會回到「誠實停用」並附上原因，不會靜靜什麼都沒發生。
+    /// 兩者共用同一條全域 tap——它們處理的是同一路音訊，各開一條就是
+    /// 處理兩次（DESIGN §2.2）。因此對象一定是**目前的預設輸出**：
+    /// 全域 tap 抓的是系統混音，不是某個裝置的匯流排。
+    ///
+    /// 軟體音量還要多過三後端矩陣的順位：使用者為它開了開關、前兩條
+    /// 都走不通。少任何一項就只留 EQ，滑桿回到「誠實停用」並附上原因。
     private func refreshSoftwareVolume() {
-        let target = devices.first { device in
-            isSoftwareVolumeEnabled(device)
-                && canUseSoftwareVolume(device)
-                && device.isDefault
-                && tapEngine?.state == .active
+        let engineReady = tapEngine?.state == .active
+        let defaultDevice = devices.first(where: \.isDefault)
+        let volumeTarget = defaultDevice.flatMap { device in
+            engineReady && isSoftwareVolumeEnabled(device) && canUseSoftwareVolume(device)
+                ? device : nil
         }
         for device in devices {
-            device.softwareVolumeActive = device.uid == target?.uid
+            device.softwareVolumeActive = device.uid == volumeTarget?.uid
         }
-        if let target {
+        if let target = volumeTarget {
             // 上次記住的值（滑桿在裝置沒有可讀音量時的唯一來源）
             target.volume = settings.lastVolume(for: target.uid) ?? target.volume
-            pushSoftwareVolume(target)
-        } else {
-            tapEngine?.updateSoftwareVolume(deviceUID: nil, gain: 1, muted: false)
         }
+        guard engineReady, let defaultDevice else {
+            tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
+            return
+        }
+        let eq = effectiveEQ(for: defaultDevice.uid)
+        guard volumeTarget != nil || eq != nil else {
+            // 兩個都不需要 → 一個 tap 都不建（DESIGN §2.3 規則 2）
+            tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
+            return
+        }
+        pushDeviceProcessing(defaultDevice)
     }
 
-    private func pushSoftwareVolume(_ device: AudioDeviceModel) {
-        tapEngine?.updateSoftwareVolume(
-            deviceUID: device.uid, gain: Float(device.volume), muted: device.muted
+    /// 音量只有在軟體音量後端生效時才由我們衰減——否則裝置音量歸
+    /// 前兩條後端管，這裡送 1.0（責任矩陣 §3.2：一層只管一件事）。
+    private func pushDeviceProcessing(_ device: AudioDeviceModel) {
+        let usesSoftwareVolume = device.softwareVolumeActive
+        tapEngine?.updateDeviceProcessing(
+            deviceUID: device.uid,
+            gain: usesSoftwareVolume ? Float(device.volume) : 1,
+            muted: usesSoftwareVolume ? device.muted : false,
+            eq: effectiveEQ(for: device.uid)
         )
+    }
+
+    // MARK: - 每裝置等化（B6-5）
+
+    func eqSettings(for device: AudioDeviceModel) -> EQSettings {
+        settings.deviceEQ[device.uid] ?? EQSettings()
+    }
+
+    func setEQSettings(_ eq: EQSettings, for device: AudioDeviceModel) {
+        if eq == EQSettings() {
+            settings.deviceEQ.removeValue(forKey: device.uid)
+        } else {
+            settings.deviceEQ[device.uid] = eq
+        }
+        refreshSoftwareVolume()
+    }
+
+    /// A/B 旁通：暫時送出一份不同的 EQ（通常是關掉的）而**不動存起來的
+    /// 設定**。存進設定會讓「比較完忘了打開」變成使用者的問題，
+    /// 而那個 preset 可能是他花十分鐘調的。
+    func setEQOverride(_ eq: EQSettings?, for device: AudioDeviceModel) {
+        if let eq { eqOverrides[device.uid] = eq } else { eqOverrides.removeValue(forKey: device.uid) }
+        refreshSoftwareVolume()
+    }
+
+    private func effectiveEQ(for uid: String) -> EQSettings? {
+        let eq = eqOverrides[uid] ?? settings.deviceEQ[uid]
+        return eq.flatMap { $0.isActive ? $0 : nil }
+    }
+
+    /// EQ 為什麼沒生效。開了開關卻沒聲音變化是最難自己查的失敗模式，
+    /// 每一種都要講出來。
+    func eqUnavailableReason(for device: AudioDeviceModel) -> String? {
+        guard eqSettings(for: device).isEnabled else { return nil }
+        if !device.isDefault { return "等化只在此裝置是預設輸出時生效" }
+        switch tapEngine?.state {
+        case .active: return nil
+        case .denied: return "系統音訊錄製權限被拒——等化無法運作"
+        case .off, nil: return "需要先在設定 → 音訊開啟「App 音訊接管」"
+        default: return "正在確認權限…"
+        }
     }
 
     // MARK: - BV 虛擬裝置音量鏡射

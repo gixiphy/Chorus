@@ -34,7 +34,10 @@ def find_debug_app():
 
 
 def notify(action, value=None):
-    subprocess.run([NOTIFY, "A", action] + ([value] if value else []), capture_output=True)
+    # `is not None` 而不是真值判斷：空字串是有意義的值（「拆掉 EQ」、
+    # 「跟隨系統預設」都靠它），用真值判斷會把它整個吞掉
+    subprocess.run([NOTIFY, "A", action] + ([value] if value is not None else []),
+                   capture_output=True)
 
 
 def dump():
@@ -72,6 +75,18 @@ def tap_state(data):
 
 def tapped(data):
     return (data or {}).get("tapEngine", {}).get("tapped")
+
+
+def device_tap(data):
+    return (data or {}).get("tapEngine", {}).get("deviceTap")
+
+
+AUTOEQ_SAMPLE = (
+    "Preamp: -6.8 dB\n"
+    "Filter 1: ON LSC Fc 105 Hz Gain 5.5 dB Q 0.70\n"
+    "Filter 2: ON PK Fc 1050 Hz Gain -2.4 dB Q 1.20\n"
+    "Filter 3: ON HSC Fc 10000 Hz Gain -1.2 dB Q 0.70"
+)
 
 
 def app_settings(data):
@@ -225,24 +240,35 @@ def main():
 
     print("\n[6] B6-4：裝置級軟體音量（三後端矩陣第三條）", flush=True)
     notify("softwareVolume", "fake-headphones|0.5|0")
-    ok, _ = wait_for(
-        lambda d: d.get("tapEngine", {}).get("softwareVolumeDevice") == "fake-headphones", 10)
+    ok, _ = wait_for(lambda d: device_tap(d) == "fake-headphones", 10)
     record("開啟 → 一條全域 session 跑在該裝置上", ok)
 
     notify("softwareVolume", "gone-uid|0.5|0")
-    ok, _ = wait_for(lambda d: d.get("tapEngine", {}).get("softwareVolumeDevice") is None, 10)
+    ok, _ = wait_for(lambda d: device_tap(d) is None, 10)
     record("目標裝置不在 → 不建（不在錯的裝置上默默衰減）", ok)
 
     notify("softwareVolume", "fake-headphones|0.5|0")
-    ok, _ = wait_for(
-        lambda d: d.get("tapEngine", {}).get("softwareVolumeDevice") == "fake-headphones", 10)
+    ok, _ = wait_for(lambda d: device_tap(d) == "fake-headphones", 10)
     record("重新指定回存在的裝置", ok)
 
-    notify("softwareVolume", "||0")
-    ok, _ = wait_for(lambda d: d.get("tapEngine", {}).get("softwareVolumeDevice") is None, 10)
-    record("關閉 → 收掉", ok)
+    print("\n[7] B6-5：裝置級等化（與軟體音量共用同一條 tap）", flush=True)
+    notify("deviceEQ", AUTOEQ_SAMPLE)
+    ok, _ = wait_for(lambda d: d.get("tapEngine", {}).get("deviceEQBands") == 3, 10)
+    record("貼上 AutoEq 校正檔 → 解析出三段", ok)
+    ok, _ = wait_for(
+        lambda d: abs(d.get("tapEngine", {}).get("deviceEQPreamp", 0) + 6.8) < 1e-6, 5)
+    record("套用檔案給的 negative preamp（-6.8 dB）", ok)
+    record("EQ 與軟體音量共用同一條 tap（沒有第二條）", device_tap(dump()) == "fake-headphones")
 
-    print("\n[7] 停用與重啟後恢復", flush=True)
+    notify("deviceEQ", "")
+    ok, _ = wait_for(lambda d: d.get("tapEngine", {}).get("deviceEQBands") == 0, 10)
+    record("拆掉 EQ，軟體音量的 tap 留著", ok and device_tap(dump()) == "fake-headphones")
+
+    notify("softwareVolume", "||0")
+    ok, _ = wait_for(lambda d: device_tap(d) is None, 10)
+    record("兩者都關 → 一個 tap 都不留", ok)
+
+    print("\n[8] 停用與重啟後恢復", flush=True)
     notify("appGain", "com.apple.Music|0.3")
     ok, _ = wait_for(lambda d: tapped(d) == ["com.apple.Music"], 10)
     record("重新調一個 App", ok)

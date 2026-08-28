@@ -13,10 +13,20 @@ final class TapRenderContext: @unchecked Sendable {
     let callbacks = Atomic<Int>(0)
     let nonZeroCallbacks = Atomic<Int>(0)
 
+    /// EQ 係數區塊的指標位元（0 ＝ 沒有 EQ）。見 `EQCoefficientBlock`。
+    let eqBlock = Atomic<UInt>(0)
+
     /// **只有 render 執行緒碰**：斜坡目前走到的增益值。
     /// 不是 atomic，因為它不跨執行緒——加 atomic 只會讓 realtime 端
     /// 多付一次同步成本換取沒人需要的可見性。
     var currentGain: Float
+    /// **只有 render 執行緒碰**：biquad 狀態（channel × band，預先配置）。
+    /// realtime 端不能配置記憶體，所以上限在這裡就吃掉。
+    let eqStates: UnsafeMutableBufferPointer<BiquadState>
+    /// render 端看過的 EQ 版本號。與區塊裡的不同就把狀態歸零。
+    var eqGeneration: UInt32 = 0
+
+    static let maxChannels = 8
 
     /// `initialGain` 讓 session **從正確的值起步**。若一律從 1 起步，
     /// 一個設定成 20% 的 App 每次重啟都會先響 10 ms 的全音量再滑下去。
@@ -24,6 +34,18 @@ final class TapRenderContext: @unchecked Sendable {
         self.playthrough = playthrough
         gainBits.store(initialGain.bitPattern, ordering: .relaxed)
         currentGain = initialGain
+        eqStates = UnsafeMutableBufferPointer<BiquadState>.allocate(
+            capacity: Self.maxChannels * EQSettings.maxBands
+        )
+        eqStates.initialize(repeating: BiquadState())
+    }
+
+    deinit {
+        eqStates.deallocate()
+        let raw = eqBlock.load(ordering: .relaxed)
+        if raw != 0, let block = UnsafeMutableRawPointer(bitPattern: raw) {
+            EQCoefficientBlock.deallocate(block)
+        }
     }
 }
 
@@ -239,8 +261,30 @@ final class CoreAudioTapBackend: TapBackend {
             context.currentGain = endGain
             // 回呼「之間」由 GainRamp 限速，回呼「之內」由這條插值鋪平
             let gainStep = frames > 0 ? (endGain - startGain) / Float(frames) : 0
-            // >1x 才過 limiter：增益 ≤ 1 時任何壓縮都是不請自來的染色
-            let boosting = startGain > 1 || endGain > 1
+            // EQ 係數：只讀一次指標，之後全是指標運算
+            var eqCount = 0
+            var preamp: Float = 1
+            var eqCoefficients: UnsafePointer<BiquadCoefficients>?
+            let rawBlock = context.eqBlock.load(ordering: .acquiring)
+            if rawBlock != 0, let base = UnsafeRawPointer(bitPattern: rawBlock) {
+                let header = base.assumingMemoryBound(to: EQCoefficientBlock.Header.self).pointee
+                eqCount = min(Int(header.count), EQSettings.maxBands)
+                preamp = header.preamp
+                eqCoefficients = UnsafePointer((base + EQCoefficientBlock.coefficientOffset)
+                    .assumingMemoryBound(to: BiquadCoefficients.self))
+                // 換了一組係數 → 舊的濾波器狀態要歸零，否則會拖出一聲。
+                // 主執行緒不能安全地碰 render 擁有的狀態，所以由這裡比對版本號
+                if header.generation != context.eqGeneration {
+                    context.eqGeneration = header.generation
+                    for index in context.eqStates.indices { context.eqStates[index].reset() }
+                }
+            }
+
+            // >1x 才過 limiter：增益 ≤ 1 時任何壓縮都是不請自來的染色。
+            // EQ 開著時一律過——正增益的段即使配了 negative preamp，
+            // 疊在本來就接近滿刻度的素材上仍可能過頂
+            let boosting = startGain > 1 || endGain > 1 || eqCount > 0
+            var channelBase = 0
 
             var sawNonZero = false
             for (index, inputBuffer) in inputList.enumerated() {
@@ -252,20 +296,30 @@ final class CoreAudioTapBackend: TapBackend {
                    let destination = outputList[index].mData?.assumingMemoryBound(to: Float.self) {
                     let writable = min(sampleCount, Int(outputList[index].mDataByteSize) / MemoryLayout<Float>.size)
                     let writableFrames = writable / channels
+                    let states = context.eqStates.baseAddress
                     for frame in 0..<writableFrames {
-                        let gain = startGain + gainStep * Float(frame)
+                        let gain = (startGain + gainStep * Float(frame)) * preamp
                         for channel in 0..<channels {
                             let offset = frame * channels + channel
                             let raw = source[offset]
                             if raw != 0 { sawNonZero = true }
-                            let amplified = raw * gain
-                            destination[offset] = boosting ? SoftClip.apply(amplified) : amplified
+                            var value = raw * gain
+                            // 每個聲道有自己的一整條 cascade 狀態
+                            if let eqCoefficients, let states,
+                               channelBase + channel < TapRenderContext.maxChannels {
+                                let slot = (channelBase + channel) * EQSettings.maxBands
+                                for band in 0..<eqCount {
+                                    value = states[slot + band].process(value, eqCoefficients[band])
+                                }
+                            }
+                            destination[offset] = boosting ? SoftClip.apply(value) : value
                         }
                     }
                     // 通道數不整除時剩下的尾巴補零，別讓上一輪的內容漏出去
                     for offset in (writableFrames * channels)..<writable {
                         destination[offset] = 0
                     }
+                    channelBase += channels
                 } else {
                     // captureOnly：只讀不寫（HAL 已預先把輸出 buffer 清零）
                     for sample in 0..<sampleCount where source[sample] != 0 {
@@ -308,6 +362,8 @@ private final class CoreAudioTapSession: TapSession {
     private var tapID: AudioObjectID
     private var aggregateID: AudioObjectID
     private var procID: AudioDeviceIOProcID?
+    /// EQ 版本號：每換一組係數 +1，render 端靠它決定要不要歸零濾波器狀態。
+    private var eqGeneration: UInt32 = 0
 
     init(
         kind: TapSessionKind, context: TapRenderContext,
@@ -335,8 +391,40 @@ private final class CoreAudioTapSession: TapSession {
         context.muted.store(muted, ordering: .relaxed)
     }
 
+    /// 換一組 EQ 係數。
+    ///
+    /// 配置新區塊 → 一次 atomic store 交出去 → **延後**釋放舊的那塊。
+    /// 立刻釋放是不行的：可能正好有一個回呼在讀它，而 realtime 端沒有
+    /// 任何辦法告訴我們「我讀完了」。詳見 `EQCoefficientBlock`。
+    func setEQ(_ settings: EQSettings?) {
+        let previous = context.eqBlock.load(ordering: .relaxed)
+        guard let settings, settings.isActive else {
+            context.eqBlock.store(0, ordering: .releasing)
+            retire(previous)
+            return
+        }
+        eqGeneration &+= 1
+        let block = EQCoefficientBlock.allocate(
+            coefficients: settings.coefficients(),
+            preamp: settings.preampGain,
+            generation: eqGeneration
+        )
+        context.eqBlock.store(UInt(bitPattern: block), ordering: .releasing)
+        retire(previous)
+    }
+
+    private func retire(_ raw: UInt) {
+        guard raw != 0, let block = UnsafeMutableRawPointer(bitPattern: raw) else { return }
+        Task {
+            try? await Task.sleep(for: EQCoefficientBlock.retirementDelay)
+            EQCoefficientBlock.deallocate(block)
+        }
+    }
+
     func stop() {
         guard let procID else { return }
+        // AudioDeviceStop 是同步的：回來之後不會再有回呼在跑，
+        // 這時候釋放 EQ 區塊不需要延遲（context 的 deinit 會收尾）
         AudioDeviceStop(aggregateID, procID)
         AudioDeviceDestroyIOProcID(aggregateID, procID)
         AudioHardwareDestroyAggregateDevice(aggregateID)

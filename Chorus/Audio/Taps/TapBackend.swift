@@ -1,3 +1,4 @@
+import ChorusCore
 import CoreAudio
 import Foundation
 
@@ -32,6 +33,8 @@ protocol TapSession: AnyObject {
     var stats: TapSessionStats { get }
     func setGain(_ gain: Float)
     func setMuted(_ muted: Bool)
+    /// 裝置級等化（B6-5）。`nil` 或未生效的設定＝拆掉 EQ，樣本原樣通過。
+    func setEQ(_ settings: EQSettings?)
     func stop()
 }
 

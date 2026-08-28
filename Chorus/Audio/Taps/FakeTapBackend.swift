@@ -1,4 +1,5 @@
 #if DEBUG
+import ChorusCore
 import CoreAudio
 import Foundation
 
@@ -98,8 +99,11 @@ final class FakeTapSession: TapSession {
         return accumulated
     }
 
+    private(set) var lastEQ: EQSettings?
+
     func setGain(_ gain: Float) { lastGain = gain }
     func setMuted(_ muted: Bool) { lastMuted = muted }
+    func setEQ(_ settings: EQSettings?) { lastEQ = settings }
     func stop() { stopped = true }
 }
 #endif

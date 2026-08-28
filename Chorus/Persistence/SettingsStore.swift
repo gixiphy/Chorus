@@ -34,6 +34,7 @@ final class SettingsStore {
         static let audioTaps = "chorus.audio.tapsEnabled"
         static let appAudio = "chorus.audio.appSettings"
         static let softwareVolume = "chorus.audio.softwareVolumeDevices"
+        static let deviceEQ = "chorus.audio.deviceEQ"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
         static let automationServer = "chorus.automation.serverEnabled"
@@ -188,6 +189,18 @@ final class SettingsStore {
         didSet { defaults.set(Array(softwareVolumeDevices), forKey: Key.softwareVolume) }
     }
 
+    /// 每輸出裝置的等化設定（device UID → EQ，B6-5）。**預設關閉**：
+    /// EQ 一開就代表該裝置的所有音訊要繞道 Chorus，與軟體音量同一個代價。
+    ///
+    /// 以 device UID 為鍵而不是名稱：同型號兩支耳機的名稱一樣，
+    /// 而 AutoEq 校正是綁在**那一支**上的。
+    var deviceEQ: [String: EQSettings] {
+        didSet {
+            guard let data = try? JSONEncoder().encode(deviceEQ) else { return }
+            defaults.set(data, forKey: Key.deviceEQ)
+        }
+    }
+
     /// 螢幕長亮時是否連系統待機一起擋（預設只擋螢幕待機）。
     var keepAwakePreventsSystemSleep: Bool {
         didSet { defaults.set(keepAwakePreventsSystemSleep, forKey: Key.keepAwakeSystemSleep) }
@@ -248,6 +261,12 @@ final class SettingsStore {
             appAudio = AppAudioSettings()
         }
         softwareVolumeDevices = Set(defaults.stringArray(forKey: Key.softwareVolume) ?? [])
+        if let data = defaults.data(forKey: Key.deviceEQ),
+           let decoded = try? JSONDecoder().decode([String: EQSettings].self, from: data) {
+            deviceEQ = decoded
+        } else {
+            deviceEQ = [:]
+        }
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
