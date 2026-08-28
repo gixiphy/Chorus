@@ -36,6 +36,9 @@ xcodebuild -project Chorus.xcodeproj -scheme Chorus -configuration Release \
 
 rm -rf dist/Chorus.app dist/Chorus-*.zip
 ditto dist/Chorus.xcarchive/Products/Applications/Chorus.app dist/Chorus.app
+# 建置產物的權限可能不是 world-readable；內嵌的 HAL driver 由 _coreaudiod 讀取，
+# 少了 go+r 安裝後就載不進去。在打包前先正規化。
+chmod -R go+rX dist/Chorus.app
 ZIP="dist/Chorus-$VERSION-b$NEXT_BUILD.zip"
 ditto -c -k --keepParent dist/Chorus.app "$ZIP"
 echo "▸ 已打包 $ZIP"

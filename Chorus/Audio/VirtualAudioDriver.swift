@@ -191,8 +191,11 @@ final class VirtualAudioDriverController {
         guard let source = Self.bundledDriverURL else { throw InstallError.driverMissing }
         let src = source.path
         let dst = Self.driverPath
+        // ditto 保留來源權限，而 App bundle 裡的檔案不保證 world-readable。
+        // HAL plugin 是 coreaudiod（以 _coreaudiod 身分，非 root、非 wheel）去讀的：
+        // 少了 go+r 就會安靜地載不進去，狀態永遠停在 installedNotLoaded。
         try await runAsAdmin(
-            "/bin/mkdir -p '/Library/Audio/Plug-Ins/HAL' && /bin/rm -rf '\(dst)' && /usr/bin/ditto '\(src)' '\(dst)' && /usr/sbin/chown -R root:wheel '\(dst)' && (/usr/bin/killall coreaudiod || true)"
+            "/bin/mkdir -p '/Library/Audio/Plug-Ins/HAL' && /bin/rm -rf '\(dst)' && /usr/bin/ditto '\(src)' '\(dst)' && /usr/sbin/chown -R root:wheel '\(dst)' && /bin/chmod -R go+rX '\(dst)' && (/usr/bin/killall coreaudiod || true)"
         )
         // coreaudiod 重啟需要一點時間才會註冊 box
         try? await Task.sleep(for: .seconds(2))
