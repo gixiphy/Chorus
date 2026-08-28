@@ -152,6 +152,15 @@ final class TestHooks {
                     }
                 }
             }
+        case "captureScene":
+            // value = 場景名稱；以目前狀態擷取並儲存
+            if let name = info["value"], !name.isEmpty {
+                appState.sceneStore.save(appState.automation.captureCurrentScene(named: name))
+            }
+        case "deleteScene":
+            if let name = info["value"], let scene = appState.sceneStore.scene(named: name) {
+                appState.sceneStore.delete(id: scene.id)
+            }
         case "control":
             // value = ControlRequest JSON。走動詞層的完整路徑（驗證＋執行），
             // 不需要開 HTTP server 也不需要 token——B4-1 的 E2E 入口。
@@ -310,6 +319,9 @@ final class TestHooks {
                 "remaining": appState.keepAwake.remainingSeconds.map { $0 as Any } ?? NSNull(),
                 "preventsSystemSleep": appState.keepAwake.alsoPreventSystemSleep,
             ] as [String: Any],
+            "scenes": appState.sceneStore.scenes.map { scene in
+                ["name": scene.name, "requests": scene.requests.count] as [String: Any]
+            },
             "lastControl": lastControlResponse
                 .flatMap { try? JSONEncoder().encode($0) }
                 .flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? NSNull(),

@@ -41,6 +41,7 @@ struct MenuBarView: View {
 
             AutoBrightnessRow()
             KeepAwakeRow()
+            ScenesRow()
             if appState.displayManager.hasPoweredOffDisplay {
                 Button {
                     appState.displayManager.restoreAllDisplayPower()
@@ -145,6 +146,130 @@ private struct AutoBrightnessRow: View {
             return "跟隨 \(name) · \(Int(lux.rounded())) lx"
         }
         return "無光線感測器 — 等待其他裝置回報"
+    }
+}
+
+/// 場景（B4-5）：具名的狀態組合，一鍵套用。與 CLI `chorus scene <名稱>`
+/// 和 HTTP `perform runScene` 觸發的是同一份。
+private struct ScenesRow: View {
+    @Environment(AppState.self) private var appState
+    @State private var naming = false
+    @State private var draftName = ""
+    /// 套用結果的短暫提示（哪幾項沒套上）。
+    @State private var note: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Label("場景", systemImage: "rectangle.stack")
+                    .font(.callout)
+                Spacer()
+                Button {
+                    draftName = ""
+                    naming.toggle()
+                } label: {
+                    Image(systemName: naming ? "xmark.circle" : "plus.circle")
+                        .imageScale(.medium)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("以目前的亮度、音量與自動亮度狀態建立場景")
+            }
+
+            if naming {
+                HStack(spacing: 6) {
+                    TextField("場景名稱", text: $draftName)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                        .onSubmit(save)
+                    Button("儲存", action: save)
+                        .controlSize(.small)
+                        .disabled(draftName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+
+            if appState.sceneStore.scenes.isEmpty {
+                Text("尚無場景——按 ＋ 把目前的亮度與音量存成一組")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                // 場景數量不定，用可換行的排列而不是固定欄數
+                FlowRow(spacing: 6) {
+                    ForEach(appState.sceneStore.scenes) { scene in
+                        Button(scene.name) { run(scene) }
+                            .controlSize(.small)
+                            .contextMenu {
+                                Button("刪除「\(scene.name)」", role: .destructive) {
+                                    appState.sceneStore.delete(id: scene.id)
+                                }
+                            }
+                    }
+                }
+            }
+
+            if let note {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func save() {
+        let name = draftName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        appState.sceneStore.save(appState.automation.captureCurrentScene(named: name))
+        naming = false
+        draftName = ""
+        note = "已建立「\(name)」"
+    }
+
+    private func run(_ scene: ControlScene) {
+        let response = appState.automation.execute(ControlRequest(
+            verb: .perform, target: .system, value: scene.name, action: .runScene
+        ))
+        // 逐條套用，某幾條可能因螢幕已拔除而失敗——把數量講出來，
+        // 不要讓使用者以為整組都生效了
+        let failed = (response.results ?? []).filter { $0.property == "error" }.count
+        note = failed == 0
+            ? "已套用「\(scene.name)」"
+            : "已套用「\(scene.name)」，\(failed) 項未生效（裝置已不在）"
+    }
+}
+
+/// 依可用寬度換行的簡易排列（場景數量不定，固定欄數會空一大片或擠出去）。
+private struct FlowRow: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += lineHeight + spacing
+                lineHeight = 0
+            }
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
+        return CGSize(width: proposal.width ?? x, height: y + lineHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, lineHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += lineHeight + spacing
+                lineHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
     }
 }
 

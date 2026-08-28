@@ -137,6 +137,13 @@ def cleanup():
         print("  （正式 Chorus 已重新啟動）", flush=True)
 
 
+def by_uuid(data, uuid):
+    for display in data.get("displays", []):
+        if display["uuid"] == uuid:
+            return display
+    return None
+
+
 def value_for(response, prop):
     for item in (response or {}).get("results") or []:
         if item.get("property") == prop:
@@ -396,6 +403,15 @@ def main():
             out = run_cli(["help"])
             record("chorus help 列出用法", out.returncode == 0 and "--brightness" in out.stdout)
 
+            notify("A", "captureScene", "CLI 場景")
+            time.sleep(1.5)
+            out = run_cli(["scenes"])
+            record("chorus scenes 列出場景",
+                   out.returncode == 0 and "CLI 場景" in out.stdout, out.stdout.strip()[:60])
+            out = run_cli(["scene", "CLI 場景"])
+            record("chorus scene <名稱> 套用場景", out.returncode == 0, out.stdout.strip()[:60] + out.stderr.strip()[:60])
+            notify("A", "deleteScene", "CLI 場景")
+
     notify("A", "automationServer", "0")
     ok, _ = wait_for(lambda d: d["automationServer"]["running"] is False, timeout=10)
     record("關閉後 server 停止", ok)
@@ -406,7 +422,48 @@ def main():
                            f"http://127.0.0.1:{port}/v1/state"],
                           capture_output=True, text=True).stdout.strip() in ("000", ""))
 
-    print("\n[測試 12] 跨機轉發", flush=True)
+    print("\n[測試 12] 場景（B4-5）", flush=True)
+    # 先把亮度設成已知值，擷取後改掉，再套用場景看是否回得去
+    control({"verb": "set", "target": f"displayUUID:{display_uuid}",
+             "property": "brightness", "value": "42%"})
+    notify("A", "captureScene", "測試場景")
+    ok, state = wait_for(lambda d: any(s["name"] == "測試場景" for s in d.get("scenes", [])), timeout=10)
+    captured = next((s for s in (state or {}).get("scenes", []) if s["name"] == "測試場景"), None)
+    record("以目前狀態建立場景", ok and (captured or {}).get("requests", 0) > 0,
+           f"{(captured or {}).get('requests')} 個動作")
+
+    control({"verb": "set", "target": f"displayUUID:{display_uuid}",
+             "property": "brightness", "value": "90%"})
+    response = control({"verb": "perform", "target": "system",
+                        "action": "runScene", "value": "測試場景"})
+    record("perform runScene 成功", bool(response and response.get("ok")),
+           (response or {}).get("error", {}).get("message", ""))
+    ok, state = wait_for(
+        lambda d: abs(((by_uuid(d, display_uuid) or {}).get("brightness") or 0) - 0.42) < 0.02, timeout=12)
+    record("套用場景把亮度還原成擷取時的值", ok,
+           f"實得 {(by_uuid(state or {}, display_uuid) or {}).get('brightness')}")
+
+    # 名稱前綴查找
+    response = control({"verb": "perform", "target": "system",
+                        "action": "runScene", "value": "測試"})
+    record("場景名稱可用前綴定位", bool(response and response.get("ok")))
+
+    response = control({"verb": "perform", "target": "system",
+                        "action": "runScene", "value": "不存在的場景"})
+    error = (response or {}).get("error") or {}
+    record("找不到場景 → targetNotFound＋列出現有場景",
+           error.get("code") == "targetNotFound" and "測試場景" in (error.get("hint") or ""),
+           f"實得 {error.get('code')}")
+
+    response = control({"verb": "perform", "target": "system", "action": "runScene"})
+    error = (response or {}).get("error") or {}
+    record("perform runScene 少了名稱 → badValue", error.get("code") == "badValue")
+
+    notify("A", "deleteScene", "測試場景")
+    ok, _ = wait_for(lambda d: not any(s["name"] == "測試場景" for s in d.get("scenes", [])), timeout=10)
+    record("刪除場景", ok)
+
+    print("\n[測試 13] 跨機轉發", flush=True)
     launch("B", 47701, 47801)
     ok, _ = wait_for(lambda d: len(d.get("displays", [])) > 0, inst="B", timeout=30)
     if not ok:

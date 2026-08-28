@@ -1,3 +1,4 @@
+import ChorusCore
 import ServiceManagement
 import SwiftUI
 
@@ -32,6 +33,14 @@ private struct GeneralSettingsTab: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     /// 安裝結果或（不可寫時）使用者可自行貼進終端機的指令。
     @State private var cliInstallMessage: String?
+
+    /// 一條場景動作的人話描述。刻意貼近 CLI 的寫法，
+    /// 使用者看得懂這一行，也就知道怎麼在終端重現它。
+    private func describe(_ request: ControlRequest) -> String {
+        let property = request.property?.rawValue ?? request.action?.rawValue ?? "?"
+        let value = request.value.map { " \($0)" } ?? ""
+        return "\(request.verb.rawValue) \(request.target.stringValue) \(property)\(value)"
+    }
 
     var body: some View {
         Form {
@@ -113,6 +122,40 @@ private struct GeneralSettingsTab: View {
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            }
+            Section("場景") {
+                if appState.sceneStore.scenes.isEmpty {
+                    Text("尚無場景。在選單列按場景列的 ＋ 可把目前的亮度、音量與自動亮度狀態存成一組。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(appState.sceneStore.scenes) { scene in
+                        DisclosureGroup {
+                            // 列出實際會做什麼——場景是會改硬體的東西，
+                            // 使用者按下去前應該看得到內容，而不是只有一個名字
+                            ForEach(Array(scene.requests.enumerated()), id: \.offset) { _, request in
+                                Text(describe(request))
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                        } label: {
+                            HStack {
+                                Text(scene.name)
+                                Spacer()
+                                Text("\(scene.requests.count) 個動作")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Button("刪除", role: .destructive) {
+                                    appState.sceneStore.delete(id: scene.id)
+                                }
+                                .controlSize(.small)
+                            }
+                        }
+                    }
+                }
+                Text("選單列、`chorus scene <名稱>` 與 HTTP 觸發的是同一份。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("鍵盤媒體鍵") {
                 Toggle("接管亮度／音量鍵", isOn: Binding(

@@ -26,6 +26,13 @@ struct ChorusCLI {
             case "state":
                 let body = try await Client(config: config).get("/v1/state")
                 print(body)
+            case "scenes":
+                let body = try await Client(config: config).get("/v1/scenes")
+                if jsonOutput {
+                    print(body)
+                } else {
+                    printScenes(body)
+                }
             case "listen":
                 try await Client(config: config).listen()
             case "scene":
@@ -163,6 +170,23 @@ struct ChorusCLI {
 
     /// 印法依**屬性的值種類**決定，不用「數值落在 0–1」去猜——
     /// keepAwake 的 0（關閉）與 brightness 的 0（全暗）都是 0，猜不出來。
+    /// `chorus scenes` 的人類可讀輸出：一行一個場景，附動作數。
+    private static func printScenes(_ json: String) {
+        guard let data = json.data(using: .utf8),
+              let scenes = try? JSONDecoder().decode([ControlScene].self, from: data)
+        else {
+            print(json)
+            return
+        }
+        if scenes.isEmpty {
+            print("（尚無場景。可在 Chorus 選單列以目前狀態建立）")
+            return
+        }
+        for scene in scenes {
+            print("\(scene.name)  — \(scene.requests.count) 個動作")
+        }
+    }
+
     private static func describe(_ result: ControlResult) -> String {
         let kind = result.property.flatMap(ControlProperty.init(rawValue:))?.valueKind
         switch result.value {
@@ -196,6 +220,7 @@ struct ChorusCLI {
           chorus toggle [目標] --<屬性>
           chorus perform <動作> [引數]
           chorus scene  <名稱>
+          chorus scenes
           chorus state
           chorus listen
 

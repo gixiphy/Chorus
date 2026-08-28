@@ -22,6 +22,7 @@ final class AppState {
     let keepAwake: KeepAwakeController
     let emergencyRestore: EmergencyRestoreMonitor
     let automation: AutomationExecutor
+    let sceneStore: SceneStore
     let automationEvents: AutomationEventHub
     let automationServer: ControlHTTPServer
 
@@ -97,6 +98,7 @@ final class AppState {
         coordinator.attachAutoController(autoBrightness)
         coordinator.attachKeepAwake(keepAwake)
 
+        sceneStore = SceneStore(defaults: instance.defaults)
         automation = AutomationExecutor(
             settings: settings,
             displayManager: displayManager,
@@ -105,7 +107,8 @@ final class AppState {
             keepAwake: keepAwake,
             coordinator: coordinator,
             pairedPeers: pairedPeers,
-            sessionManager: sessionManager
+            sessionManager: sessionManager,
+            scenes: sceneStore
         )
 
         automationEvents = AutomationEventHub()
@@ -113,7 +116,8 @@ final class AppState {
             settings: settings,
             keychain: KeychainStore(service: instance.keychainService),
             executor: automation,
-            events: automationEvents
+            events: automationEvents,
+            scenes: sceneStore
         )
         coordinator.automationEvents = automationEvents
         displayManager.automationEvents = automationEvents

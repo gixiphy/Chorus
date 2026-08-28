@@ -18,6 +18,7 @@ final class AutomationExecutor {
     private unowned let coordinator: ControlCoordinator
     private unowned let pairedPeers: PairedPeersStore
     private unowned let sessionManager: SyncSessionManager
+    private unowned let scenes: SceneStore
 
     init(
         settings: SettingsStore,
@@ -27,7 +28,8 @@ final class AutomationExecutor {
         keepAwake: KeepAwakeController,
         coordinator: ControlCoordinator,
         pairedPeers: PairedPeersStore,
-        sessionManager: SyncSessionManager
+        sessionManager: SyncSessionManager,
+        scenes: SceneStore
     ) {
         self.settings = settings
         self.displayManager = displayManager
@@ -37,6 +39,7 @@ final class AutomationExecutor {
         self.coordinator = coordinator
         self.pairedPeers = pairedPeers
         self.sessionManager = sessionManager
+        self.scenes = scenes
     }
 
     /// 單一入口。所有錯誤都轉成帶 hint 的回應，不往外拋——
@@ -81,12 +84,96 @@ final class AutomationExecutor {
             audioManager.refreshBridges()
             return [ControlResult(target: "system", property: "refresh", value: .bool(true))]
         case .runScene:
-            throw ControlError.unsupported("場景尚未實作（B4-5）")
+            return try runScene(named: request.actionArgument)
         case .suggestOffsets:
             throw ControlError.unsupported("suggestOffsets 尚未接上顧問管線（B4-4）")
         case nil:
             throw ControlError.missingAction
         }
+    }
+
+    // MARK: - 場景
+
+    /// 逐條獨立套用。**一條失敗不放棄其餘**——場景建立時在的螢幕現在可能被
+    /// 拔掉了，那不該讓「電影模式」整組不生效。失敗的那條以一筆 error 結果
+    /// 回報，呼叫端看得到哪一項沒套上。
+    private func runScene(named name: String?) throws(ControlError) -> [ControlResult] {
+        let query = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            throw ControlError.badValue("", hint: "perform runScene 需要場景名稱")
+        }
+        guard let scene = scenes.scene(named: query) else {
+            throw ControlError.targetNotFound(query, hint: scenes.scenes.isEmpty
+                ? "還沒有任何場景"
+                : "目前的場景：" + scenes.scenes.map(\.name).joined(separator: "、"))
+        }
+        var results: [ControlResult] = []
+        for request in scene.requests {
+            // 場景裡不執行 perform：場景包場景會無限遞迴，
+            // 與其做迴圈偵測，不如一開始就不允許。
+            guard request.verb != .perform else {
+                results.append(ControlResult(
+                    target: scene.name,
+                    property: "skipped",
+                    value: .string("場景內不支援 perform")
+                ))
+                continue
+            }
+            let response = execute(request)
+            if let ok = response.results {
+                results.append(contentsOf: ok)
+            } else if let error = response.error {
+                results.append(ControlResult(
+                    target: request.target.stringValue,
+                    property: "error",
+                    value: .string(error.message)
+                ))
+            }
+        }
+        return results
+    }
+
+    /// 以目前狀態擷取成一個場景。
+    ///
+    /// 擷取的是「畫面與聲音現在長什麼樣」：每台顯示器的亮度（以 UUID 定位，
+    /// 精準但機器專屬）、預設輸出的音量與靜音，外加**自動亮度開關**——
+    /// 少了它，套用固定亮度後會被自動亮度立刻覆蓋，場景等於沒作用。
+    /// 不擷取電源與防睡眠：那是動作不是外觀，使用者不會期待「套用電影模式」
+    /// 順手把某台螢幕關掉。
+    func captureCurrentScene(named name: String) -> ControlScene {
+        var requests: [ControlRequest] = [
+            ControlRequest(
+                verb: .set, target: .system, property: .autoBrightness,
+                value: settings.autoBrightnessEnabled ? "on" : "off"
+            ),
+        ]
+        for display in displayManager.displays where !display.isPoweredOff {
+            requests.append(ControlRequest(
+                verb: .set,
+                target: .displayUUID(display.uuid),
+                property: .brightness,
+                value: Self.percent(display.brightness)
+            ))
+        }
+        if let device = audioManager.defaultDevice {
+            if device.isVolumeControllable {
+                requests.append(ControlRequest(
+                    verb: .set, target: .defaultOutput, property: .volume,
+                    value: Self.percent(device.volume)
+                ))
+            }
+            requests.append(ControlRequest(
+                verb: .set, target: .defaultOutput, property: .mute,
+                value: device.muted ? "on" : "off"
+            ))
+        }
+        return ControlScene(name: name, requests: requests)
+    }
+
+    /// 存成 `"85%"`：與 CLI／HTTP 的收值規則同一套寫法，
+    /// 場景 JSON 直接看得懂，也可以手改。
+    private static func percent(_ value: Double) -> String {
+        "\(Int((min(max(value, 0), 1) * 100).rounded()))%"
     }
 
     // MARK: - 顯示器

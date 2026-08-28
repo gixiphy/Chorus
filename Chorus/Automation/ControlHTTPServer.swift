@@ -34,6 +34,7 @@ final class ControlHTTPServer {
     @ObservationIgnored private let keychain: KeychainStore
     @ObservationIgnored private unowned let executor: AutomationExecutor
     @ObservationIgnored private unowned let events: AutomationEventHub
+    @ObservationIgnored private unowned let scenes: SceneStore
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private var eventConnections: [ObjectIdentifier: (NWConnection, UUID)] = [:]
 
@@ -51,12 +52,14 @@ final class ControlHTTPServer {
         settings: SettingsStore,
         keychain: KeychainStore,
         executor: AutomationExecutor,
-        events: AutomationEventHub
+        events: AutomationEventHub,
+        scenes: SceneStore
     ) {
         self.settings = settings
         self.keychain = keychain
         self.executor = executor
         self.events = events
+        self.scenes = scenes
     }
 
     // MARK: - Token
@@ -267,13 +270,18 @@ final class ControlHTTPServer {
         case ("POST", "/v1/command"):
             handleCommand(request.body, on: connection)
 
+        case ("GET", "/v1/scenes"):
+            // 場景清單給 CLI 的 `chorus scenes`；內容一併回，
+            // 呼叫端想看某個場景到底會做什麼不必再問一次。
+            respondJSON(connection, encodable: scenes.scenes)
+
         case ("GET", "/v1/events"):
             startEventStream(on: connection)
 
         default:
             respond(connection, status: 404, json: Self.errorJSON(
                 "notFound",
-                "可用端點：POST /v1/command、GET /v1/state、GET /v1/events"
+                "可用端點：POST /v1/command、GET /v1/state、GET /v1/scenes、GET /v1/events"
             ))
         }
     }
