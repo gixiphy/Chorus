@@ -42,6 +42,10 @@ protocol TapSession: AnyObject {
 protocol TapBackend: AnyObject {
     /// 目前預設輸出裝置的 UID（aggregate 的 clock 來源與寫回目標）。
     func defaultOutputDeviceUID() -> String?
+    /// 目前存在的輸出裝置 UID。路由（B6-3）要靠它分辨「使用者指定的裝置
+    /// 還在不在」——建 aggregate 失敗的錯誤碼分不出「裝置被拔掉」與
+    /// 「這台機器有別的問題」，前者該退回預設並說明，後者不該。
+    func outputDeviceUIDs() -> [String]
     /// 權限探測：全域 unmuted tap、只讀不寫。`excluding` 至少要含自己的
     /// process object（回音紀律，DESIGN §2.3 規則 1）。
     func startProbeSession(

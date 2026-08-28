@@ -45,6 +45,43 @@ final class CoreAudioTapBackend: TapBackend {
         return Self.stringProperty(deviceID, kAudioDevicePropertyDeviceUID)
     }
 
+    /// 有輸出串流的裝置。輸入裝置（麥克風）與純輸入的 aggregate 不算——
+    /// 把它們列進路由選單只會讓使用者選到一個沒有聲音出來的目標。
+    func outputDeviceUIDs() -> [String] {
+        var address = Self.address(kAudioHardwarePropertyDevices)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size
+        ) == noErr, size > 0 else { return [] }
+        var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects
+        ) == noErr else { return [] }
+        return objects.compactMap { device in
+            guard Self.hasOutputStreams(device) else { return nil }
+            return Self.stringProperty(device, kAudioDevicePropertyDeviceUID)
+        }
+    }
+
+    private nonisolated static func hasOutputStreams(_ device: AudioObjectID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr, size > 0 else {
+            return false
+        }
+        let buffer = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: 16)
+        defer { buffer.deallocate() }
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, buffer) == noErr else {
+            return false
+        }
+        let list = UnsafeMutableAudioBufferListPointer(buffer.assumingMemoryBound(to: AudioBufferList.self))
+        return list.contains { $0.mNumberChannels > 0 }
+    }
+
     func startProbeSession(
         outputDeviceUID: String,
         excludingProcessObjects: [AudioObjectID]

@@ -106,9 +106,25 @@ struct TapEngineTests {
         engine.healthTick()
         engine.setGain(0.5, bundleID: "com.apple.Music")
         let before = backend.startedSessions.count
+
+        backend.defaultOutputUID = "fake-speakers"
+        backend.availableOutputUIDs = ["fake-speakers", "fake-headphones"]
         backend.simulateDefaultOutputChange()
         #expect(backend.startedSessions.count == before + 1)
         #expect(engine.tappedBundles == ["com.apple.Music"])
+        #expect(engine.activeOutputUID(bundleID: "com.apple.Music") == "fake-speakers")
+    }
+
+    @Test("預設輸出「事件來了但裝置沒變」不重建——沒必要的中斷不該發生")
+    func spuriousDefaultChangeIsIgnored() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        let before = backend.startedSessions.count
+        backend.simulateDefaultOutputChange()
+        #expect(backend.startedSessions.count == before)
     }
 
     @Test("拒絕 tap 自己——回音紀律")
@@ -212,6 +228,84 @@ struct TapEngineTests {
         engine.reset(bundleID: "com.apple.Music")
         #expect(engine.tappedBundles.isEmpty)
         #expect(engine.setting(for: "com.apple.Music").isNeutral)
+    }
+
+    // MARK: - B6-3：逐 App 路由
+
+    @Test("指定輸出裝置：session 建在那個裝置上，不是系統預設")
+    func routesToTheChosenDevice() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        #expect(engine.activeOutputUID(bundleID: "com.apple.Music") == "fake-output-uid")
+
+        engine.setOutputDevice("fake-headphones", bundleID: "com.apple.Music")
+        #expect(engine.activeOutputUID(bundleID: "com.apple.Music") == "fake-headphones")
+        #expect(backend.startedOutputs.last == "fake-headphones")
+    }
+
+    @Test("只指定路由、音量不動也算調整——一樣要有 session")
+    func routeAloneIsAnAdjustment() {
+        let (engine, _, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setOutputDevice("fake-headphones", bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles == ["com.apple.Music"])
+        engine.setOutputDevice(nil, bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles.isEmpty)
+    }
+
+    @Test("指定的裝置被拔掉：暫時退回系統預設，但設定留著")
+    func missingRouteFallsBackWithoutLosingTheSetting() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setOutputDevice("fake-headphones", bundleID: "com.apple.Music")
+
+        backend.availableOutputUIDs = ["fake-output-uid"] // 耳機拔掉
+        engine.audioDevicesChanged()
+        #expect(engine.activeOutputUID(bundleID: "com.apple.Music") == "fake-output-uid")
+        #expect(engine.setting(for: "com.apple.Music").outputDeviceUID == "fake-headphones")
+        #expect(engine.lastTapError != nil) // 有說出來，不是靜靜換掉
+
+        backend.availableOutputUIDs = ["fake-output-uid", "fake-headphones"] // 插回去
+        engine.audioDevicesChanged()
+        #expect(engine.activeOutputUID(bundleID: "com.apple.Music") == "fake-headphones")
+        #expect(engine.lastTapError == nil)
+    }
+
+    @Test("換系統預設：跟隨預設的搬家，指定路由的不動")
+    func defaultChangeOnlyMovesFollowers() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        engine.setGain(0.5, bundleID: "com.apple.Safari")
+        engine.setOutputDevice("fake-headphones", bundleID: "com.apple.Safari")
+
+        backend.defaultOutputUID = "fake-speakers"
+        backend.availableOutputUIDs = ["fake-speakers", "fake-headphones"]
+        engine.audioDevicesChanged()
+        #expect(engine.activeOutputUID(bundleID: "com.apple.Music") == "fake-speakers")
+        #expect(engine.activeOutputUID(bundleID: "com.apple.Safari") == "fake-headphones")
+    }
+
+    @Test("路由沒變就不重建 session（重建會有可聽見的中斷）")
+    func unchangedRouteReusesTheSession() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setOutputDevice("fake-headphones", bundleID: "com.apple.Music")
+        let after = backend.startedSessions.count
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        engine.audioDevicesChanged()
+        #expect(backend.startedSessions.count == after)
     }
 
     @Test("設定跨重啟保留：新引擎接上同一份設定，取得權限後自動恢復")

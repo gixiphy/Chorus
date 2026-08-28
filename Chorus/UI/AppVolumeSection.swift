@@ -158,8 +158,28 @@ private struct AppVolumeRow: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 38, alignment: .trailing)
             }
+            routeCaption
+                .padding(.leading, 24)
         }
         .contextMenu {
+            Menu("輸出到") {
+                Button {
+                    appState.tapEngine.setOutputDevice(nil, bundleID: bundleID)
+                } label: {
+                    Label("跟隨系統預設", systemImage: setting.outputDeviceUID == nil ? "checkmark" : "")
+                }
+                Divider()
+                ForEach(appState.audioManager.devices) { device in
+                    Button {
+                        appState.tapEngine.setOutputDevice(device.uid, bundleID: bundleID)
+                    } label: {
+                        Label(
+                            device.name,
+                            systemImage: setting.outputDeviceUID == device.uid ? "checkmark" : ""
+                        )
+                    }
+                }
+            }
             Button("回到 100%") { appState.tapEngine.setGain(1, bundleID: bundleID) }
             Button("完全不處理這個 App") { appState.tapEngine.reset(bundleID: bundleID) }
                 .help("清掉所有調整——這個 App 會回到完全原生的音訊路徑，不再建立 tap")
@@ -168,5 +188,25 @@ private struct AppVolumeRow: View {
 
     private var isAudible: Bool {
         appState.tapEngine.registry.entry(bundleID: bundleID)?.isAudible ?? false
+    }
+
+    /// 路由狀態（B6-3）。只在使用者明確指定過裝置時才佔一行——
+    /// 「跟隨系統預設」是預設行為，不需要每一列都重複講一次。
+    @ViewBuilder
+    private var routeCaption: some View {
+        if let routed = setting.outputDeviceUID {
+            let name = appState.audioManager.devices.first { $0.uid == routed }?.name
+            let active = appState.tapEngine.activeOutputUID(bundleID: bundleID)
+            if let name, active == routed {
+                Text("輸出到「\(name)」")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                // 裝置不在（耳機拔了）。設定留著、暫時走預設——插回去會自己接回去
+                Text("指定的輸出裝置不在，暫時走系統預設")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+        }
     }
 }

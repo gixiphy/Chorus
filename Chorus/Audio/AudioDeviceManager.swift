@@ -16,6 +16,9 @@ final class AudioDeviceManager {
     @ObservationIgnored weak var virtualDriver: VirtualAudioDriverController?
     @ObservationIgnored private var consumeTask: Task<Void, Never>?
     @ObservationIgnored weak var coordinator: ControlCoordinator?
+    /// 逐 App 路由（B6-3）要知道裝置清單何時變動——指定的目標裝置
+    /// 插回來時 session 要接回去。
+    @ObservationIgnored weak var tapEngine: TapEngine?
 
     /// 我們自己剛寫入的值：snapshot 回報若與其相近則不覆蓋 UI（避免拖曳中跳動）。
     @ObservationIgnored private var recentLocalSets: [String: (value: Double, at: ContinuousClock.Instant)] = [:]
@@ -234,9 +237,11 @@ final class AudioDeviceManager {
                 updated.append(model)
             }
         }
+        let changedSet = Set(updated.map(\.uid)) != Set(devices.map(\.uid))
         devices = updated
         refreshBridges()
         sortDevices()
+        if changedSet { tapEngine?.audioDevicesChanged() }
     }
 
     /// 重算所有無軟體音量裝置的 DDC 橋接。

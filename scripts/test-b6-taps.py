@@ -192,7 +192,38 @@ def main():
     record("拒絕 tap 自己（回音紀律）", tapped(dump()) == [])
     notify("appReset", "com.hermes.Chorus")
 
-    print("\n[5] 停用與重啟後恢復", flush=True)
+    print("\n[5] B6-3：逐 App 路由", flush=True)
+    notify("fakeOutputDevices", "fake-output-uid;fake-headphones")
+    notify("appRoute", "com.apple.Music|fake-headphones")
+    ok, _ = wait_for(
+        lambda d: app_settings(d).get("com.apple.Music", {}).get("activeOutput") == "fake-headphones", 10)
+    record("指定輸出裝置 → session 建在該裝置上", ok)
+    record("只指定路由也算調整（有 session）", tapped(dump()) == ["com.apple.Music"])
+
+    notify("fakeOutputDevices", "fake-output-uid")  # 耳機拔掉
+    ok, _ = wait_for(
+        lambda d: app_settings(d).get("com.apple.Music", {}).get("activeOutput") == "fake-output-uid", 10)
+    record("指定裝置被拔掉 → 暫時退回系統預設", ok)
+    record("設定沒有被清掉（插回去要接得回來）",
+           app_settings(dump()).get("com.apple.Music", {}).get("output") == "fake-headphones")
+
+    notify("fakeOutputDevices", "fake-output-uid;fake-headphones")  # 插回去
+    ok, _ = wait_for(
+        lambda d: app_settings(d).get("com.apple.Music", {}).get("activeOutput") == "fake-headphones", 10)
+    record("裝置插回來 → session 自動接回原目標", ok)
+
+    notify("appGain", "com.apple.Music|0.5")
+    notify("appRoute", "com.apple.Music|")
+    ok, _ = wait_for(
+        lambda d: app_settings(d).get("com.apple.Music", {}).get("activeOutput") == "fake-output-uid", 10)
+    record("改回跟隨系統預設（其他調整還在，session 留著）", ok)
+
+    notify("appGain", "com.apple.Music|1")
+    ok, _ = wait_for(lambda d: tapped(d) == [], 10)
+    record("路由與音量都歸零 → 完全回到原生路徑", ok)
+    notify("appReset", "com.apple.Music")
+
+    print("\n[6] 停用與重啟後恢復", flush=True)
     notify("appGain", "com.apple.Music|0.3")
     ok, _ = wait_for(lambda d: tapped(d) == ["com.apple.Music"], 10)
     record("重新調一個 App", ok)

@@ -12,8 +12,15 @@ final class FakeTapBackend: TapBackend {
     private(set) var startedSessions: [(kind: TapSessionKind, target: String)] = []
     /// 各 bundle 目前的 session（測試查驗增益／靜音有沒有真的送到 realtime 端）。
     private(set) var liveSessions: [String: FakeTapSession] = [:]
+    /// 每條 playthrough session 實際建在哪個裝置上（路由驗證用）。
+    private(set) var startedOutputs: [String] = []
 
-    func defaultOutputDeviceUID() -> String? { "fake-output-uid" }
+    var defaultOutputUID: String? = "fake-output-uid"
+    /// 可路由的裝置。測試可增刪，模擬耳機插拔。
+    var availableOutputUIDs: [String] = ["fake-output-uid", "fake-headphones"]
+
+    func defaultOutputDeviceUID() -> String? { defaultOutputUID }
+    func outputDeviceUIDs() -> [String] { availableOutputUIDs }
 
     func startProbeSession(
         outputDeviceUID: String,
@@ -30,6 +37,7 @@ final class FakeTapBackend: TapBackend {
             throw TapBackendError.refusedSelfTap
         }
         startedSessions.append((.playthrough, bundleID))
+        startedOutputs.append(outputDeviceUID)
         let session = FakeTapSession(kind: .playthrough, backend: self, initialGain: initialGain)
         liveSessions[bundleID] = session
         return session

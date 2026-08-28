@@ -211,6 +211,24 @@ final class TestHooks {
                     appState.tapEngine.setMuted(fields[1] == "1", bundleID: String(fields[0]))
                 }
             }
+        case "appRoute":
+            // value = "bundle.id|device-uid"（uid 留空＝跟隨系統預設）
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|", omittingEmptySubsequences: false)
+                if fields.count == 2 {
+                    let uid = fields[1].isEmpty ? nil : String(fields[1])
+                    appState.tapEngine.setOutputDevice(uid, bundleID: String(fields[0]))
+                }
+            }
+        case "fakeOutputDevices":
+            // value = "uid-a;uid-b"（--fake-taps 時有效）。模擬耳機插拔——
+            // 第一個是系統預設
+            if let fake = TestSupport.fakeTapBackend, let raw = info["value"] {
+                let uids = raw.split(separator: ";").map(String.init)
+                fake.availableOutputUIDs = uids
+                fake.defaultOutputUID = uids.first
+                appState.tapEngine.audioDevicesChanged()
+            }
         case "appReset":
             if let bundle = info["value"] { appState.tapEngine.reset(bundleID: bundle) }
         case "tapProbe":
@@ -504,6 +522,8 @@ final class TestHooks {
                             "gain": Double(entry.gain),
                             "muted": entry.muted,
                             "output": entry.outputDeviceUID as Any? ?? NSNull(),
+                            "activeOutput": appState.tapEngine
+                                .activeOutputUID(bundleID: bundleID) as Any? ?? NSNull(),
                         ] as [String: Any])
                     }),
                 "processes": appState.tapEngine.registry.processes.map { entry in

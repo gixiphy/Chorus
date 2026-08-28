@@ -45,6 +45,9 @@ final class TapEngine {
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private var probeSession: (any TapSession)?
     @ObservationIgnored private var sessions: [String: any TapSession] = [:]
+    /// 每條 session 實際建在哪個裝置的 UID 上。存它才分得出「設定改了但
+    /// 裝置沒變」（推 atomic 就好）與「裝置換了」（非重建不可）。
+    @ObservationIgnored private var sessionOutputUIDs: [String: String] = [:]
     @ObservationIgnored private var monitor = TapHealthMonitor()
     @ObservationIgnored private var lastProbeStats = TapSessionStats()
     @ObservationIgnored private var tickTask: Task<Void, Never>?
@@ -118,15 +121,15 @@ final class TapEngine {
     private func update(bundleID: String, _ mutate: (inout AppAudioSetting) -> Void) {
         var all = settings.appAudio
         var entry = all[bundleID]
-        let previousRoute = entry.outputDeviceUID
         mutate(&entry)
         all[bundleID] = entry
         settings.appAudio = all
-        // 路由變更要重建 session（aggregate 的 sub-device 綁在建立時）；
-        // 純增益／靜音變更只要推 atomic，不必動 CoreAudio
-        if entry.outputDeviceUID != previousRoute {
-            sessions.removeValue(forKey: bundleID)?.stop()
-        }
+        reconcileSessions()
+    }
+
+    /// 音訊裝置清單變了（插拔耳機、虛擬裝置上線）。指定路由的 App
+    /// 可能因此**找回**它的目標裝置，所以要重新對帳。
+    func audioDevicesChanged() {
         reconcileSessions()
     }
 
@@ -134,37 +137,59 @@ final class TapEngine {
 
     /// 讓進行中的 session 與設定一致。**這是「哪些 App 有 tap」的唯一答案。**
     ///
-    /// 每次設定變更、轉 active、預設輸出變更後都跑一次。冪等——
-    /// 已經對上的 App 不會被收掉重建（重建會有一次可聽見的中斷）。
+    /// 每次設定變更、轉 active、輸出裝置變動後都跑一次。冪等——
+    /// 已經對上、而且建在正確裝置上的 App 不會被收掉重建
+    /// （重建會有一次可聽見的中斷）。
     private func reconcileSessions() {
         guard state == .active else {
             // 尚未取得權限：先不建 tap，設定照留。轉 active 時會再對一次帳
             return
         }
         let desired = Set(settings.appAudio.adjustedBundleIDs)
-
-        for bundleID in sessions.keys where !desired.contains(bundleID) {
-            sessions.removeValue(forKey: bundleID)?.stop()
+        // Array(...)：下面會改 sessions，不要邊走邊改字典的鍵視圖
+        for bundleID in Array(sessions.keys) where !desired.contains(bundleID) {
+            stopSession(bundleID)
         }
+
+        // 每次對帳重新算一次說明，不留上一輪的殘影
+        var notice: String?
+        let available = Set(backend.outputDeviceUIDs())
 
         for bundleID in desired.sorted() {
             let entry = settings.appAudio[bundleID]
-            if sessions[bundleID] == nil {
-                guard let outputUID = entry.outputDeviceUID ?? backend.defaultOutputDeviceUID() else {
-                    lastTapError = "找不到輸出裝置，無法接管 \(bundleID)"
-                    continue
+            let outputUID: String?
+            if let routed = entry.outputDeviceUID {
+                if available.contains(routed) {
+                    outputUID = routed
+                } else {
+                    // 指定的裝置不在（耳機拔了）→ 退回預設但**不動設定**：
+                    // 插回去時 audioDevicesChanged 會把它接回原本的目標
+                    outputUID = backend.defaultOutputDeviceUID()
+                    notice = "「\(bundleID)」指定的輸出裝置目前不在，暫時改用系統預設"
                 }
+            } else {
+                outputUID = backend.defaultOutputDeviceUID()
+            }
+            guard let outputUID else {
+                notice = "找不到輸出裝置，無法接管 \(bundleID)"
+                continue
+            }
+            // aggregate 的 sub-device 綁在建立時、改不了——換裝置只能收舊建新
+            if let actual = sessionOutputUIDs[bundleID], actual != outputUID {
+                stopSession(bundleID)
+            }
+            if sessions[bundleID] == nil {
                 do {
                     sessions[bundleID] = try backend.startPlaythroughSession(
                         bundleID: bundleID,
                         outputDeviceUID: outputUID,
                         initialGain: entry.gain
                     )
-                    lastTapError = nil
+                    sessionOutputUIDs[bundleID] = outputUID
                 } catch {
                     // 單一 App 失敗不拖垮引擎：記錄並繼續，其他 session 與
                     // 裝置音量／亮度／同步完全不受影響（DESIGN §6 降級表）
-                    lastTapError = "無法接管 \(bundleID)：\(error)"
+                    notice = "無法接管 \(bundleID)：\(error)"
                     continue
                 }
             }
@@ -172,6 +197,17 @@ final class TapEngine {
             sessions[bundleID]?.setMuted(entry.muted)
         }
         tappedBundles = sessions.keys.sorted()
+        lastTapError = notice
+    }
+
+    /// 某個 App 的 session 目前實際建在哪個裝置上（`nil` ＝ 沒有 session）。
+    func activeOutputUID(bundleID: String) -> String? {
+        sessions[bundleID] == nil ? nil : sessionOutputUIDs[bundleID]
+    }
+
+    private func stopSession(_ bundleID: String) {
+        sessions.removeValue(forKey: bundleID)?.stop()
+        sessionOutputUIDs.removeValue(forKey: bundleID)
     }
 
     // MARK: - 探測與健康判讀
@@ -240,14 +276,10 @@ final class TapEngine {
 
     // MARK: - 裝置變更與收尾
 
-    /// 預設輸出換了：跟隨預設的 session 要搬家（aggregate 的 sub-device
-    /// 綁在建立時，改不了，只能收舊建新）。**明確指定路由的不動**——
-    /// 使用者選了「這個 App 固定走耳機」，換系統預設不該把它拉回來。
+    /// 預設輸出換了。跟隨預設的 session 會在對帳時因為「實際裝置 ≠ 目標
+    /// 裝置」被收舊建新；**明確指定路由的不動**——使用者選了「這個 App
+    /// 固定走耳機」，換系統預設不該把它拉回來。
     private func defaultOutputChanged() {
-        guard !sessions.isEmpty else { return }
-        for bundleID in sessions.keys where settings.appAudio[bundleID].outputDeviceUID == nil {
-            sessions.removeValue(forKey: bundleID)?.stop()
-        }
         reconcileSessions()
     }
 
@@ -262,6 +294,7 @@ final class TapEngine {
         stopProbe()
         for (_, session) in sessions { session.stop() }
         sessions = [:]
+        sessionOutputUIDs = [:]
         tappedBundles = []
         lastTapError = nil
     }
