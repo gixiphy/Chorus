@@ -24,6 +24,24 @@ struct KnownCLIEngine: Identifiable, Sendable {
     /// 模型欄位的格式提示。各家寫法不同——尤其 opencode 要 `provider/model`，
     /// 只填模型名會直接失敗，這種事不該讓使用者自己試出來。
     let modelHint: String
+    /// 可靠的模型列舉方式；沒有就 nil（欄位維持純輸入，不編造清單）。
+    let modelListing: ModelListing?
+    /// 靜態建議項。只放**設計上穩定**的東西（claude 的別名恆指向最新模型），
+    /// 不放具體版本號——那種清單放著就會過期。
+    let suggestedModels: [String]
+
+    /// `<cli> models` 的呼叫與輸出格式。
+    struct ModelListing: Sendable {
+        let arguments: [String]
+        let format: Format
+
+        enum Format: Sendable {
+            /// 每行一個 slug（opencode：`provider/model`）。
+            case plainLines
+            /// 散文清單，項目以 `*`／`-` 起頭（grok：`  * grok-4.6 (default)`）。
+            case markerList
+        }
+    }
     /// 給 prompt 的照片讀取措辭（僅 `.pathInPrompt` 用得到）。
     let readInstruction: String
     /// 未登入時提示使用者到終端執行的指令。
@@ -112,6 +130,8 @@ struct KnownCLIEngine: Identifiable, Sendable {
             codec: .jsonEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
             modelHint: "別名 opus／sonnet／fable，或完整名稱如 claude-opus-5",
+            modelListing: nil,
+            suggestedModels: ["opus", "sonnet", "fable"],
             readInstruction: "用 Read 工具讀取後再分析",
             loginCommand: "claude /login"
         ),
@@ -119,7 +139,10 @@ struct KnownCLIEngine: Identifiable, Sendable {
             id: "agy", executableName: "agy", displayName: "Antigravity",
             codec: .responseEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            // agy models 實測會無限期卡住（1.1.22），不提供列舉
             modelHint: "slug，如 gemini-3.1-pro-high、claude-sonnet-4-6",
+            modelListing: nil,
+            suggestedModels: [],
             readInstruction: "請先讀取照片再分析",
             loginCommand: "agy"
         ),
@@ -127,7 +150,9 @@ struct KnownCLIEngine: Identifiable, Sendable {
             id: "grok", executableName: "grok", displayName: "Grok Build",
             codec: .textEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
-            modelHint: "模型 ID（見 grok 的模型清單）",
+            modelHint: "模型 ID",
+            modelListing: ModelListing(arguments: ["models"], format: .markerList),
+            suggestedModels: [],
             readInstruction: "請先讀取照片再分析",
             loginCommand: "grok"
         ),
@@ -135,7 +160,10 @@ struct KnownCLIEngine: Identifiable, Sendable {
             id: "codex", executableName: "codex", displayName: "Codex CLI",
             codec: .plainStdout, photoDelivery: .attached,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            // codex 沒有非互動的列舉指令（models 會轉進互動式 CLI 並因非 TTY 失敗）
             modelHint: "模型名稱，如 gpt-5.6-terra",
+            modelListing: nil,
+            suggestedModels: [],
             readInstruction: "照片已附加",
             loginCommand: "codex login"
         ),
@@ -143,7 +171,9 @@ struct KnownCLIEngine: Identifiable, Sendable {
             id: "opencode", executableName: "opencode", displayName: "OpenCode",
             codec: .plainStdout, photoDelivery: .attached,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
-            modelHint: "provider/model 格式，如 anthropic/claude-sonnet-4-6",
+            modelHint: "provider/model 格式",
+            modelListing: ModelListing(arguments: ["models"], format: .plainLines),
+            suggestedModels: [],
             readInstruction: "照片已附加",
             loginCommand: "opencode auth login"
         ),
@@ -165,6 +195,9 @@ final class AdviceEngineRegistry {
     }
 
     private(set) var detected: [DetectedEngine] = []
+    /// 各引擎可選的模型（engine id → slug）。列不到的維持空陣列，
+    /// UI 就只顯示輸入欄位。
+    private(set) var models: [String: [String]] = [:]
 
     @ObservationIgnored private let settings: SettingsStore
 
@@ -199,7 +232,88 @@ final class AdviceEngineRegistry {
         detected = KnownCLIEngine.catalog.compactMap { engine in
             locate(engine).map { DetectedEngine(engine: engine, url: $0, version: nil) }
         }
+        // 靜態建議先就位；能列舉的等版本確定後再補上（見 refreshModels）
+        for entry in detected {
+            models[entry.id] = entry.engine.suggestedModels
+        }
         fetchVersions()
+    }
+
+    /// 使用者按「重新掃描」時連模型清單一起重抓（忽略版本快取）。
+    func rescanIncludingModels() {
+        settings.advisorModelCache = [:]
+        rescan()
+    }
+
+    /// `<cli> models` 的輸出解析。純函式，單獨測。
+    nonisolated static func parseModels(
+        _ output: String,
+        format: KnownCLIEngine.ModelListing.Format
+    ) -> [String] {
+        let lines = output.components(separatedBy: .newlines)
+        switch format {
+        case .plainLines:
+            // opencode：每行就是一個 provider/model。沒有斜線的是雜訊行。
+            return lines
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { $0.contains("/") && !$0.contains(" ") }
+        case .markerList:
+            // grok：`  * grok-4.6 (default)` / `  - grok-4.5`；
+            // 標題行（"Available models:"）沒有項目符號，自然被濾掉。
+            return lines.compactMap { line -> String? in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard trimmed.hasPrefix("* ") || trimmed.hasPrefix("- ") else { return nil }
+                let body = trimmed.dropFirst(2).trimmingCharacters(in: .whitespaces)
+                // 去掉 "(default)" 之類的尾註
+                let slug = body.split(separator: " ").first.map(String.init) ?? body
+                return slug.isEmpty ? nil : slug
+            }
+        }
+    }
+
+    /// 版本確定後補上模型清單。**以 CLI 版本為快取鍵**：版本沒變就用快取，
+    /// 升版即重抓——列舉會打網路，不該每次開設定頁都跑一遍。
+    private func refreshModels(for entry: DetectedEngine) {
+        guard let listing = entry.engine.modelListing, let version = entry.version else { return }
+        let cacheKey = "\(entry.id)|\(version)"
+        if let cached = settings.advisorModelCache[cacheKey], !cached.isEmpty {
+            models[entry.id] = cached
+            return
+        }
+        let url = entry.url
+        let engineID = entry.id
+        Task.detached { [weak self] in
+            guard let output = Self.runListing(at: url, arguments: listing.arguments) else { return }
+            let parsed = Self.parseModels(output, format: listing.format)
+            guard !parsed.isEmpty else { return }
+            await MainActor.run {
+                guard let self else { return }
+                self.models[engineID] = parsed
+                self.settings.advisorModelCache[cacheKey] = parsed
+            }
+        }
+    }
+
+    /// 列舉會打網路（實測 grok／opencode 各需十餘秒），逾時放寬到 30 秒；
+    /// 失敗只是沒有下拉選單，輸入欄位照常可用。
+    private nonisolated static func runListing(at url: URL, arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = url
+        process.arguments = arguments
+        process.environment = CLIProcessRunner.whitelistedEnvironment(
+            executableDirectory: url.deletingLastPathComponent().path
+        )
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do { try process.run() } catch { return nil }
+        let deadline = Date().addingTimeInterval(30)
+        while process.isRunning, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        if process.isRunning { process.terminate(); return nil }
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
     }
 
     private func locate(_ engine: KnownCLIEngine) -> URL? {
@@ -228,6 +342,7 @@ final class AdviceEngineRegistry {
                     guard let self, let index = self.detected.firstIndex(where: { $0.id == entry.id }),
                           self.detected[index].url == url else { return }
                     self.detected[index].version = version
+                    self.refreshModels(for: self.detected[index])
                 }
             }
         }

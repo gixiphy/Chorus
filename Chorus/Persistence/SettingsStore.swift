@@ -30,6 +30,7 @@ final class SettingsStore {
         static let advisorCustomPaths = "chorus.advisor.customPaths"
         static let advisorConfirmed = "chorus.advisor.confirmed"
         static let advisorModelIDs = "chorus.advisor.modelIDs"
+        static let advisorModelCache = "chorus.advisor.modelCache"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
         static let automationServer = "chorus.automation.serverEnabled"
@@ -151,6 +152,12 @@ final class SettingsStore {
         didSet { defaults.set(advisorModelIDs, forKey: Key.advisorModelIDs) }
     }
 
+    /// 模型清單快取（"engineID|version" → slugs）。以 CLI 版本為鍵：
+    /// 版本沒變就用快取，升版即重抓——列舉要打網路，不該每次開設定頁都跑。
+    var advisorModelCache: [String: [String]] {
+        didSet { defaults.set(advisorModelCache, forKey: Key.advisorModelCache) }
+    }
+
     /// 螢幕長亮時是否連系統待機一起擋（預設只擋螢幕待機）。
     var keepAwakePreventsSystemSleep: Bool {
         didSet { defaults.set(keepAwakePreventsSystemSleep, forKey: Key.keepAwakeSystemSleep) }
@@ -202,6 +209,7 @@ final class SettingsStore {
         advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)
         advisorModelIDs = (defaults.dictionary(forKey: Key.advisorModelIDs) as? [String: String]) ?? [:]
+        advisorModelCache = (defaults.dictionary(forKey: Key.advisorModelCache) as? [String: [String]]) ?? [:]
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)

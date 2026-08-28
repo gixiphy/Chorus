@@ -301,6 +301,7 @@ final class TestHooks {
                 "historyCount": appState.advisor.history.count,
                 "lastError": appState.advisor.lastErrorMessage.map { $0 as Any } ?? NSNull(),
                 "activeEngine": appState.advisor.registry.activeEngine.map { $0.id as Any } ?? NSNull(),
+                "models": appState.advisor.registry.models,
                 "sceneSummary": appState.advisor.result?.advice.sceneSummary as Any? ?? NSNull(),
             ] as [String: Any],
             "keepAwake": [

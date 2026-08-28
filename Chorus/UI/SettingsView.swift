@@ -486,7 +486,7 @@ private struct AdvisorSettingsTab: View {
                 Text("光環境顧問使用的本機 LLM CLI（偵測到什麼列什麼；不經手任何金鑰）")
             }
             Section {
-                Button("重新掃描") { appState.advisor.registry.rescan() }
+                Button("重新掃描") { appState.advisor.registry.rescanIncludingModels() }
                 Text("掃描順序：自訂路徑 → PATH → 常見安裝位置。找不到時可在上方填入執行檔完整路徑。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -544,6 +544,12 @@ private struct AdvisorSettingsTab: View {
     /// 自訂模型欄位。留空＝不帶 `--model`，交給 CLI 自己決定。
     /// 用自由輸入而非下拉選單：只有 agy 有列舉指令且實測會卡住，
     /// 其餘 CLI 根本沒有列舉介面——一個欄位對五個引擎都成立。
+    private func setModel(_ slug: String, for engine: KnownCLIEngine) {
+        var ids = appState.settings.advisorModelIDs
+        if slug.isEmpty { ids.removeValue(forKey: engine.id) } else { ids[engine.id] = slug }
+        appState.settings.advisorModelIDs = ids
+    }
+
     @ViewBuilder
     private func modelPicker(_ engine: KnownCLIEngine) -> some View {
         if engine.supportsModelSelection {
@@ -571,6 +577,24 @@ private struct AdvisorSettingsTab: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 200)
                 .help(engine.modelHint)
+                // 列得到清單的引擎給下拉，但**欄位永遠可以自由輸入**——
+                // 清單可能過期或列不全，不該因此擋住使用者想用的模型。
+                let options = appState.advisor.registry.models[engine.id] ?? []
+                if !options.isEmpty {
+                    Menu {
+                        Button("使用預設") { setModel("", for: engine) }
+                        Divider()
+                        ForEach(options, id: \.self) { slug in
+                            Button(slug) { setModel(slug, for: engine) }
+                        }
+                    } label: {
+                        Image(systemName: "chevron.up.chevron.down")
+                            .imageScale(.small)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("從 \(engine.displayName) 回報的清單挑選")
+                }
                 Text(engine.modelHint)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
