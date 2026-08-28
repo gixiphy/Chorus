@@ -120,6 +120,22 @@ private struct DisplaySettingsTab: View {
 
     var body: some View {
         Form {
+            Section("螢幕長亮") {
+                Toggle("連系統待機一起擋", isOn: Binding(
+                    get: { appState.keepAwake.alsoPreventSystemSleep },
+                    set: { appState.keepAwake.alsoPreventSystemSleep = $0 }
+                ))
+                Text(
+                    appState.keepAwake.alsoPreventSystemSleep
+                        ? "長亮期間螢幕與整台機器都不會待機（長時間下載／編譯用）。"
+                        : "長亮期間只擋螢幕待機，機器仍會照系統設定進入睡眠。"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Text("開關與計時（30 分鐘／1 小時／無限期／接著某台螢幕時）在選單列。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             AmbientCurveSection()
             if appState.displayManager.displays.isEmpty {
                 Text("找不到顯示器")

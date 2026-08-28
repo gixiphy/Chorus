@@ -1,4 +1,5 @@
 #if DEBUG
+import ChorusCore
 import Foundation
 
 /// DEBUG 專用測試掛鉤：
@@ -57,7 +58,8 @@ final class TestHooks {
                 appState.pairing.requestPair(with: candidate)
             }
         case "requestPairLoopback":
-            if let port = info["port"].flatMap(UInt16.init) {
+            // notify.swift 只會帶 value；port 是舊的鍵名，保留相容
+            if let port = (info["port"] ?? info["value"]).flatMap(UInt16.init) {
                 appState.pairing.requestPair(host: "127.0.0.1", port: port)
             }
         case "acceptIncoming":
@@ -116,12 +118,68 @@ final class TestHooks {
             if let json = info["value"] {
                 appState.advisor.debugInject(adviceJSON: json)
             }
+        case "setDisplayPower":
+            // value = "<uuid>:<0|1>"，或只給 "0"/"1" 代表全部顯示器
+            if let raw = info["value"] {
+                let parts = raw.split(separator: ":")
+                if parts.count == 2, let on = Int(parts[1]),
+                   let display = appState.displayManager.displays.first(where: { $0.uuid == parts[0] }) {
+                    appState.displayManager.setDisplayPower(on == 1, for: display)
+                } else if let on = Int(raw) {
+                    appState.displayManager.applyCommandDisplayPower(on == 1)
+                }
+            }
+        case "remoteCommand":
+            // value = "<key>:<number>"，送給第一個已連線的 peer。
+            // command 通道（非 stateUpdate）先前沒有 E2E 覆蓋，B3 的
+            // setDisplayPower／setKeepAwake 正是走這條路。
+            if let raw = info["value"] {
+                let parts = raw.split(separator: ":")
+                let peerID = appState.sessionManager.connectionStates.first {
+                    if case .connected = $0.value { return true }
+                    return false
+                }?.key
+                if parts.count == 2, let value = Double(parts[1]), let peerID {
+                    let key: ControlKey? = switch parts[0] {
+                    case "displayPower": .displayPower(displayUUID: nil)
+                    case "keepAwake": .keepAwake(displayUUID: nil)
+                    default: nil
+                    }
+                    if let key {
+                        appState.coordinator.sendRemoteCommand(to: peerID, key: key, value: value)
+                    }
+                }
+            }
+        case "restoreAllDisplayPower":
+            appState.displayManager.restoreAllDisplayPower()
+        case "emergencyGesture":
+            // value = 按壓次數（預設 8）；走真正的手勢狀態機
+            appState.emergencyRestore.debugSimulateCommandPresses(Int(info["value"] ?? "") ?? 8)
+        case "setKeepAwake":
+            // value 依 KeepAwakePlanner 編碼：0 = 關、負值 = 無限期、正值 = 秒數；
+            // "display:<uuid>" 綁定螢幕
+            if let raw = info["value"] {
+                if raw.hasPrefix("display:") {
+                    appState.keepAwake.activate(.whileDisplayConnected(uuid: String(raw.dropFirst(8))))
+                } else if let value = Double(raw) {
+                    appState.keepAwake.activate(KeepAwakePlanner.decode(value))
+                }
+            }
         case "applyAdvice":
             appState.advisor.debugApplyAll()
         case "undoAdvice":
             appState.advisor.undoLastApply()
         default:
             break
+        }
+    }
+
+    private static func describe(_ mode: KeepAwakeMode) -> String {
+        switch mode {
+        case .off: "off"
+        case .indefinite: "indefinite"
+        case let .duration(seconds): "duration:\(Int(seconds))"
+        case let .whileDisplayConnected(uuid): "display:\(uuid)"
         }
     }
 
@@ -167,6 +225,8 @@ final class TestHooks {
                     "name": display.name,
                     "backend": display.backend.rawValue,
                     "brightness": display.brightness,
+                    "poweredOff": display.isPoweredOff,
+                    "powerLayer": display.powerLayer.rawValue,
                 ] as [String: Any]
             },
             "audioDevices": appState.audioManager.devices.map { device in
@@ -195,6 +255,16 @@ final class TestHooks {
                 "historyCount": appState.advisor.history.count,
                 "lastError": appState.advisor.lastErrorMessage.map { $0 as Any } ?? NSNull(),
                 "activeEngine": appState.advisor.registry.activeEngine.map { $0.id as Any } ?? NSNull(),
+            ] as [String: Any],
+            "keepAwake": [
+                "mode": Self.describe(appState.keepAwake.mode),
+                "holding": appState.keepAwake.isHolding,
+                "remaining": appState.keepAwake.remainingSeconds.map { $0 as Any } ?? NSNull(),
+                "preventsSystemSleep": appState.keepAwake.alsoPreventSystemSleep,
+            ] as [String: Any],
+            "emergencyRestore": [
+                "armed": appState.emergencyRestore.isArmed,
+                "trusted": appState.emergencyRestore.isTrusted,
             ] as [String: Any],
             "ambient": [
                 "autoEnabled": appState.settings.autoBrightnessEnabled,

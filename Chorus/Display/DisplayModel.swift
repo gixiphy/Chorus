@@ -1,3 +1,4 @@
+import ChorusCore
 import CoreGraphics
 import Foundation
 import Observation
@@ -32,6 +33,16 @@ final class DisplayModel: Identifiable {
     /// VCP 0x12 值域上限（同亮度：以螢幕自報值縮放）。
     let ddcContrastMax: UInt16
 
+    /// 螢幕自報支援 VCP 0xD6（讀得回電源模式）。
+    let supportsDDCPower: Bool
+    /// 這台目前會用哪一層關閉（refresh 時依能力與顯示器數量重算）。
+    /// 顯示器數量會變（拔掉一台後剩最後一台就不能再 soft-disconnect），
+    /// 所以這是 var 不是 let。
+    var powerLayer: DisplayPowerLayer
+    /// **我們**把它關掉了。使用者按螢幕實體電源鍵關掉的偵測不到，
+    /// 這個旗標只代表 Chorus 這邊的狀態，用來決定電源鈕的樣子與復原範圍。
+    var isPoweredOff: Bool = false
+
     func demoteToGammaOnly() {
         backend = .gammaOnly
     }
@@ -54,7 +65,9 @@ final class DisplayModel: Identifiable {
         brightness: Double,
         ddcBrightnessMax: UInt16 = 100,
         contrast: Double? = nil,
-        ddcContrastMax: UInt16 = 100
+        ddcContrastMax: UInt16 = 100,
+        supportsDDCPower: Bool = false,
+        powerLayer: DisplayPowerLayer = .gammaBlackout
     ) {
         self.id = id
         self.uuid = uuid
@@ -67,6 +80,8 @@ final class DisplayModel: Identifiable {
         self.ddcBrightnessMax = max(ddcBrightnessMax, 1)
         self.contrast = contrast
         self.ddcContrastMax = max(ddcContrastMax, 1)
+        self.supportsDDCPower = supportsDDCPower
+        self.powerLayer = powerLayer
     }
 
     var hasHardwareControl: Bool {

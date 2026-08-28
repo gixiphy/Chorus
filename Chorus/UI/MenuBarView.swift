@@ -1,3 +1,4 @@
+import ChorusCore
 import SwiftUI
 
 struct MenuBarView: View {
@@ -39,6 +40,17 @@ struct MenuBarView: View {
             }
 
             AutoBrightnessRow()
+            KeepAwakeRow()
+            if appState.displayManager.hasPoweredOffDisplay {
+                Button {
+                    appState.displayManager.restoreAllDisplayPower()
+                } label: {
+                    Label("開啟所有已關閉的螢幕", systemImage: "power.circle.fill")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.orange)
+            }
 
             Divider()
 
@@ -133,6 +145,79 @@ private struct AutoBrightnessRow: View {
             return "跟隨 \(name) · \(Int(lux.rounded())) lx"
         }
         return "無光線感測器 — 等待其他裝置回報"
+    }
+}
+
+/// 螢幕長亮（M9）。選單只放最常用的三檔＋螢幕綁定；
+/// 「連系統待機一起擋」放設定頁，避免選單長出一排開關。
+private struct KeepAwakeRow: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Label("螢幕長亮", systemImage: appState.keepAwake.isHolding ? "cup.and.saucer.fill" : "cup.and.saucer")
+                    .font(.callout)
+                Spacer()
+                Menu(menuLabel) {
+                    Button("30 分鐘") { appState.keepAwake.activate(.duration(seconds: 1800)) }
+                    Button("1 小時") { appState.keepAwake.activate(.duration(seconds: 3600)) }
+                    Button("無限期") { appState.keepAwake.activate(.indefinite) }
+                    if !appState.displayManager.displays.isEmpty {
+                        Divider()
+                        Menu("接著這台螢幕時") {
+                            ForEach(appState.displayManager.displays) { display in
+                                Button(display.name) {
+                                    appState.settings.keepAwakeDisplayUUID = display.uuid
+                                    appState.keepAwake.activate(.whileDisplayConnected(uuid: display.uuid))
+                                }
+                            }
+                        }
+                    }
+                    if appState.keepAwake.mode != .off {
+                        Divider()
+                        Button("關閉") {
+                            appState.settings.keepAwakeDisplayUUID = nil
+                            appState.keepAwake.deactivate()
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+            Text(statusCaption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 2)
+        }
+    }
+
+    private var menuLabel: String {
+        switch appState.keepAwake.mode {
+        case .off: "關閉"
+        case .indefinite: "無限期"
+        case .duration: "計時中"
+        case .whileDisplayConnected: "綁定螢幕"
+        }
+    }
+
+    private var statusCaption: String {
+        let keepAwake = appState.keepAwake
+        switch keepAwake.mode {
+        case .off:
+            return "螢幕會照系統設定待機"
+        case .indefinite:
+            return keepAwake.alsoPreventSystemSleep ? "螢幕與系統都不會待機" : "螢幕不會待機"
+        case .duration:
+            guard let remaining = keepAwake.remainingSeconds else { return "計時中" }
+            let minutes = Int(remaining) / 60
+            let seconds = Int(remaining) % 60
+            return String(format: "剩餘 %d:%02d", minutes, seconds)
+        case let .whileDisplayConnected(uuid):
+            let name = appState.displayManager.displays.first { $0.uuid == uuid }?.name
+            guard let name else { return "綁定的螢幕未連接 — 暫停中" }
+            return keepAwake.isHolding ? "接著「\(name)」時不待機" : "「\(name)」未連接 — 暫停中"
+        }
     }
 }
 

@@ -29,6 +29,8 @@ final class SettingsStore {
         static let advisorEngineID = "chorus.advisor.engineID"
         static let advisorCustomPaths = "chorus.advisor.customPaths"
         static let advisorConfirmed = "chorus.advisor.confirmed"
+        static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
+        static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -137,6 +139,18 @@ final class SettingsStore {
         didSet { defaults.set(advisorConfirmed, forKey: Key.advisorConfirmed) }
     }
 
+    /// 螢幕長亮時是否連系統待機一起擋（預設只擋螢幕待機）。
+    var keepAwakePreventsSystemSleep: Bool {
+        didSet { defaults.set(keepAwakePreventsSystemSleep, forKey: Key.keepAwakeSystemSleep) }
+    }
+
+    /// 「接著這台螢幕時防睡眠」綁定的顯示器 UUID。
+    /// 只有這個模式跨重啟保留——計時與無限期是當下的臨時決定，
+    /// 重開機還幫使用者擋睡眠是意料之外的行為。
+    var keepAwakeDisplayUUID: String? {
+        didSet { defaults.set(keepAwakeDisplayUUID, forKey: Key.keepAwakeDisplayUUID) }
+    }
+
     init(defaults: UserDefaults) {
         self.defaults = defaults
         forceSoftwareDimming = Set(defaults.stringArray(forKey: Key.forceSoftwareDimming) ?? [])
@@ -163,6 +177,8 @@ final class SettingsStore {
         advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"
         advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)
+        keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
+        keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
     }
 
     func lastBrightness(for uuid: String) -> Double? {

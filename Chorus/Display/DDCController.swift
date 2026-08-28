@@ -12,6 +12,8 @@ final class DDCController: @unchecked Sendable {
         static let inputSource: UInt8 = 0x60
         static let volume: UInt8 = 0x62
         static let mute: UInt8 = 0x8D
+        /// Power Mode。值見 `DisplayPowerValue`（只寫 on/off，永不寫 hard off）。
+        static let power: UInt8 = 0xD6
     }
 
     /// VCP 0x8D 的標準值：1 = mute、2 = unmute。

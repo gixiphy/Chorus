@@ -20,6 +20,7 @@ final class ControlCoordinator {
     @ObservationIgnored private weak var displayManager: DisplayManager?
     @ObservationIgnored private weak var audioManager: AudioDeviceManager?
     @ObservationIgnored private weak var autoController: AutoBrightnessController?
+    @ObservationIgnored private weak var keepAwake: KeepAwakeController?
 
     init(
         localPeerID: String,
@@ -45,6 +46,11 @@ final class ControlCoordinator {
         }
         displayManager.coordinator = self
         audioManager.coordinator = self
+    }
+
+    /// AppState 組裝時注入防睡眠控制器（`.keepAwake` 遙控指令的收件人）。
+    func attachKeepAwake(_ controller: KeepAwakeController) {
+        keepAwake = controller
     }
 
     /// AppState 組裝時注入自動亮度控制器，並接上環境光回報的廣播管道。
@@ -172,6 +178,13 @@ final class ControlCoordinator {
             displayManager?.applyInput(UInt16(value.rounded()), toUUID: uuid)
         case let .contrast(uuid?):
             displayManager?.applyContrast(value, toUUID: uuid)
+        case .displayPower(nil):
+            displayManager?.applyCommandDisplayPower(value > 0.5)
+        case let .displayPower(uuid?):
+            displayManager?.applyDisplayPower(value > 0.5, toUUID: uuid)
+        case .keepAwake:
+            // 螢幕綁定模式是本機設定，不跨機——decode 一律回計時／無限期／關閉
+            keepAwake?.activate(KeepAwakePlanner.decode(value))
         case .input(nil), .contrast(nil):
             break // 語意層無意義（預留）
         }
@@ -210,8 +223,10 @@ final class ControlCoordinator {
         switch key {
         case .brightness: settings.syncBrightnessEnabled
         case .volume, .mute: settings.syncVolumeEnabled
-        // command 專用鍵：不做狀態同步（executeCommand 仍會套用到硬體）
-        case .input, .contrast: false
+        // command 專用鍵：不做狀態同步（executeCommand 仍會套用到硬體）。
+        // 電源與防睡眠是動作而非可收斂的狀態——用 LWW 同步會讓兩台機器
+        // 互相把對方的螢幕關掉／打開。
+        case .input, .contrast, .displayPower, .keepAwake: false
         }
     }
 

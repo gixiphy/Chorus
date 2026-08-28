@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             AppStateRegistry.scenarioStore?.saveOnTerminate()
             AppStateRegistry.displayManager?.shutdown()
+            AppStateRegistry.keepAwake?.shutdown()
         }
     }
 }

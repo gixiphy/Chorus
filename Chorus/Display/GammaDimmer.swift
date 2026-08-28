@@ -14,6 +14,9 @@ final class GammaDimmer {
     }
 
     private var originals: [CGDirectDisplayID: OriginalTable] = [:]
+    /// 目前被 gamma 全黑的顯示器（M9 第三層關閉）。
+    /// 全黑期間 setFactor 一律讓路——否則調亮度或 refresh 重套會把螢幕點回來。
+    private var blackedOut: Set<CGDirectDisplayID> = []
 
     /// 此顯示器目前是否處於軟體調光中。
     /// 原始 table 只在 setFactor 真的調暗時才會被擷取、restore 時清掉，
@@ -30,8 +33,29 @@ final class GammaDimmer {
         }
     }
 
+    /// 此顯示器目前是否被 gamma 全黑（M9 電源鈕的保底層）。
+    func isBlackedOut(_ displayID: CGDirectDisplayID) -> Bool {
+        blackedOut.contains(displayID)
+    }
+
+    /// M9 第三層關閉：gamma table 全零。螢幕仍通電、只是完全沒有畫面。
+    /// 與 setFactor 共用同一份原始 table 快取，解除後由呼叫端重套亮度。
+    func setBlackout(_ on: Bool, for displayID: CGDirectDisplayID) {
+        if on {
+            guard let original = originals[displayID] ?? capture(displayID) else { return }
+            blackedOut.insert(displayID)
+            var zero = [CGGammaValue](repeating: 0, count: Int(original.sampleCount))
+            CGSetDisplayTransferByTable(displayID, original.sampleCount, &zero, &zero, &zero)
+        } else {
+            guard blackedOut.remove(displayID) != nil else { return }
+            restore(displayID)
+        }
+    }
+
     /// factor 1.0 = 不調光（還原原始 table）；愈低愈暗。
+    /// 全黑中的顯示器完全不受影響（電源鈕的狀態優先於亮度）。
     func setFactor(_ factor: Double, for displayID: CGDirectDisplayID) {
+        guard !blackedOut.contains(displayID) else { return }
         if factor >= 0.999 {
             restore(displayID)
             return
@@ -53,6 +77,7 @@ final class GammaDimmer {
     }
 
     func restoreAll() {
+        blackedOut.removeAll()
         for displayID in Array(originals.keys) {
             restore(displayID)
         }
@@ -61,6 +86,7 @@ final class GammaDimmer {
     /// 顯示器移除時丟棄快取的 table（不嘗試還原已消失的顯示器）。
     func forget(_ displayID: CGDirectDisplayID) {
         originals.removeValue(forKey: displayID)
+        blackedOut.remove(displayID)
     }
 
     private func capture(_ displayID: CGDirectDisplayID) -> OriginalTable? {

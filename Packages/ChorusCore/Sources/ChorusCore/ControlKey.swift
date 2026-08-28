@@ -14,4 +14,10 @@ public enum ControlKey: Codable, Sendable, Hashable {
     case input(displayUUID: String?)
     /// 對比 VCP 0x12。
     case contrast(displayUUID: String?)
+    /// 螢幕電源（M9 三層：DDC 0xD6／soft-disconnect／gamma 黑屏，依能力自動選層）。
+    /// value：1 = 開、0 = 關。`nil` = 本機所有顯示器。
+    case displayPower(displayUUID: String?)
+    /// 防睡眠。value 依 `KeepAwakePlanner.encode`：0 = 關、負值 = 無限期、正值 = 秒數。
+    /// `nil` 為唯一有意義的形式（整機層級），識別碼僅為型別一致保留。
+    case keepAwake(displayUUID: String?)
 }

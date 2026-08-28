@@ -19,6 +19,8 @@ final class AppState {
     let mediaKeys: MediaKeyInterceptor
     let scenarios: DeskScenarioStore
     let virtualDriver: VirtualAudioDriverController
+    let keepAwake: KeepAwakeController
+    let emergencyRestore: EmergencyRestoreMonitor
 
     init(instance: InstanceConfig = .current) {
         self.instance = instance
@@ -79,11 +81,23 @@ final class AppState {
         virtualDriver = VirtualAudioDriverController()
         audioManager.virtualDriver = virtualDriver
 
+        keepAwake = KeepAwakeController(settings: settings, displayManager: displayManager)
+        emergencyRestore = EmergencyRestoreMonitor(displayManager: displayManager)
+
         displayManager.autoController = autoBrightness
         displayManager.audioManager = audioManager
         displayManager.scenarioStore = scenarios
+        displayManager.keepAwake = keepAwake
+        displayManager.emergencyRestore = emergencyRestore
         AppStateRegistry.scenarioStore = scenarios
+        AppStateRegistry.keepAwake = keepAwake
         coordinator.attachAutoController(autoBrightness)
+        coordinator.attachKeepAwake(keepAwake)
+
+        // 「接著這台螢幕時防睡眠」是唯一跨重啟保留的模式
+        if let uuid = settings.keepAwakeDisplayUUID {
+            keepAwake.activate(.whileDisplayConnected(uuid: uuid))
+        }
 
         displayManager.start()
         audioManager.start()
