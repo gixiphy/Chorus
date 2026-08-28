@@ -31,6 +31,8 @@ final class SettingsStore {
         static let advisorConfirmed = "chorus.advisor.confirmed"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
+        static let automationServer = "chorus.automation.serverEnabled"
+        static let automationPort = "chorus.automation.serverPort"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -151,6 +153,18 @@ final class SettingsStore {
         didSet { defaults.set(keepAwakeDisplayUUID, forKey: Key.keepAwakeDisplayUUID) }
     }
 
+    /// localhost 自動化 HTTP 介面。**預設關閉**（權限功能紀律）；
+    /// 開啟時才生成 token。
+    var automationServerEnabled: Bool {
+        didSet { defaults.set(automationServerEnabled, forKey: Key.automationServer) }
+    }
+
+    /// 自動化介面的 port。預設 55780——BetterDisplay 用 55777，刻意避開，
+    /// 兩個都裝的人才不會撞。
+    var automationServerPort: UInt16 {
+        didSet { defaults.set(Int(automationServerPort), forKey: Key.automationPort) }
+    }
+
     init(defaults: UserDefaults) {
         self.defaults = defaults
         forceSoftwareDimming = Set(defaults.stringArray(forKey: Key.forceSoftwareDimming) ?? [])
@@ -179,6 +193,8 @@ final class SettingsStore {
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
+        automationServerEnabled = defaults.bool(forKey: Key.automationServer)
+        automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)
     }
 
     func lastBrightness(for uuid: String) -> Double? {

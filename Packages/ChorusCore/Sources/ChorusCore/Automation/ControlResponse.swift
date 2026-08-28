@@ -60,6 +60,12 @@ public struct ControlResponse: Codable, Sendable, Equatable {
     public var results: [ControlResult]?
     public var error: ControlErrorPayload?
 
+    public init(ok: Bool, results: [ControlResult]? = nil, error: ControlErrorPayload? = nil) {
+        self.ok = ok
+        self.results = results
+        self.error = error
+    }
+
     public static func success(_ results: [ControlResult]) -> ControlResponse {
         ControlResponse(ok: true, results: results, error: nil)
     }

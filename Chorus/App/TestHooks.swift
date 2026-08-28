@@ -164,6 +164,16 @@ final class TestHooks {
                     hint: "不是合法的 ControlRequest JSON"
                 ))
             }
+        case "automationServer":
+            // value = "1"/"0"；port 可用 "1:PORT" 指定（同機兩實例要錯開）
+            if let raw = info["value"] {
+                let parts = raw.split(separator: ":")
+                if parts.count == 2, let port = UInt16(parts[1]) {
+                    appState.settings.automationServerPort = port
+                }
+                appState.settings.automationServerEnabled = parts.first == "1"
+                appState.automationServer.updateActivation()
+            }
         case "restoreAllDisplayPower":
             appState.displayManager.restoreAllDisplayPower()
         case "emergencyGesture":
@@ -279,6 +289,15 @@ final class TestHooks {
             "lastControl": lastControlResponse
                 .flatMap { try? JSONEncoder().encode($0) }
                 .flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? NSNull(),
+            "automationServer": [
+                "enabled": appState.settings.automationServerEnabled,
+                "running": appState.automationServer.isRunning,
+                "port": Int(appState.settings.automationServerPort),
+                "token": appState.settings.automationServerEnabled
+                    ? appState.automationServer.currentToken() as Any
+                    : NSNull(),
+                "lastError": appState.automationServer.lastError.map { $0 as Any } ?? NSNull(),
+            ] as [String: Any],
             "emergencyRestore": [
                 "armed": appState.emergencyRestore.isArmed,
                 "trusted": appState.emergencyRestore.isTrusted,

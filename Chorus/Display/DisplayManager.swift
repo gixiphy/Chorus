@@ -31,6 +31,8 @@ final class DisplayManager {
     @ObservationIgnored weak var keepAwake: KeepAwakeController?
     /// 有螢幕被關掉時才掛上 ⌘×8 手勢監聽（見 EmergencyRestoreMonitor）。
     @ObservationIgnored weak var emergencyRestore: EmergencyRestoreMonitor?
+    /// 顯示器組合變更要進自動化事件流（CLI listen 的訂閱者靠它重抓清單）。
+    @ObservationIgnored weak var automationEvents: AutomationEventHub?
 
     /// 被我們關掉、並因此從 active list 消失的顯示器（uuid → model）。
     ///
@@ -226,6 +228,7 @@ final class DisplayManager {
         // 螢幕線還在，算連接中，否則關個螢幕就會誤觸桌面情境自動切換。
         scenarioStore?.displaysDidChange(Set(models.map(\.uuid)))
         keepAwake?.displaysDidChange()
+        automationEvents?.publish(kind: "displays", payload: ["names": models.map(\.name)])
     }
 
     /// 使用者透過 UI 設定亮度（會廣播同步）。value 0–1。

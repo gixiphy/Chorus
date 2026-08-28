@@ -52,6 +52,47 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
+            Section("自動化介面") {
+                Toggle("啟用 localhost 控制介面", isOn: Binding(
+                    get: { appState.settings.automationServerEnabled },
+                    set: { enabled in
+                        appState.settings.automationServerEnabled = enabled
+                        appState.automationServer.updateActivation()
+                    }
+                ))
+                if appState.settings.automationServerEnabled {
+                    LabeledContent("狀態") {
+                        if let error = appState.automationServer.lastError {
+                            Text("啟動失敗：\(error)").foregroundStyle(.red)
+                        } else if appState.automationServer.isRunning {
+                            Text("執行中 · http://127.0.0.1:\(String(appState.settings.automationServerPort))")
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        } else {
+                            Text("啟動中…").foregroundStyle(.secondary)
+                        }
+                    }
+                    LabeledContent("Token") {
+                        HStack {
+                            Text(appState.automationServer.currentToken())
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Button("重新產生") {
+                                appState.automationServer.regenerateToken()
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+                Text(
+                    "只在回送介面（127.0.0.1）上接受連線，需要 Bearer token。"
+                        + "跨機控制一律走已配對的加密同步通道，不經這個介面。"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
             Section("鍵盤媒體鍵") {
                 Toggle("接管亮度／音量鍵", isOn: Binding(
                     get: { appState.settings.mediaKeyCaptureEnabled },

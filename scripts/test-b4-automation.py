@@ -249,7 +249,88 @@ def main():
         record(f"{label} → {expected_code}＋hint", code_ok and hint_ok,
                f"實得 code={error.get('code')} hint={'有' if error.get('hint') else '無'}")
 
-    print("\n[測試 10] 跨機轉發", flush=True)
+    print("\n[測試 10] localhost HTTP 介面（B4-2）", flush=True)
+    port = 55781  # 錯開預設 55780，避免撞到正式 app
+    notify("A", "automationServer", f"1:{port}")
+    ok, state = wait_for(lambda d: d["automationServer"]["running"] is True, timeout=15)
+    record("HTTP server 啟動", ok, (state or {}).get("automationServer", {}).get("lastError") or "")
+    token = (state or {}).get("automationServer", {}).get("token")
+    if not ok or not token:
+        record("取得 token", False)
+    else:
+        base = f"http://127.0.0.1:{port}"
+
+        def curl(args):
+            out = subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5"] + args,
+                                 capture_output=True, text=True)
+            return out.stdout.strip()
+
+        def curl_body(args):
+            out = subprocess.run(["curl", "-s", "--max-time", "5"] + args, capture_output=True, text=True)
+            try:
+                return json.loads(out.stdout)
+            except Exception:
+                return None
+
+        auth = ["-H", f"Authorization: Bearer {token}"]
+        record("無 token → 401", curl([f"{base}/v1/state"]) == "401")
+        record("錯 token → 401",
+               curl(["-H", "Authorization: Bearer wrong", f"{base}/v1/state"]) == "401")
+        record("偽造 Host → 403（擋 DNS rebinding）",
+               curl(auth + ["-H", "Host: evil.example", f"{base}/v1/state"]) == "403")
+        record("正確 token → 200", curl(auth + [f"{base}/v1/state"]) == "200")
+        record("未知端點 → 404", curl(auth + [f"{base}/v1/nope"]) == "404")
+
+        body = curl_body(auth + [f"{base}/v1/state"])
+        props = {item.get("property") for item in (body or {}).get("results") or []}
+        record("/v1/state 併回顯示器＋音訊＋整機",
+               {"brightness", "volume", "keepAwake"} <= props, f"實得 {sorted(props)[:8]}")
+
+        payload = json.dumps({"verb": "set", "target": f"displayUUID:{display_uuid}",
+                              "property": "brightness", "value": "35%"})
+        body = curl_body(auth + ["-X", "POST", "-H", "Content-Type: application/json",
+                                 "-d", payload, f"{base}/v1/command"])
+        record("POST /v1/command 單筆",
+               bool(body and body.get("ok")) and abs((value_for(body, "brightness") or 0) - 0.35) < 0.001,
+               f"實得 {value_for(body, 'brightness') if body else None}")
+
+        batch = json.dumps([
+            {"verb": "set", "target": f"displayUUID:{display_uuid}", "property": "brightness", "value": "45%"},
+            {"verb": "get", "target": "system", "property": "autoBrightness"},
+        ])
+        body = curl_body(auth + ["-X", "POST", "-H", "Content-Type: application/json",
+                                 "-d", batch, f"{base}/v1/command"])
+        record("POST /v1/command 陣列（批次）",
+               isinstance(body, list) and len(body) == 2 and all(x.get("ok") for x in body),
+               f"實得 {type(body).__name__}")
+
+        body = curl_body(auth + ["-X", "POST", "-H", "Content-Type: application/json",
+                                 "-d", '{"verb":"nonsense","target":"allDisplays"}', f"{base}/v1/command"])
+        record("壞請求 → 400＋可讀錯誤",
+               bool(body) and body.get("ok") is False and bool(body.get("error", {}).get("message")))
+
+        # SSE：開一條事件流，改亮度，確認收得到
+        proc = subprocess.Popen(["curl", "-sN", "--max-time", "8"] + auth + [f"{base}/v1/events"],
+                                stdout=subprocess.PIPE, text=True)
+        time.sleep(1.5)
+        control({"verb": "set", "target": f"displayUUID:{display_uuid}",
+                 "property": "brightness", "value": "65%"})
+        time.sleep(1.5)
+        proc.terminate()
+        stream = proc.stdout.read() if proc.stdout else ""
+        record("GET /v1/events 推送變更事件",
+               "data:" in stream and "brightness" in stream,
+               f"收到 {len(stream)} bytes")
+
+    notify("A", "automationServer", "0")
+    ok, _ = wait_for(lambda d: d["automationServer"]["running"] is False, timeout=10)
+    record("關閉後 server 停止", ok)
+    record("關閉後 port 不再接受連線",
+           subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "3",
+                           f"http://127.0.0.1:{port}/v1/state"],
+                          capture_output=True, text=True).stdout.strip() in ("000", ""))
+
+    print("\n[測試 11] 跨機轉發", flush=True)
     launch("B", 47701, 47801)
     ok, _ = wait_for(lambda d: len(d.get("displays", [])) > 0, inst="B", timeout=30)
     if not ok:

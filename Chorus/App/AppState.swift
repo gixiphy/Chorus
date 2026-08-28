@@ -22,6 +22,8 @@ final class AppState {
     let keepAwake: KeepAwakeController
     let emergencyRestore: EmergencyRestoreMonitor
     let automation: AutomationExecutor
+    let automationEvents: AutomationEventHub
+    let automationServer: ControlHTTPServer
 
     init(instance: InstanceConfig = .current) {
         self.instance = instance
@@ -106,6 +108,16 @@ final class AppState {
             sessionManager: sessionManager
         )
 
+        automationEvents = AutomationEventHub()
+        automationServer = ControlHTTPServer(
+            settings: settings,
+            keychain: KeychainStore(service: instance.keychainService),
+            executor: automation,
+            events: automationEvents
+        )
+        coordinator.automationEvents = automationEvents
+        displayManager.automationEvents = automationEvents
+
         // 「接著這台螢幕時防睡眠」是唯一跨重啟保留的模式
         if let uuid = settings.keepAwakeDisplayUUID {
             keepAwake.activate(.whileDisplayConnected(uuid: uuid))
@@ -117,5 +129,6 @@ final class AppState {
         autoBrightness.start()
         mediaKeys.updateActivation()
         virtualDriver.refreshStatus()
+        automationServer.updateActivation()
     }
 }

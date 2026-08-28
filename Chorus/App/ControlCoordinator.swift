@@ -21,6 +21,8 @@ final class ControlCoordinator {
     @ObservationIgnored private weak var audioManager: AudioDeviceManager?
     @ObservationIgnored private weak var autoController: AutoBrightnessController?
     @ObservationIgnored private weak var keepAwake: KeepAwakeController?
+    /// 自動化事件流（SSE／CLI listen）。本機任何來源的變更都往這裡發一份。
+    @ObservationIgnored weak var automationEvents: AutomationEventHub?
 
     init(
         localPeerID: String,
@@ -65,16 +67,22 @@ final class ControlCoordinator {
 
     /// 任一顯示器經 UI／鍵盤亮度鍵變更亮度 → 廣播語意層 brightness。
     func localBrightnessChanged(_ value: Double) {
-        broadcastLocalChange(key: .brightness(displayUUID: nil), value: value)
+        let key = ControlKey.brightness(displayUUID: nil)
+        automationEvents?.publishControlChange(key: key, value: value)
+        broadcastLocalChange(key: key, value: value)
     }
 
     /// 預設輸出裝置音量變更（UI／媒體鍵／其他 App）。
     func localVolumeChanged(_ value: Double) {
-        broadcastLocalChange(key: .volume(deviceUID: nil), value: value)
+        let key = ControlKey.volume(deviceUID: nil)
+        automationEvents?.publishControlChange(key: key, value: value)
+        broadcastLocalChange(key: key, value: value)
     }
 
     func localMuteChanged(_ muted: Bool) {
-        broadcastLocalChange(key: .mute(deviceUID: nil), value: muted ? 1 : 0)
+        let key = ControlKey.mute(deviceUID: nil)
+        automationEvents?.publishControlChange(key: key, value: muted ? 1 : 0)
+        broadcastLocalChange(key: key, value: muted ? 1 : 0)
     }
 
     // MARK: - 遙控（對特定 peer 下指令）
@@ -160,6 +168,9 @@ final class ControlCoordinator {
     }
 
     private func applyToHardware(key: ControlKey, value: Double) {
+        // 遠端套用也要進事件流——訂閱者要看到的是「這台機器發生了什麼」，
+        // 不是「誰下的指令」。本機來源走 local*Changed，兩條不會重複。
+        automationEvents?.publishControlChange(key: key, value: value)
         switch key {
         case .brightness(nil):
             displayManager?.applySyncedBrightness(value)
