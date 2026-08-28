@@ -6,94 +6,40 @@ struct MenuBarView: View {
     /// 暫時展開被隱藏的音訊裝置（右鍵可取消隱藏）；關閉選單不保留。
     @State private var showHiddenDevices = false
 
+    /// 捲動區的內容實際高度。用來讓選單「內容短就短、內容長才封頂」——
+    /// 直接給 ScrollView 一個 maxHeight 會讓它永遠撐到最大，短內容時
+    /// 是一大片空白。
+    @State private var contentHeight: CGFloat = 0
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Chorus")
-                    .font(.headline)
-                Spacer()
-                if let name = appState.instance.name {
-                    Text(name)
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.quaternary, in: Capsule())
-                }
-                SettingsLink {
-                    Image(systemName: "gearshape")
-                }
-                .buttonStyle(.plain)
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
 
             Divider()
+                .padding(.vertical, 8)
 
-            if appState.displayManager.displays.isEmpty {
-                Text("找不到可控制的顯示器")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(appState.displayManager.displays) { display in
-                        DisplaySliderRow(model: display, manager: appState.displayManager)
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    displaySection
+                    audioSection
+                    AlertVolumeRow()
+                    AppVolumeSection()
+                    Divider()
+                    PeersSection()
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 2)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                    contentHeight = $0
                 }
             }
-
-            AutoBrightnessRow()
-            KeepAwakeRow()
-            ScenesRow()
-            if appState.displayManager.hasPoweredOffDisplay {
-                Button {
-                    appState.displayManager.restoreAllDisplayPower()
-                } label: {
-                    Label("開啟所有已關閉的螢幕", systemImage: "power.circle.fill")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.orange)
-            }
+            .frame(height: min(contentHeight, Self.maxScrollHeight))
+            .scrollBounceBehavior(.basedOnSize)
 
             Divider()
-
-            Text("音訊輸出")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if appState.audioManager.devices.isEmpty {
-                Text("找不到輸出裝置")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(listedAudioDevices) { device in
-                        VolumeSliderRow(device: device, manager: appState.audioManager)
-                            .opacity(appState.audioManager.isHidden(device) ? 0.55 : 1)
-                    }
-                }
-                if hiddenCount > 0 {
-                    Button {
-                        showHiddenDevices.toggle()
-                    } label: {
-                        Label(
-                            showHiddenDevices ? "收合隱藏的裝置" : "顯示 \(hiddenCount) 個隱藏裝置",
-                            systemImage: showHiddenDevices ? "eye.slash" : "eye"
-                        )
-                        .font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("展開後在裝置上按右鍵可取消隱藏")
-                }
-            }
-
-            AlertVolumeRow()
-
-            AppVolumeSection()
-
-            Divider()
-
-            PeersSection()
-
-            Divider()
+                .padding(.vertical, 8)
 
             Button("結束 Chorus") {
                 NSApplication.shared.terminate(nil)
@@ -101,9 +47,101 @@ struct MenuBarView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .font(.callout)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
         }
-        .padding(12)
         .frame(width: 300)
+    }
+
+    /// 捲動區的高度上限。選單列視窗**不會**自己長出捲軸——內容超過螢幕
+    /// 就是直接被切掉、下面的東西按不到（`結束 Chorus`、配對區都在最下面）。
+    /// 扣掉的是釘住的標頭、底部按鈕與兩條分隔線佔的空間。
+    private static var maxScrollHeight: CGFloat {
+        let visible = NSScreen.main?.visibleFrame.height ?? 700
+        return max(240, visible - 140)
+    }
+
+    private var header: some View {
+        HStack {
+            Text("Chorus")
+                .font(.headline)
+            Spacer()
+            if let name = appState.instance.name {
+                Text(name)
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+            }
+            SettingsLink {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private var displaySection: some View {
+        if appState.displayManager.displays.isEmpty {
+            Text("找不到可控制的顯示器")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(appState.displayManager.displays) { display in
+                    DisplaySliderRow(model: display, manager: appState.displayManager)
+                }
+            }
+        }
+
+        AutoBrightnessRow()
+        KeepAwakeRow()
+        ScenesRow()
+        if appState.displayManager.hasPoweredOffDisplay {
+            Button {
+                appState.displayManager.restoreAllDisplayPower()
+            } label: {
+                Label("開啟所有已關閉的螢幕", systemImage: "power.circle.fill")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.orange)
+        }
+    }
+
+    @ViewBuilder
+    private var audioSection: some View {
+        Divider()
+
+        Text("音訊輸出")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        if appState.audioManager.devices.isEmpty {
+            Text("找不到輸出裝置")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(listedAudioDevices) { device in
+                    VolumeSliderRow(device: device, manager: appState.audioManager)
+                        .opacity(appState.audioManager.isHidden(device) ? 0.55 : 1)
+                }
+            }
+            if hiddenCount > 0 {
+                Button {
+                    showHiddenDevices.toggle()
+                } label: {
+                    Label(
+                        showHiddenDevices ? "收合隱藏的裝置" : "顯示 \(hiddenCount) 個隱藏裝置",
+                        systemImage: showHiddenDevices ? "eye.slash" : "eye"
+                    )
+                    .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("展開後在裝置上按右鍵可取消隱藏")
+            }
+        }
     }
 
     private var hiddenCount: Int {

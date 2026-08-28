@@ -12,8 +12,8 @@ struct EQPanelView: View {
     @State private var query = ""
     @State private var pastedText = ""
     @State private var showsPasteField = false
-    /// A/B bypass：暫時停用 EQ 而**不動設定**。聽差異用的，
-    /// 不是「關掉」——關掉會把 preset 一起丟了。
+    /// A/B 試聽切到「原聲」：暫時不送出等化，但**不動設定**。
+    /// 這不是「關掉」——關掉會把整組 preset 一起丟了。
     @State private var bypassed = false
 
     private var settings: EQSettings {
@@ -49,14 +49,37 @@ struct EQPanelView: View {
             .controlSize(.small)
             Spacer()
             if settings.isEnabled {
-                Button(bypassed ? "已旁通（A）" : "旁通比較（B）") {
-                    bypassed.toggle()
-                    apply(settings) // isEnabled 不變，只有送不送出去變了
+                Text("試聽")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("試聽", selection: Binding(
+                    get: { bypassed ? Comparison.raw : .equalized },
+                    set: {
+                        bypassed = ($0 == .raw)
+                        apply(settings) // isEnabled 不變，只有送不送出去變了
+                    }
+                )) {
+                    Text("原聲").tag(Comparison.raw)
+                    Text("等化後").tag(Comparison.equalized)
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
                 .controlSize(.small)
-                .help("暫時停用 EQ 以聽出差異。設定不會被清掉。")
+                .fixedSize()
+                .help("左右切著聽，判斷這組等化有沒有讓聲音變好。切到「原聲」只是暫時不送出等化，設定不會被清掉。")
             }
         }
+    }
+
+    /// A/B 試聽的兩端。用「聽到的是什麼」當標籤而不是「旁通／bypass」——
+    /// 後者是器材術語，而且做成會翻面的按鈕時，沒人分得出標題寫的是
+    /// 「現在的狀態」還是「按下去會變成的狀態」。分段控制沒有這個歧義：
+    /// 亮起來的那一段就是耳朵聽到的那一份。
+    private enum Comparison: Hashable {
+        /// 不套等化——原本的聲音。
+        case raw
+        /// 套上目前這組等化。
+        case equalized
     }
 
     // MARK: - 來源
@@ -225,8 +248,8 @@ struct EQPanelView: View {
         apply(updated)
     }
 
-    /// 存設定並推到引擎。旁通時存的 `isEnabled` 不變，只有推出去的那份
-    /// 被關掉——A/B 比較不該有「忘了打開」的風險。
+    /// 存設定並推到引擎。試聽切到「原聲」時存的 `isEnabled` 不變，只有推出去
+    /// 的那份被關掉——A/B 比較不該有「忘了打開」的風險。
     private func apply(_ updated: EQSettings) {
         var stored = updated
         appState.audioManager.setEQSettings(stored, for: device)
