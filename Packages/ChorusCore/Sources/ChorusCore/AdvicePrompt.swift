@@ -1,5 +1,19 @@
 import Foundation
 
+/// 一張送進分析的照片與它的照明情境標註。
+/// 標註是使用者手寫的（例：「夜晚，只開掛燈」）；空字串表示未標註。
+/// 照片是自動曝光的，單看畫面判斷不出絕對亮度，也分不出「暗處沒有燈」與
+/// 「暗處的燈關著」——標註補的就是這段畫面拍不出來的資訊。
+public struct LabeledPhoto: Sendable, Equatable {
+    public var path: String
+    public var label: String
+
+    public init(path: String, label: String = "") {
+        self.path = path
+        self.label = label
+    }
+}
+
 /// 光環境顧問的 prompt 與結構化輸出工具 schema。
 /// 純字串組裝，輸出順序固定，可快照測試；API 呼叫本體在 app 層。
 public enum AdvicePrompt {
@@ -18,10 +32,15 @@ public enum AdvicePrompt {
     - 陰影帶與反光風險：層架遮蔭、掛燈或檯燈直射螢幕面。
     - 環境光感測器的位置：MacBook 的 ALS 在螢幕上緣瀏海附近，判斷它會被哪些光源影響、\
     讀值相對桌面整體是偏高或偏低。
+    - 多張照片可能拍的是不同照明情境（有標註時會寫明是白天、夜晚或開了哪些燈）：\
+    比對它們的差異，分辨哪些是恆常的擺設因素（層架遮蔭、螢幕朝向），哪些只是當下\
+    開關燈造成的。照片是自動曝光的，畫面亮度不代表絕對照度，請以標註與 lux 統計為準。
 
     輸出紀律（一律透過 \(toolName) 工具回報，所有文字使用繁體中文）：
     - offset 是絕對建議值（非增量），起步幅度保守（|offset| ≤ 0.15）；使用者的手動修正\
     會由學習機制接手微調，不需要一次到位。
+    - offset 是各螢幕之間的相對偏差，必須在所有照明情境下都成立；整體亮度隨環境變化\
+    由 maxLux／minBrightness 曲線負責，不要用 offset 去補償單一情境的明暗。
     - backend 為 "gamma" 的螢幕只能軟體降亮、不能加亮：在 warnings 提醒使用者先用螢幕 \
     OSD 把硬體背光設到「最亮情境下舒適」的上限。
     - maxLux／minBrightness 只在照片與 lux 統計有明確依據時才提供；不確定的觀察寫進 \
@@ -105,18 +124,20 @@ public enum AdvicePrompt {
     /// `sanitized(for:)` 仍是最後防線。`readInstruction` 由引擎決定
     /// （claude 有 Read 工具，其他 CLI 用通用措辭）。
     /// 多張照片：第一張是配置圖背景照（節點座標以它為準），其餘是補充視角。
+    /// 有標註的照片會把照明情境接在路徑後面；未標註的維持只有路徑。
     public static func cliPrompt(
         context: AdviceContext,
-        photoPaths: [String],
+        photos: [LabeledPhoto],
         readInstruction: String
     ) -> String {
         let photoLines: String
-        if photoPaths.count <= 1 {
-            photoLines = "桌面照片：\(photoPaths.first ?? "(無)")（\(readInstruction)）"
+        if photos.count <= 1 {
+            let entry = photos.first.map { $0.path + labelSuffix($0.label) } ?? "(無)"
+            photoLines = "桌面照片：\(entry)（\(readInstruction)）"
         } else {
-            var lines = ["桌面照片共 \(photoPaths.count) 張（\(readInstruction)；第 1 張是配置圖背景照，顯示器座標以它為準，其餘為補充視角）："]
-            for (index, path) in photoPaths.enumerated() {
-                lines.append("\(index + 1). \(path)")
+            var lines = ["桌面照片共 \(photos.count) 張（\(readInstruction)；第 1 張是配置圖背景照，顯示器座標以它為準，其餘為補充視角）："]
+            for (index, photo) in photos.enumerated() {
+                lines.append("\(index + 1). \(photo.path)\(labelSuffix(photo.label))")
             }
             photoLines = lines.joined(separator: "\n")
         }
@@ -130,6 +151,12 @@ public enum AdvicePrompt {
         只輸出一個 JSON 物件（不要 markdown fence、不要其他文字），必須符合以下 JSON Schema：
         \(toolInputSchemaJSON)
         """
+    }
+
+    /// 標註接在照片路徑後；未標註回空字串，輸出與未加此功能前一致。
+    private static func labelSuffix(_ label: String) -> String {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "" : "（照明情境：\(trimmed)）"
     }
 
     /// decode 失敗重試一次時附加的修正指示。

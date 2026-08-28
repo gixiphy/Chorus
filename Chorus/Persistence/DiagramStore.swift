@@ -10,6 +10,7 @@ import Observation
 @Observable
 final class DiagramStore {
     private static let positionsKey = "chorus.diagram.positions"
+    private static let backgroundLabelKey = "chorus.diagram.backgroundLabel"
     private static let backgroundBaseName = "diagram-background"
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -19,6 +20,11 @@ final class DiagramStore {
     private(set) var positions: [String: CGPoint] = [:]
     /// 背景照片檔案（無照片為 nil）。
     private(set) var backgroundImageURL: URL?
+    /// 背景照的照明情境標註（例：「白天，窗簾拉開」）；換照片時一律清空，
+    /// 免得標註留在原地描述一張已經不存在的照片。
+    var backgroundLabel: String = "" {
+        didSet { defaults.set(backgroundLabel, forKey: Self.backgroundLabelKey) }
+    }
 
     init(instance: InstanceConfig) {
         defaults = instance.defaults
@@ -37,6 +43,7 @@ final class DiagramStore {
             }
         }
         backgroundImageURL = Self.findBackground(in: directory)
+        backgroundLabel = defaults.string(forKey: Self.backgroundLabelKey) ?? ""
     }
 
     func position(for key: String) -> CGPoint? {
@@ -69,12 +76,14 @@ final class DiagramStore {
             let destination = supportDirectory.appendingPathComponent("\(Self.backgroundBaseName).\(ext)")
             try fileManager.copyItem(at: source, to: destination)
             backgroundImageURL = destination
+            backgroundLabel = ""
         } catch {
             // 匯入失敗維持原狀（來源不可讀等）；UI 顯示現況即可
         }
     }
 
     func removeBackground() {
+        backgroundLabel = ""
         guard let url = backgroundImageURL ?? Self.findBackground(in: supportDirectory) else { return }
         try? FileManager.default.removeItem(at: url)
         backgroundImageURL = nil

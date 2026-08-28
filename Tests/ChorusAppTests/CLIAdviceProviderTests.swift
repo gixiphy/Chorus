@@ -47,7 +47,7 @@ struct CLIAdviceProviderTests {
     func successPath() async throws {
         let stub = try makeStub(envelopeScript(result: Self.validAdviceJSON))
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
-        let advice = try await provider.advise(photoPaths: ["/tmp/desk.jpg"], context: context)
+        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/desk.jpg")], context: context)
         #expect(advice.offsets.count == 1)
         #expect(advice.offsets[0].displayID == "display:AAA")
     }
@@ -61,7 +61,7 @@ struct CLIAdviceProviderTests {
         \(envelopeScript(result: Self.validAdviceJSON).replacingOccurrences(of: "cat > /dev/null\n", with: ""))
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
-        _ = try await provider.advise(photoPaths: ["/tmp/desk-photo.jpg"], context: context)
+        _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/desk-photo.jpg")], context: context)
         let prompt = try String(contentsOf: capture, encoding: .utf8)
         #expect(prompt.contains("桌面照片：/tmp/desk-photo.jpg（用 Read 工具讀取後再分析）"))
         #expect(prompt.contains("JSON Schema"))
@@ -74,7 +74,7 @@ struct CLIAdviceProviderTests {
         let fenced = "```json\n\(Self.validAdviceJSON)\n```"
         let stub = try makeStub(envelopeScript(result: fenced))
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
-        let advice = try await provider.advise(photoPaths: ["/tmp/a.jpg"], context: context)
+        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
         #expect(advice.sceneSummary == "測試場景")
     }
 
@@ -87,7 +87,7 @@ struct CLIAdviceProviderTests {
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         do {
-            _ = try await provider.advise(photoPaths: ["/tmp/a.jpg"], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case .notLoggedIn = error else {
@@ -106,7 +106,7 @@ struct CLIAdviceProviderTests {
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         do {
-            _ = try await provider.advise(photoPaths: ["/tmp/a.jpg"], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case .notLoggedIn = error else {
@@ -125,7 +125,7 @@ struct CLIAdviceProviderTests {
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         do {
-            _ = try await provider.advise(photoPaths: ["/tmp/a.jpg"], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case let .processFailed(status, message) = error else {
@@ -146,7 +146,7 @@ struct CLIAdviceProviderTests {
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         do {
-            _ = try await provider.advise(photoPaths: ["/tmp/a.jpg"], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case let .processFailed(status, stderr) = error else {
@@ -168,7 +168,7 @@ struct CLIAdviceProviderTests {
         provider.timeout = .milliseconds(500)
         let started = Date()
         do {
-            _ = try await provider.advise(photoPaths: ["/tmp/a.jpg"], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case .timedOut = error else {
@@ -193,7 +193,7 @@ struct CLIAdviceProviderTests {
         fi
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
-        let advice = try await provider.advise(photoPaths: ["/tmp/a.jpg"], context: context)
+        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
         #expect(advice.offsets.count == 1)
         try? FileManager.default.removeItem(at: marker)
     }
@@ -206,7 +206,7 @@ struct CLIAdviceProviderTests {
         """)
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         do {
-            _ = try await provider.advise(photoPaths: ["/tmp/a.jpg"], context: context)
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context)
             Issue.record("預期丟錯")
         } catch let error as AdviceError {
             guard case let .decodeFailed(raw) = error else {
@@ -229,7 +229,7 @@ struct CLIAdviceProviderTests {
         """)
         let codex = KnownCLIEngine.catalog.first { $0.id == "codex" }!
         let provider = CLIAdviceProvider(engine: codex, executable: stub)
-        let advice = try await provider.advise(photoPaths: ["/tmp/desk.jpg"], context: context)
+        let advice = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/desk.jpg")], context: context)
         #expect(advice.offsets.count == 1)
         let argvPrompt = try String(contentsOf: capture, encoding: .utf8)
         #expect(argvPrompt.contains("桌面照片：/tmp/desk.jpg"))

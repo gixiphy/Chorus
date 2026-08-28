@@ -8,7 +8,7 @@ struct FakeAdviceProvider: LightingAdviceProvider {
     let advice: LightingAdvice
     var delay: Duration = .zero
 
-    func advise(photoPaths: [String], context: AdviceContext) async throws -> LightingAdvice {
+    func advise(photos: [LabeledPhoto], context: AdviceContext) async throws -> LightingAdvice {
         if delay > .zero {
             try await Task.sleep(for: delay)
         }

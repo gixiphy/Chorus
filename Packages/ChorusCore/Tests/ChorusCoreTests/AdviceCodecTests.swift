@@ -77,7 +77,7 @@ func cliPromptAssembly() {
     )
     let prompt = AdvicePrompt.cliPrompt(
         context: context,
-        photoPaths: ["/tmp/desk.jpg"],
+        photos: [LabeledPhoto(path: "/tmp/desk.jpg")],
         readInstruction: "用 Read 工具讀取後再分析"
     )
     #expect(prompt.contains(AdvicePrompt.systemPrompt))
@@ -94,7 +94,7 @@ func cliPromptMultiPhoto() {
     )
     let prompt = AdvicePrompt.cliPrompt(
         context: context,
-        photoPaths: ["/tmp/a.jpg", "/tmp/b.jpg", "/tmp/c.jpg"],
+        photos: ["/tmp/a.jpg", "/tmp/b.jpg", "/tmp/c.jpg"].map { LabeledPhoto(path: $0) },
         readInstruction: "用 Read 工具讀取後再分析"
     )
     #expect(prompt.contains("桌面照片共 3 張"))

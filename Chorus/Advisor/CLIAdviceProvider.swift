@@ -145,10 +145,10 @@ struct CLIAdviceProvider: LightingAdviceProvider {
     let executable: URL
     var timeout: Duration = .seconds(120)
 
-    func advise(photoPaths: [String], context: AdviceContext) async throws -> LightingAdvice {
+    func advise(photos: [LabeledPhoto], context: AdviceContext) async throws -> LightingAdvice {
         let basePrompt = AdvicePrompt.cliPrompt(
             context: context,
-            photoPaths: photoPaths,
+            photos: photos,
             readInstruction: engine.readInstruction
         )
         do {

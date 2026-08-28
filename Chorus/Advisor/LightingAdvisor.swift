@@ -71,6 +71,7 @@ final class LightingAdvisor {
         historyURL = directory.appendingPathComponent("advisor-history.json")
         extraPhotosDirectory = directory.appendingPathComponent("advisor-extra-photos", isDirectory: true)
         loadExtraPhotos()
+        loadExtraPhotoLabels()
     }
 
     // MARK: - 補充照片（多角度；第一張分析照恆為配置圖背景照）
@@ -80,6 +81,31 @@ final class LightingAdvisor {
     @ObservationIgnored private let extraPhotosDirectory: URL
     /// 背景照＋補充照的總數上限（控制 CLI 呼叫成本）。
     static let maxPhotos = 4
+
+    /// 補充照的照明情境標註，以檔名為鍵（檔名是匯入時生成的 UUID，不會撞號）。
+    /// 情境切換只搬背景照、不動補充照，所以這組鍵不會錯位。
+    private var extraPhotoLabels: [String: String] = [:] {
+        didSet { defaults.set(extraPhotoLabels, forKey: Self.extraLabelsKey) }
+    }
+
+    private static let extraLabelsKey = "chorus.advisor.extraPhotoLabels"
+
+    func label(for photo: URL) -> String {
+        extraPhotoLabels[photo.lastPathComponent] ?? ""
+    }
+
+    /// 存使用者原本輸入的字串——邊打字邊 trim 會讓空白鍵按不出來；
+    /// 送進 prompt 前才由 AdvicePrompt 統一 trim。
+    func setLabel(_ label: String, for photo: URL) {
+        if label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            extraPhotoLabels.removeValue(forKey: photo.lastPathComponent)
+        } else {
+            extraPhotoLabels[photo.lastPathComponent] = label
+        }
+    }
+
+    /// 常用的照明情境，供 UI 一鍵填入。
+    static let labelSuggestions = ["白天，窗簾拉開", "白天，窗簾拉上", "夜晚，只開掛燈", "夜晚，開頂燈", "全部關燈"]
 
     func importExtraPhotos(from sources: [URL]) {
         let fm = FileManager.default
@@ -99,6 +125,11 @@ final class LightingAdvisor {
             try? FileManager.default.removeItem(at: url)
         }
         extraPhotos = []
+        extraPhotoLabels = [:]
+    }
+
+    private func loadExtraPhotoLabels() {
+        extraPhotoLabels = defaults.dictionary(forKey: Self.extraLabelsKey) as? [String: String] ?? [:]
     }
 
     private func loadExtraPhotos() {
@@ -132,14 +163,17 @@ final class LightingAdvisor {
             return
         }
         let provider = CLIAdviceProvider(engine: engine.engine, executable: engine.url)
-        run(provider: provider, photoURLs: [photoURL] + extraPhotos)
+        // 第一張恆為背景照（座標基準），標註各自跟著自己那張走。
+        var photos = [(url: photoURL, label: diagram.backgroundLabel)]
+        photos += extraPhotos.map { (url: $0, label: label(for: $0)) }
+        run(provider: provider, photos: photos)
     }
 
     func cancelAnalysis() {
         analysisTask?.cancel()
     }
 
-    private func run(provider: any LightingAdviceProvider, photoURLs: [URL]) {
+    private func run(provider: any LightingAdviceProvider, photos photoURLs: [(url: URL, label: String)]) {
         isAnalyzing = true
         lastErrorMessage = nil
         lastErrorAssist = nil
@@ -152,18 +186,18 @@ final class LightingAdvisor {
             var thumbnailURLs: [URL] = []
             defer { for url in thumbnailURLs { try? FileManager.default.removeItem(at: url) } }
             do {
-                var photoPaths: [String] = []
-                for photoURL in photoURLs.prefix(Self.maxPhotos) {
-                    let thumb = try Self.makeThumbnail(from: photoURL)
+                var photos: [LabeledPhoto] = []
+                for photo in photoURLs.prefix(Self.maxPhotos) {
+                    let thumb = try Self.makeThumbnail(from: photo.url)
                     thumbnailURLs.append(thumb)
-                    photoPaths.append(thumb.path)
+                    photos.append(LabeledPhoto(path: thumb.path, label: photo.label))
                 }
-                if photoPaths.isEmpty { photoPaths = ["(無照片)"] }
-                let raw = try await provider.advise(photoPaths: photoPaths, context: context)
+                if photos.isEmpty { photos = [LabeledPhoto(path: "(無照片)")] }
+                let raw = try await provider.advise(photos: photos, context: context)
                 guard let self, !Task.isCancelled else { return }
                 let advice = raw.sanitized(for: context)
                 let entry = AdviceResult(advice: advice, context: context, date: Date(), fromHistory: false)
-                self.appendHistory(advice: advice, photoURL: photoURLs.first)
+                self.appendHistory(advice: advice, photoURL: photoURLs.first?.url)
                 self.result = entry
             } catch is CancellationError {
                 // 使用者取消：不顯示錯誤
@@ -395,7 +429,7 @@ final class LightingAdvisor {
         guard !isAnalyzing,
               let data = adviceJSON.data(using: .utf8),
               let advice = try? JSONDecoder().decode(LightingAdvice.self, from: data) else { return }
-        run(provider: FakeAdviceProvider(advice: advice), photoURLs: [])
+        run(provider: FakeAdviceProvider(advice: advice), photos: [])
     }
 
     /// applyAdvice：無頭套用目前結果的全部建議（E2E 斷言用）。

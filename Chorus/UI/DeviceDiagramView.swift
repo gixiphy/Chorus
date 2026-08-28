@@ -186,29 +186,60 @@ struct DeviceDiagramView: View {
     }
 
     private var photoBar: some View {
-        HStack(spacing: 6) {
-            if !appState.advisor.extraPhotos.isEmpty {
+        @Bindable var diagram = appState.diagram
+        return VStack(spacing: 6) {
+            if appState.diagram.backgroundImageURL != nil {
+                HStack(spacing: 6) {
+                    Image(systemName: "tag")
+                        .imageScale(.small)
+                        .foregroundStyle(.secondary)
+                    TextField("照明情境（例：白天，窗簾拉開）", text: $diagram.backgroundLabel)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .help("寫下這張照片的照明情境。照片是自動曝光的，畫面看不出絕對亮度，也分不出暗處是沒有燈還是燈關著——標註補的正是這段資訊")
+                    labelPresetMenu { diagram.backgroundLabel = $0 }
+                }
+            }
+            HStack(spacing: 6) {
                 ForEach(appState.advisor.extraPhotos, id: \.self) { url in
                     PhotoThumbnailView(url: url)
                 }
-                Text("補充視角")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            Spacer()
-            if appState.diagram.backgroundImageURL != nil {
-                Button("移除") {
-                    appState.diagram.removeBackground()
-                    appState.advisor.clearExtraPhotos()
+                if !appState.advisor.extraPhotos.isEmpty {
+                    Text("點縮圖可標註")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
-                .controlSize(.small)
+                Spacer()
+                if appState.diagram.backgroundImageURL != nil {
+                    Button("移除") {
+                        appState.diagram.removeBackground()
+                        appState.advisor.clearExtraPhotos()
+                    }
+                    .controlSize(.small)
+                }
+                Button("匯入…") { showingImporter = true }
+                    .controlSize(.small)
+                    .help("可一次選多張（最多 \(LightingAdvisor.maxPhotos) 張）：第一張作為配置圖背景與座標基準，其餘為分析用補充視角。拍不同照明情境（白天／夜晚／只開掛燈）並各自標註，分析會更準")
             }
-            Button("匯入…") { showingImporter = true }
-                .controlSize(.small)
-                .help("可一次選多張（最多 \(LightingAdvisor.maxPhotos) 張）：第一張作為配置圖背景與座標基準，其餘為分析用補充視角")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+    }
+
+    /// 常用照明情境的一鍵填入。
+    private func labelPresetMenu(_ apply: @escaping (String) -> Void) -> some View {
+        Menu {
+            ForEach(LightingAdvisor.labelSuggestions, id: \.self) { suggestion in
+                Button(suggestion) { apply(suggestion) }
+            }
+        } label: {
+            Image(systemName: "text.badge.plus")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .controlSize(.small)
+        .help("填入常用的照明情境")
     }
 
     /// 照片在畫布上實際佔用的矩形（等比縮放置中）；沒有照片時就是整塊畫布。
@@ -480,13 +511,16 @@ enum DiagramImageCache {
     }
 }
 
-/// 補充照片縮圖：點擊以 popover 放大預覽（完整照片，不裁切）。
+/// 補充照片縮圖：點擊以 popover 放大預覽並編輯這張照片的照明情境標註。
+/// 已標註的角落有小標籤，一眼看得出哪幾張還沒寫。
 private struct PhotoThumbnailView: View {
+    @Environment(AppState.self) private var appState
     let url: URL
     @State private var showingPreview = false
 
     var body: some View {
         let image = DiagramImageCache.image(for: url)
+        let label = appState.advisor.label(for: url)
         Button {
             showingPreview = true
         } label: {
@@ -502,17 +536,57 @@ private struct PhotoThumbnailView: View {
             .frame(width: 40, height: 28)
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.quaternary))
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $showingPreview) {
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 520, maxHeight: 390)
-                    .padding(6)
+            .overlay(alignment: .bottomTrailing) {
+                if !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Image(systemName: "tag.fill")
+                        .font(.system(size: 7))
+                        .foregroundStyle(.white)
+                        .padding(2)
+                        .background(Color.accentColor, in: Circle())
+                        .padding(1)
+                }
             }
         }
+        .buttonStyle(.plain)
+        .help(label.isEmpty ? "尚未標註照明情境；點擊以預覽與標註" : label)
+        .popover(isPresented: $showingPreview) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 440, maxHeight: 320)
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "tag")
+                        .imageScale(.small)
+                        .foregroundStyle(.secondary)
+                    TextField("照明情境（例：夜晚，只開掛燈）", text: labelBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .frame(minWidth: 240)
+                    Menu {
+                        ForEach(LightingAdvisor.labelSuggestions, id: \.self) { suggestion in
+                            Button(suggestion) { appState.advisor.setLabel(suggestion, for: url) }
+                        }
+                    } label: {
+                        Image(systemName: "text.badge.plus")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .controlSize(.small)
+                }
+            }
+            .padding(10)
+        }
+    }
+
+    private var labelBinding: Binding<String> {
+        Binding(
+            get: { appState.advisor.label(for: url) },
+            set: { appState.advisor.setLabel($0, for: url) }
+        )
     }
 }
 

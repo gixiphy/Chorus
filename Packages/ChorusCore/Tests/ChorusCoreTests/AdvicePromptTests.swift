@@ -81,4 +81,46 @@ struct AdvicePromptTests {
         #expect(description.contains("近期環境光：無資料"))
         #expect(!description.contains("使用者標注"))
     }
+
+    private var emptyContext: AdviceContext {
+        AdviceContext(displays: [], curve: AmbientCurve())
+    }
+
+    @Test("Multi-photo prompt appends labels and leaves unlabeled photos bare")
+    func labeledPhotoListing() {
+        let prompt = AdvicePrompt.cliPrompt(
+            context: emptyContext,
+            photos: [
+                LabeledPhoto(path: "/tmp/a.jpg", label: "白天，窗簾拉開"),
+                LabeledPhoto(path: "/tmp/b.jpg"),
+                LabeledPhoto(path: "/tmp/c.jpg", label: "  夜晚，只開掛燈  ")
+            ],
+            readInstruction: "請先讀取照片再分析"
+        )
+        #expect(prompt.contains("1. /tmp/a.jpg（照明情境：白天，窗簾拉開）"))
+        // 未標註的維持只有路徑，不留空括號
+        #expect(prompt.contains("2. /tmp/b.jpg\n"))
+        // 前後空白在送進 prompt 前才 trim（輸入時保留，否則空白鍵按不出來）
+        #expect(prompt.contains("3. /tmp/c.jpg（照明情境：夜晚，只開掛燈）"))
+    }
+
+    @Test("Single unlabeled photo keeps the pre-label wording")
+    func singlePhotoWordingUnchanged() {
+        let prompt = AdvicePrompt.cliPrompt(
+            context: emptyContext,
+            photos: [LabeledPhoto(path: "/tmp/desk.jpg")],
+            readInstruction: "用 Read 工具讀取後再分析"
+        )
+        #expect(prompt.contains("桌面照片：/tmp/desk.jpg（用 Read 工具讀取後再分析）"))
+    }
+
+    @Test("Single labeled photo carries its label")
+    func singlePhotoWithLabel() {
+        let prompt = AdvicePrompt.cliPrompt(
+            context: emptyContext,
+            photos: [LabeledPhoto(path: "/tmp/desk.jpg", label: "夜晚，只開掛燈")],
+            readInstruction: "用 Read 工具讀取後再分析"
+        )
+        #expect(prompt.contains("桌面照片：/tmp/desk.jpg（照明情境：夜晚，只開掛燈）（用 Read 工具讀取後再分析）"))
+    }
 }
