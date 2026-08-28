@@ -16,6 +16,13 @@ import Network
 ///   再從網頁打過來）。
 /// - 標頭與 body 都有大小上限，避免單一連線把記憶體吃光。
 /// - 預設關閉（PLAN §8-6 的權限功能紀律）。
+/// `installCLISymlink` 的結果。
+enum CLIInstallOutcome {
+    case installed(String)
+    /// 目錄不可寫：給出使用者可自行貼進終端機的指令。
+    case needsManualCommand(String)
+}
+
 @MainActor
 @Observable
 final class ControlHTTPServer {
@@ -31,6 +38,10 @@ final class ControlHTTPServer {
     @ObservationIgnored private var eventConnections: [ObjectIdentifier: (NWConnection, UUID)] = [:]
 
     private static let tokenAccount = "automation-token"
+    /// CLI 讀 token 的位置。權限 600——內容等同介面的鑰匙。
+    private static var configURL: URL {
+        URL(fileURLWithPath: NSString(string: "~/.config/chorus/config.json").expandingTildeInPath)
+    }
     /// 標頭區上限 16 KB、body 上限 256 KB——自動化請求都是小 JSON，
     /// 給到這個量已經很寬鬆，再多就是有人在灌。
     private static let maxHeaderBytes = 16 * 1024
@@ -66,7 +77,36 @@ final class ControlHTTPServer {
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         let token = Data(bytes).base64EncodedString()
         keychain.set(Data(token.utf8), forAccount: Self.tokenAccount)
+        if isRunning { writeConfigFile() }
         return token
+    }
+
+    /// 內嵌的 chorus 執行檔位置（設定頁的「安裝到 /usr/local/bin」用）。
+    var bundledCLIPath: String {
+        Bundle.main.bundleURL
+            .appendingPathComponent("Contents/SharedSupport/chorus")
+            .path
+    }
+
+    /// 在 /usr/local/bin 建 symlink。多數機器上這個目錄使用者可寫，
+    /// 不可寫時**不要求 admin**——回傳失敗讓 UI 顯示可自行執行的指令，
+    /// 為了一個方便的捷徑去要密碼並不划算。
+    func installCLISymlink() -> CLIInstallOutcome {
+        let destination = "/usr/local/bin/chorus"
+        let manager = FileManager.default
+        do {
+            if manager.fileExists(atPath: destination) || isSymlink(destination) {
+                try manager.removeItem(atPath: destination)
+            }
+            try manager.createSymbolicLink(atPath: destination, withDestinationPath: bundledCLIPath)
+            return .installed(destination)
+        } catch {
+            return .needsManualCommand("sudo ln -sf '\(bundledCLIPath)' \(destination)")
+        }
+    }
+
+    private func isSymlink(_ path: String) -> Bool {
+        (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil
     }
 
     // MARK: - 生命週期
@@ -101,9 +141,40 @@ final class ControlHTTPServer {
             }
             created.start(queue: .main)
             listener = created
+            writeConfigFile()
         } catch {
             lastError = "\(error)"
         }
+    }
+
+    /// 寫出 CLI 用的設定檔。**權限 600**：檔案內容就是這個介面的鑰匙，
+    /// 同機其他使用者不該讀得到。停用時刪除——留著一把過期的鑰匙沒有意義，
+    /// 只會讓人以為介面還開著。
+    private func writeConfigFile() {
+        let url = Self.configURL
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            let payload: [String: Any] = [
+                "port": Int(settings.automationServerPort),
+                "token": currentToken(),
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            try data.write(to: url, options: [.atomic])
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: url.path
+            )
+        } catch {
+            lastError = "無法寫出 CLI 設定檔：\(error.localizedDescription)"
+        }
+    }
+
+    private func removeConfigFile() {
+        try? FileManager.default.removeItem(at: Self.configURL)
     }
 
     private func stop() {
@@ -115,6 +186,7 @@ final class ControlHTTPServer {
         listener?.cancel()
         listener = nil
         isRunning = false
+        removeConfigFile()
     }
 
     private func handleListenerState(_ state: NWListener.State) {

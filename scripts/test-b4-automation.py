@@ -96,6 +96,13 @@ def record(name, ok, detail=""):
     print(("  ✅ " if ok else "  ❌ ") + name + (f"  — {detail}" if detail else ""), flush=True)
 
 
+def kill_stale_instances():
+    """前一輪沒收乾淨的測試實例會佔著 HTTP port，讓整組 HTTP 測試假性失敗。"""
+    for inst in ("A", "B"):
+        subprocess.run(["pkill", "-f", f"instance {inst}"], capture_output=True)
+    time.sleep(1)
+
+
 def stop_production_app():
     global prod_was_running
     running = subprocess.run(["pgrep", "-f", f"{PROD_APP}/Contents/MacOS/Chorus"], capture_output=True)
@@ -139,9 +146,10 @@ def value_for(response, prop):
 
 def main():
     build_notify()
+    kill_stale_instances()
     stop_production_app()
 
-    print("\n=== B4-1（M10）動詞層 ===\n", flush=True)
+    print("\n=== B4（M10）自動化介面 ===\n", flush=True)
     launch("A", 47700, 47800)
     ok, state = wait_for(lambda d: len(d.get("displays", [])) > 0, timeout=30)
     if not ok:
@@ -322,15 +330,83 @@ def main():
                "data:" in stream and "brightness" in stream,
                f"收到 {len(stream)} bytes")
 
+        print("\n[測試 11] chorus CLI（B4-3）", flush=True)
+        # APP 是 .../Chorus.app/Contents/MacOS/Chorus，CLI 在 SharedSupport
+        cli = os.path.join(os.path.dirname(os.path.dirname(APP)), "SharedSupport", "chorus")
+        record("CLI 內嵌在 App bundle 裡", os.path.exists(cli), cli)
+
+        config_path = os.path.expanduser("~/.config/chorus/config.json")
+        record("啟動時寫出 CLI 設定檔", os.path.exists(config_path))
+        if os.path.exists(config_path):
+            mode = oct(os.stat(config_path).st_mode & 0o777)
+            record("設定檔權限 600（內容等同介面的鑰匙）", mode == "0o600", f"實得 {mode}")
+
+        if os.path.exists(cli):
+            # 用環境變數驅動，不動使用者的設定檔
+            env = dict(os.environ, CHORUS_TOKEN=token, CHORUS_PORT=str(port))
+
+            def run_cli(args, env_override=None):
+                return subprocess.run([cli] + args, capture_output=True, text=True,
+                                      env=env_override or env, timeout=15)
+
+            out = run_cli(["set", "--display-uuid", display_uuid, "--brightness", "25%"])
+            record("chorus set --brightness 25%",
+                   out.returncode == 0 and "25%" in out.stdout, f"{out.stdout.strip()}{out.stderr.strip()}")
+
+            out = run_cli(["get", "--display-uuid", display_uuid, "--brightness"])
+            record("chorus get 印出百分比（依屬性種類，不靠猜）",
+                   out.returncode == 0 and "25%" in out.stdout, out.stdout.strip())
+
+            out = run_cli(["set", "--display-uuid", display_uuid, "--brightness", "+10%"])
+            record("chorus set 相對增減 → 35%",
+                   out.returncode == 0 and "35%" in out.stdout, out.stdout.strip())
+
+            out = run_cli(["--json", "get", "--display-uuid", display_uuid, "--brightness"])
+            parsed = None
+            try:
+                parsed = json.loads(out.stdout)
+            except Exception:
+                pass
+            record("--json 輸出機器可讀 JSON", bool(parsed and parsed.get("ok")))
+
+            out = run_cli(["get", "--system", "--keepAwake"])
+            record("system 屬性：keepAwake 印秒數不印百分比",
+                   out.returncode == 0 and "%" not in out.stdout, out.stdout.strip())
+
+            out = run_cli(["set", "--brightness", "30%"])
+            record("省略目標時依屬性推斷（allDisplays）", out.returncode == 0, out.stdout.strip()[:60])
+
+            out = run_cli(["set", "--display-like", "不存在", "--brightness", "50%"])
+            record("找不到目標 → 非零結束碼＋提示",
+                   out.returncode != 0 and "提示" in out.stderr, out.stderr.strip()[:80])
+
+            out = run_cli(["set", "--nosuchprop", "1"])
+            record("未知屬性 → 非零結束碼", out.returncode != 0, out.stderr.strip()[:60])
+
+            bad = dict(os.environ, CHORUS_TOKEN="wrong", CHORUS_PORT=str(port))
+            out = run_cli(["state"], env_override=bad)
+            record("錯 token → 結束碼 3", out.returncode == 3, f"實得 {out.returncode}")
+
+            no_token = {k: v for k, v in os.environ.items() if k != "CHORUS_TOKEN"}
+            no_token["CHORUS_CONFIG"] = "/nonexistent/chorus.json"
+            out = run_cli(["state"], env_override=no_token)
+            record("沒有 token → 結束碼 3＋說明怎麼取得",
+                   out.returncode == 3 and "設定頁" in out.stderr, out.stderr.strip()[:60])
+
+            out = run_cli(["help"])
+            record("chorus help 列出用法", out.returncode == 0 and "--brightness" in out.stdout)
+
     notify("A", "automationServer", "0")
     ok, _ = wait_for(lambda d: d["automationServer"]["running"] is False, timeout=10)
     record("關閉後 server 停止", ok)
+    record("關閉後 CLI 設定檔一併移除（不留過期的鑰匙）",
+           not os.path.exists(os.path.expanduser("~/.config/chorus/config.json")))
     record("關閉後 port 不再接受連線",
            subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "3",
                            f"http://127.0.0.1:{port}/v1/state"],
                           capture_output=True, text=True).stdout.strip() in ("000", ""))
 
-    print("\n[測試 11] 跨機轉發", flush=True)
+    print("\n[測試 12] 跨機轉發", flush=True)
     launch("B", 47701, 47801)
     ok, _ = wait_for(lambda d: len(d.get("displays", [])) > 0, inst="B", timeout=30)
     if not ok:

@@ -30,6 +30,8 @@ struct SettingsView: View {
 private struct GeneralSettingsTab: View {
     @Environment(AppState.self) private var appState
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    /// 安裝結果或（不可寫時）使用者可自行貼進終端機的指令。
+    @State private var cliInstallMessage: String?
 
     var body: some View {
         Form {
@@ -84,6 +86,25 @@ private struct GeneralSettingsTab: View {
                             }
                             .controlSize(.small)
                         }
+                    }
+                }
+                if appState.settings.automationServerEnabled {
+                    LabeledContent("命令列工具") {
+                        HStack {
+                            Button("安裝 chorus 到 /usr/local/bin") {
+                                cliInstallMessage = switch appState.automationServer.installCLISymlink() {
+                                case let .installed(path): "已安裝到 \(path)"
+                                case let .needsManualCommand(command): command
+                                }
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                    if let message = cliInstallMessage {
+                        Text(message)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                     }
                 }
                 Text(

@@ -53,6 +53,19 @@ public enum ControlProperty: String, Codable, Sendable, CaseIterable, Hashable {
         }
     }
 
+    /// 沒指定目標時的合理預設。`chorus set --brightness 50%` 應該就能用，
+    /// 不該逼使用者每次都打 `--all-displays`；MCP 的 tool schema 也共用這個推斷。
+    public var defaultTarget: ControlTarget {
+        switch self {
+        case .brightness, .contrast, .input, .power: .allDisplays
+        case .volume, .mute: .defaultOutput
+        case .keepAwake, .autoBrightness: .system
+        // 差異值預設套整機——per-display 要明講是哪一台，
+        // 不小心把全部螢幕的差異值一起改掉會很難察覺
+        case .ambientOffset: .system
+        }
+    }
+
     /// 錯誤訊息用：這個屬性接受哪些目標。
     var targetKindsHint: String {
         targetKinds

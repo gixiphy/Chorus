@@ -40,6 +40,23 @@ targets:
       - sdk: CoreServices.framework
       - sdk: IOKit.framework
 
+  # B4-3 的 chorus CLI。隨 App 建置、內嵌在 Contents/SharedSupport；
+  # 設定頁提供「安裝到 /usr/local/bin」（symlink，不需要 admin）。
+  #
+  # target 名刻意不叫 chorus：macOS 檔案系統不分大小寫，與 app target
+  # 「Chorus」只差大小寫會讓 xcodegen 把 CLI 的原始檔也編進 app target。
+  # 產出的執行檔名靠 PRODUCT_NAME 指定。
+  ChorusCLI:
+    type: tool
+    platform: macOS
+    sources: [CLI]
+    settings:
+      base:
+        PRODUCT_NAME: chorus
+        SWIFT_VERSION: "6.0"
+    dependencies:
+      - package: ChorusCore
+
   Chorus:
     type: application
     platform: macOS
@@ -54,6 +71,13 @@ targets:
         embed: true
         copy:
           destination: plugins
+      # 放 SharedSupport 而**不是** MacOS：macOS 檔案系統不分大小寫，
+      # Contents/MacOS/chorus 與 app 自己的 Contents/MacOS/Chorus 是同一個
+      # 檔案——CLI 會直接把 app 執行檔覆蓋掉，啟動 App 變成跑 CLI。
+      - target: ChorusCLI
+        embed: true
+        copy:
+          destination: sharedSupport
     info:
       path: Chorus/Support/Info.plist
       properties:
