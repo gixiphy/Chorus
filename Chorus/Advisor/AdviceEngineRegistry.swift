@@ -30,16 +30,22 @@ struct KnownCLIEngine: Identifiable, Sendable {
     /// 不放具體版本號——那種清單放著就會過期。
     let suggestedModels: [String]
 
-    /// `<cli> models` 的呼叫與輸出格式。
-    struct ModelListing: Sendable {
-        let arguments: [String]
-        let format: Format
+    /// 模型清單的來源。各家不同，照實反映。
+    enum ModelListing: Sendable {
+        /// 跑 `<cli> <arguments>` 取得清單。
+        case command(arguments: [String], format: CommandFormat)
+        /// codex 沒有非互動的列舉指令（`codex models` 會轉進互動式 TUI
+        /// 並因非 TTY 失敗），但它自己在 `~/.codex/models_cache.json`
+        /// 維護一份抓好的清單——直接讀那份，唯讀、不動使用者的檔案。
+        case codexModelsCache
 
-        enum Format: Sendable {
+        enum CommandFormat: Sendable {
             /// 每行一個 slug（opencode：`provider/model`）。
             case plainLines
             /// 散文清單，項目以 `*`／`-` 起頭（grok：`  * grok-4.6 (default)`）。
             case markerList
+            /// `<slug>\t<顯示名>`（agy）。
+            case tabSeparated
         }
     }
     /// 給 prompt 的照片讀取措辭（僅 `.pathInPrompt` 用得到）。
@@ -139,9 +145,8 @@ struct KnownCLIEngine: Identifiable, Sendable {
             id: "agy", executableName: "agy", displayName: "Antigravity",
             codec: .responseEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
-            // agy models 實測會無限期卡住（1.1.22），不提供列舉
             modelHint: "slug，如 gemini-3.1-pro-high、claude-sonnet-4-6",
-            modelListing: nil,
+            modelListing: .command(arguments: ["models"], format: .tabSeparated),
             suggestedModels: [],
             readInstruction: "請先讀取照片再分析",
             loginCommand: "agy"
@@ -151,7 +156,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             codec: .textEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
             modelHint: "模型 ID",
-            modelListing: ModelListing(arguments: ["models"], format: .markerList),
+            modelListing: .command(arguments: ["models"], format: .markerList),
             suggestedModels: [],
             readInstruction: "請先讀取照片再分析",
             loginCommand: "grok"
@@ -160,9 +165,8 @@ struct KnownCLIEngine: Identifiable, Sendable {
             id: "codex", executableName: "codex", displayName: "Codex CLI",
             codec: .plainStdout, photoDelivery: .attached,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
-            // codex 沒有非互動的列舉指令（models 會轉進互動式 CLI 並因非 TTY 失敗）
             modelHint: "模型名稱，如 gpt-5.6-terra",
-            modelListing: nil,
+            modelListing: .codexModelsCache,
             suggestedModels: [],
             readInstruction: "照片已附加",
             loginCommand: "codex login"
@@ -172,7 +176,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             codec: .plainStdout, photoDelivery: .attached,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
             modelHint: "provider/model 格式",
-            modelListing: ModelListing(arguments: ["models"], format: .plainLines),
+            modelListing: .command(arguments: ["models"], format: .plainLines),
             suggestedModels: [],
             readInstruction: "照片已附加",
             loginCommand: "opencode auth login"
@@ -248,10 +252,19 @@ final class AdviceEngineRegistry {
     /// `<cli> models` 的輸出解析。純函式，單獨測。
     nonisolated static func parseModels(
         _ output: String,
-        format: KnownCLIEngine.ModelListing.Format
+        format: KnownCLIEngine.ModelListing.CommandFormat
     ) -> [String] {
         let lines = output.components(separatedBy: .newlines)
         switch format {
+        case .tabSeparated:
+            // agy：`<slug>\t<顯示名>`。沒有 tab 的行（"Fetching available
+            // models..." 之類）一律略過。
+            return lines.compactMap { line in
+                let parts = line.split(separator: "\t", maxSplits: 1)
+                guard parts.count == 2 else { return nil }
+                let slug = parts[0].trimmingCharacters(in: .whitespaces)
+                return slug.isEmpty ? nil : slug
+            }
         case .plainLines:
             // opencode：每行就是一個 provider/model。沒有斜線的是雜訊行。
             return lines
@@ -283,14 +296,39 @@ final class AdviceEngineRegistry {
         let url = entry.url
         let engineID = entry.id
         Task.detached { [weak self] in
-            guard let output = Self.runListing(at: url, arguments: listing.arguments) else { return }
-            let parsed = Self.parseModels(output, format: listing.format)
+            let parsed: [String]
+            switch listing {
+            case let .command(arguments, format):
+                guard let output = Self.runListing(at: url, arguments: arguments) else { return }
+                parsed = Self.parseModels(output, format: format)
+            case .codexModelsCache:
+                guard let data = FileManager.default.contents(atPath: Self.codexModelsCachePath) else { return }
+                parsed = Self.parseCodexModelsCache(data)
+            }
             guard !parsed.isEmpty else { return }
             await MainActor.run {
                 guard let self else { return }
                 self.models[engineID] = parsed
                 self.settings.advisorModelCache[cacheKey] = parsed
             }
+        }
+    }
+
+    nonisolated static var codexModelsCachePath: String {
+        NSString(string: "~/.codex/models_cache.json").expandingTildeInPath
+    }
+
+    /// codex 的模型快取：取 `visibility == "list"` 的 slug——
+    /// 標 `hide` 的是它自己不放進選單的（legacy／內部），我們也不該列。
+    nonisolated static func parseCodexModelsCache(_ data: Data) -> [String] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["models"] as? [[String: Any]]
+        else { return [] }
+        return models.compactMap { model in
+            guard let slug = model["slug"] as? String, !slug.isEmpty else { return nil }
+            // 沒有 visibility 欄位時保守納入（欄位是新加的就不該整份變空）
+            guard (model["visibility"] as? String ?? "list") == "list" else { return nil }
+            return slug
         }
     }
 
