@@ -138,6 +138,9 @@ final class AppState {
         #endif
         tapEngine = TapEngine(backend: tapBackend, registry: tapRegistry, settings: settings)
         audioManager.tapEngine = tapEngine
+        tapEngine.stateChangedHandler = { [weak audioManager] in
+            audioManager?.refreshBridges()
+        }
 
         // 「接著這台螢幕時防睡眠」是唯一跨重啟保留的模式
         if let uuid = settings.keepAwakeDisplayUUID {

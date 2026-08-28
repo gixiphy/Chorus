@@ -1,11 +1,13 @@
 import ChorusCore
+import CoreAudio
 import Foundation
 import Observation
 
-/// Process tap 引擎（B6-1 基礎設施＋B6-2 per-app 調整）。
+/// Process tap 引擎（B6-1 基礎設施、B6-2 per-app 調整、B6-3 路由、
+/// B6-4 裝置級軟體音量）。
 ///
 /// 職責：權限流程（DESIGN §1.2 定稿）、tap session 生命週期、健康判讀、
-/// 預設輸出變更時搬家，以及**讓進行中的 session 與使用者設定一致**。
+/// 裝置變更時搬家，以及**讓進行中的 session 與使用者設定一致**。
 ///
 /// 權限流程（沒有任何 API 能查詢，只能靠行為判讀）：
 /// 啟用 → captureOnly 探測 session（AudioDeviceStart 觸發系統對話框）→
@@ -30,7 +32,16 @@ final class TapEngine {
         case failed(String)
     }
 
-    private(set) var state: State = .off
+    private(set) var state: State = .off {
+        didSet {
+            guard state != oldValue else { return }
+            // AudioDeviceManager 要重算三後端矩陣：軟體音量只有在引擎
+            // 拿到權限後才成立，狀態一變滑桿的可用性就跟著變
+            stateChangedHandler?()
+        }
+    }
+    /// 狀態變更回呼（AppState 接到 AudioDeviceManager.refreshBridges）。
+    @ObservationIgnored var stateChangedHandler: (@MainActor () -> Void)?
     /// 進行中的 per-app session（排序後的 bundleID）。
     private(set) var tappedBundles: [String] = []
     /// 探測的即時統計（設定頁顯示用）。
@@ -48,6 +59,13 @@ final class TapEngine {
     /// 每條 session 實際建在哪個裝置的 UID 上。存它才分得出「設定改了但
     /// 裝置沒變」（推 atomic 就好）與「裝置換了」（非重建不可）。
     @ObservationIgnored private var sessionOutputUIDs: [String: String] = [:]
+    /// 裝置級軟體音量的一條全域 session（B6-4）。
+    @ObservationIgnored private var globalSession: (any TapSession)?
+    @ObservationIgnored private var globalOutputUID: String?
+    @ObservationIgnored private var globalExclusions: [AudioObjectID] = []
+    @ObservationIgnored private var softwareVolumeTarget: String?
+    @ObservationIgnored private var softwareVolumeGain: Float = 1
+    @ObservationIgnored private var softwareVolumeMuted = false
     @ObservationIgnored private var monitor = TapHealthMonitor()
     @ObservationIgnored private var lastProbeStats = TapSessionStats()
     @ObservationIgnored private var tickTask: Task<Void, Never>?
@@ -133,6 +151,68 @@ final class TapEngine {
         reconcileSessions()
     }
 
+    // MARK: - 裝置級軟體音量（B6-4，三後端矩陣的第三條）
+
+    /// 目前有沒有一條裝置級全域 tap 在跑，跑在哪個裝置上。
+    private(set) var softwareVolumeDeviceUID: String?
+
+    /// AudioDeviceManager 的唯一入口：`deviceUID` 為 `nil` ＝ 收掉。
+    ///
+    /// 增益不存在這裡——裝置音量的持久化本來就在 `SettingsStore.lastVolume`，
+    /// 再存一份只會多一個會不同步的來源。
+    func updateSoftwareVolume(deviceUID: String?, gain: Float, muted: Bool) {
+        softwareVolumeTarget = deviceUID
+        softwareVolumeGain = AppAudioSetting.clampGain(gain)
+        softwareVolumeMuted = muted
+        reconcileGlobalSession()
+    }
+
+    /// per-app session 換人、裝置換人、權限狀態改變後都要重算。
+    ///
+    /// 排除清單是**每一路音訊只處理一次**的執行點（DESIGN §2.2）：
+    /// 已被 per-app tap 捕獲的行程要從全域 tap 排除，Chorus 自己更要
+    /// （否則我們寫回的音訊會被自己抓走＝回授）。
+    private func reconcileGlobalSession() {
+        guard state == .active, let target = softwareVolumeTarget,
+              backend.outputDeviceUIDs().contains(target)
+        else {
+            stopGlobalSession()
+            return
+        }
+        var excluded = registry.processObjectIDs(bundleIDs: Set(sessions.keys))
+        if let own = registry.ownProcessObjectID { excluded.append(own) }
+
+        // 排除清單綁在 tap 建立時，改不了——內容變了只能收舊建新
+        if globalSession != nil, globalOutputUID == target, globalExclusions == excluded {
+            globalSession?.setGain(softwareVolumeGain)
+            globalSession?.setMuted(softwareVolumeMuted)
+            return
+        }
+        stopGlobalSession()
+        do {
+            globalSession = try backend.startGlobalVolumeSession(
+                outputDeviceUID: target,
+                excludingProcessObjects: excluded,
+                initialGain: softwareVolumeGain
+            )
+            globalSession?.setMuted(softwareVolumeMuted)
+            globalOutputUID = target
+            globalExclusions = excluded
+            softwareVolumeDeviceUID = target
+        } catch {
+            lastTapError = "軟體音量啟動失敗：\(error)"
+            stopGlobalSession()
+        }
+    }
+
+    private func stopGlobalSession() {
+        globalSession?.stop()
+        globalSession = nil
+        globalOutputUID = nil
+        globalExclusions = []
+        softwareVolumeDeviceUID = nil
+    }
+
     // MARK: - session 對帳
 
     /// 讓進行中的 session 與設定一致。**這是「哪些 App 有 tap」的唯一答案。**
@@ -198,6 +278,9 @@ final class TapEngine {
         }
         tappedBundles = sessions.keys.sorted()
         lastTapError = notice
+        // per-app 的組成變了 → 全域 tap 的排除清單也要跟著變，
+        // 否則同一路音訊會被處理兩次
+        reconcileGlobalSession()
     }
 
     /// 某個 App 的 session 目前實際建在哪個裝置上（`nil` ＝ 沒有 session）。
@@ -292,6 +375,7 @@ final class TapEngine {
 
     private func shutdownSessions() {
         stopProbe()
+        stopGlobalSession()
         for (_, session) in sessions { session.stop() }
         sessions = [:]
         sessionOutputUIDs = [:]

@@ -33,6 +33,7 @@ final class SettingsStore {
         static let advisorModelCache = "chorus.advisor.modelCache"
         static let audioTaps = "chorus.audio.tapsEnabled"
         static let appAudio = "chorus.audio.appSettings"
+        static let softwareVolume = "chorus.audio.softwareVolumeDevices"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
         static let automationServer = "chorus.automation.serverEnabled"
@@ -179,6 +180,14 @@ final class SettingsStore {
         }
     }
 
+    /// 使用者為哪些裝置開啟了「軟體音量」（三後端矩陣第三條，B6-4）。
+    /// **預設不啟用**：它會讓該裝置的所有音訊繞道 Chorus，多一個 buffer
+    /// 的延遲（實測 ~10.7 ms）——這個代價要由使用者明確決定，
+    /// 不是我們替沒有硬體音量的裝置自動打開。
+    var softwareVolumeDevices: Set<String> {
+        didSet { defaults.set(Array(softwareVolumeDevices), forKey: Key.softwareVolume) }
+    }
+
     /// 螢幕長亮時是否連系統待機一起擋（預設只擋螢幕待機）。
     var keepAwakePreventsSystemSleep: Bool {
         didSet { defaults.set(keepAwakePreventsSystemSleep, forKey: Key.keepAwakeSystemSleep) }
@@ -238,6 +247,7 @@ final class SettingsStore {
         } else {
             appAudio = AppAudioSettings()
         }
+        softwareVolumeDevices = Set(defaults.stringArray(forKey: Key.softwareVolume) ?? [])
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)

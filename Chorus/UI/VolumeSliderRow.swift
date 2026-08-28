@@ -47,7 +47,7 @@ struct VolumeSliderRow: View {
                         .frame(width: 16)
                 }
                 .buttonStyle(.plain)
-                .disabled(!device.hasMute && device.bridgedDisplayID == nil)
+                .disabled(!device.hasMute && device.bridgedDisplayID == nil && !device.softwareVolumeActive)
 
                 Slider(
                     value: Binding(
@@ -59,7 +59,7 @@ struct VolumeSliderRow: View {
                 .disabled(!device.isVolumeControllable)
                 .help(
                     device.isVolumeControllable
-                        ? "調整音量"
+                        ? (device.softwareVolumeActive ? "以軟體衰減調整音量（Chorus 處理）" : "調整音量")
                         : "此裝置沒有軟體音量，且未橋接到可用的 DDC 螢幕（螢幕需支援 DDC/CI 音量）"
                 )
 
@@ -76,7 +76,13 @@ struct VolumeSliderRow: View {
             // 無法橋接／螢幕不理指令（寫後驗證戳破）／可用但音量鍵未接管。
             if !device.canSetVolume {
                 Group {
-                    if manager.isBridgeDisabled(device) {
+                    if device.softwareVolumeActive {
+                        Text("軟體音量生效中——此裝置的所有音訊經過 Chorus（多約 10 ms 延遲）")
+                            .foregroundStyle(.secondary)
+                    } else if let reason = manager.softwareVolumeUnavailableReason(device) {
+                        Text(reason)
+                            .foregroundStyle(.orange)
+                    } else if manager.isBridgeDisabled(device) {
                         Text("已標記為不支援 DDC 音量（右鍵可重新啟用）")
                             .foregroundStyle(.secondary)
                     } else if device.bridgedDisplayID == nil {
@@ -106,6 +112,18 @@ struct VolumeSliderRow: View {
                     Button("重新啟用 DDC 音量橋接") { manager.setBridgeDisabled(false, for: device) }
                 } else {
                     Button("標記此螢幕不支援 DDC 音量") { manager.setBridgeDisabled(true, for: device) }
+                }
+                // 三後端矩陣的第三條（B6-4）。只在前兩條都走不通時才提供——
+                // 有硬體音量卻繞道軟體衰減是純粹的損失（延遲＋位深）
+                if manager.canUseSoftwareVolume(device) {
+                    if manager.isSoftwareVolumeEnabled(device) {
+                        Button("關閉軟體音量") { manager.setSoftwareVolumeEnabled(false, for: device) }
+                    } else {
+                        Button("以軟體音量控制此裝置…") {
+                            manager.setSoftwareVolumeEnabled(true, for: device)
+                        }
+                        .help("此裝置的所有音訊會經過 Chorus 做衰減，多約 10 ms 延遲；需要「App 音訊接管」權限")
+                    }
                 }
             }
         }

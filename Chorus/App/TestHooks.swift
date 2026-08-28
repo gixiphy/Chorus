@@ -229,6 +229,19 @@ final class TestHooks {
                 fake.defaultOutputUID = uids.first
                 appState.tapEngine.audioDevicesChanged()
             }
+        case "softwareVolume":
+            // value = "device-uid|0.5|1"（uid 留空＝收掉）。直接驅動引擎端，
+            // 不必有真的 USB DAC——裝置端的後端選擇另由單元測試覆蓋
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|", omittingEmptySubsequences: false)
+                if fields.count == 3 {
+                    appState.tapEngine.updateSoftwareVolume(
+                        deviceUID: fields[0].isEmpty ? nil : String(fields[0]),
+                        gain: Float(fields[1]) ?? 1,
+                        muted: fields[2] == "1"
+                    )
+                }
+            }
         case "appReset":
             if let bundle = info["value"] { appState.tapEngine.reset(bundleID: bundle) }
         case "tapProbe":
@@ -515,6 +528,8 @@ final class TestHooks {
                 "probeCallbacks": appState.tapEngine.probeStats.callbacks,
                 "probeNonZero": appState.tapEngine.probeStats.nonZeroCallbacks,
                 "lastTapError": appState.tapEngine.lastTapError.map { $0 as Any } ?? NSNull(),
+                "softwareVolumeDevice": appState.tapEngine
+                    .softwareVolumeDeviceUID as Any? ?? NSNull(),
                 "appSettings": Dictionary(uniqueKeysWithValues: appState.settings.appAudio
                     .adjustedBundleIDs.map { bundleID in
                         let entry = appState.settings.appAudio[bundleID]

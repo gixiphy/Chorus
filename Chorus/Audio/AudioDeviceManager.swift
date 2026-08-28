@@ -58,6 +58,39 @@ final class AudioDeviceManager {
         settings.audioBridgeDisabled.contains(device.uid)
     }
 
+    // MARK: - 軟體音量（三後端矩陣第三條，B6-4）
+
+    /// 這個裝置有沒有資格用軟體音量：**前兩條後端都走不通**才輪到它
+    /// （DESIGN §5 的互斥規則——同一裝置同一時間只有一個後端生效）。
+    func canUseSoftwareVolume(_ device: AudioDeviceModel) -> Bool {
+        !device.canSetVolume && device.bridgedDisplayID == nil
+    }
+
+    func isSoftwareVolumeEnabled(_ device: AudioDeviceModel) -> Bool {
+        settings.softwareVolumeDevices.contains(device.uid)
+    }
+
+    func setSoftwareVolumeEnabled(_ enabled: Bool, for device: AudioDeviceModel) {
+        var set = settings.softwareVolumeDevices
+        if enabled { set.insert(device.uid) } else { set.remove(device.uid) }
+        settings.softwareVolumeDevices = set
+        refreshBridges()
+    }
+
+    /// 全域 tap 只抓得到「正在往預設輸出播」的音訊——它是系統混音的
+    /// mixdown，不是某個裝置的匯流排。因此軟體音量只在該裝置**就是目前的
+    /// 預設輸出**時才成立；不是的時候誠實說明，而不是裝作有效。
+    func softwareVolumeUnavailableReason(_ device: AudioDeviceModel) -> String? {
+        if !isSoftwareVolumeEnabled(device) { return nil }
+        if !device.isDefault { return "軟體音量只在此裝置是預設輸出時生效" }
+        switch tapEngine?.state {
+        case .active: return nil
+        case .denied: return "系統音訊錄製權限被拒——軟體音量無法運作"
+        case .off, nil: return "需要先在設定 → 音訊開啟「App 音訊接管」"
+        default: return "正在確認權限…"
+        }
+    }
+
     init(settings: SettingsStore, displayManager: DisplayManager) {
         self.settings = settings
         self.displayManager = displayManager
@@ -132,6 +165,8 @@ final class AudioDeviceManager {
             if device.uid == VirtualAudioDriverController.deviceUID {
                 mirrorVirtualVolume(clamped)
             }
+        } else if device.softwareVolumeActive {
+            pushSoftwareVolume(device)
         } else if let displayID = device.bridgedDisplayID {
             // 螢幕可能處於 DDC 靜音（0x8D）而我們不知道——調音量＝想聽到聲音，
             // 比照 macOS 語意一併送解除靜音（DDC 層的重複值去重讓它幾乎免費）
@@ -172,6 +207,8 @@ final class AudioDeviceManager {
             if device.uid == VirtualAudioDriverController.deviceUID {
                 mirrorVirtualMute(muted)
             }
+        } else if device.softwareVolumeActive {
+            pushSoftwareVolume(device)
         } else if let displayID = device.bridgedDisplayID {
             displayManager?.ddc.write(
                 displayID,
@@ -263,6 +300,37 @@ final class AudioDeviceManager {
             }
         }
         updateVirtualMirrorMode()
+        refreshSoftwareVolume()
+    }
+
+    /// 決定軟體音量目前生效在哪個裝置上（最多一個）。
+    ///
+    /// 條件是三後端矩陣的完整順位：使用者為它開了開關、前兩條都走不通、
+    /// 它是目前的預設輸出、而且引擎有權限。少任何一項就不生效——
+    /// 滑桿會回到「誠實停用」並附上原因，不會靜靜什麼都沒發生。
+    private func refreshSoftwareVolume() {
+        let target = devices.first { device in
+            isSoftwareVolumeEnabled(device)
+                && canUseSoftwareVolume(device)
+                && device.isDefault
+                && tapEngine?.state == .active
+        }
+        for device in devices {
+            device.softwareVolumeActive = device.uid == target?.uid
+        }
+        if let target {
+            // 上次記住的值（滑桿在裝置沒有可讀音量時的唯一來源）
+            target.volume = settings.lastVolume(for: target.uid) ?? target.volume
+            pushSoftwareVolume(target)
+        } else {
+            tapEngine?.updateSoftwareVolume(deviceUID: nil, gain: 1, muted: false)
+        }
+    }
+
+    private func pushSoftwareVolume(_ device: AudioDeviceModel) {
+        tapEngine?.updateSoftwareVolume(
+            deviceUID: device.uid, gain: Float(device.volume), muted: device.muted
+        )
     }
 
     // MARK: - BV 虛擬裝置音量鏡射

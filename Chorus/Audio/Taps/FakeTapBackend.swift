@@ -43,6 +43,25 @@ final class FakeTapBackend: TapBackend {
         return session
     }
 
+    /// 目前的裝置級全域 session（B6-4）與它建立時的排除清單。
+    private(set) var globalSession: FakeTapSession?
+    private(set) var globalExclusions: [AudioObjectID] = []
+    private(set) var globalStartCount = 0
+
+    func startGlobalVolumeSession(
+        outputDeviceUID: String,
+        excludingProcessObjects: [AudioObjectID],
+        initialGain: Float
+    ) throws -> any TapSession {
+        startedSessions.append((.playthrough, "global:\(outputDeviceUID)"))
+        startedOutputs.append(outputDeviceUID)
+        globalExclusions = excludingProcessObjects
+        globalStartCount += 1
+        let session = FakeTapSession(kind: .playthrough, backend: self, initialGain: initialGain)
+        globalSession = session
+        return session
+    }
+
     private var outputChangedHandler: (@MainActor () -> Void)?
     func setDefaultOutputChangedHandler(_ handler: @escaping @MainActor () -> Void) {
         outputChangedHandler = handler

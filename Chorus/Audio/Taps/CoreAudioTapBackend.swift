@@ -114,6 +114,24 @@ final class CoreAudioTapBackend: TapBackend {
         )
     }
 
+    func startGlobalVolumeSession(
+        outputDeviceUID: String,
+        excludingProcessObjects: [AudioObjectID],
+        initialGain: Float
+    ) throws -> any TapSession {
+        // 與探測用的全域 tap 是同一組初始化器，差在 muteBehavior：
+        // 探測只讀（unmuted），這裡要接管（mutedWhenTapped），
+        // 否則來源與我們寫回的會同時響＝音量加倍且相位打架
+        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: excludingProcessObjects)
+        description.name = "Chorus device volume"
+        description.isPrivate = true
+        description.muteBehavior = .mutedWhenTapped
+        return try makeSession(
+            description: description, outputDeviceUID: outputDeviceUID,
+            kind: .playthrough, initialGain: initialGain
+        )
+    }
+
     func setDefaultOutputChangedHandler(_ handler: @escaping @MainActor () -> Void) {
         var address = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
         AudioObjectAddPropertyListenerBlock(

@@ -45,6 +45,13 @@ final class AudioProcessRegistry {
         processes.first { $0.bundleID == bundleID }
     }
 
+    /// 這些 bundle 對應的 process object。裝置級全域 tap 要拿它來排除
+    /// 已被 per-app tap 捕獲的行程——每一路音訊只處理一次（DESIGN §2.2）。
+    /// 一個 bundle 可能有多個行程（helper），所以是多對多。
+    func processObjectIDs(bundleIDs: Set<String>) -> [AudioObjectID] {
+        processes.filter { $0.bundleID.map(bundleIDs.contains) ?? false }.map(\.objectID)
+    }
+
     /// App 圖示。行程還在就用它的（最快也最準）；已退出的 App
     /// （設定還留著、清單仍要顯示它）退回去查安裝位置。
     func icon(bundleID: String) -> NSImage? {

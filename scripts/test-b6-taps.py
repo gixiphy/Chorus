@@ -223,7 +223,26 @@ def main():
     record("路由與音量都歸零 → 完全回到原生路徑", ok)
     notify("appReset", "com.apple.Music")
 
-    print("\n[6] 停用與重啟後恢復", flush=True)
+    print("\n[6] B6-4：裝置級軟體音量（三後端矩陣第三條）", flush=True)
+    notify("softwareVolume", "fake-headphones|0.5|0")
+    ok, _ = wait_for(
+        lambda d: d.get("tapEngine", {}).get("softwareVolumeDevice") == "fake-headphones", 10)
+    record("開啟 → 一條全域 session 跑在該裝置上", ok)
+
+    notify("softwareVolume", "gone-uid|0.5|0")
+    ok, _ = wait_for(lambda d: d.get("tapEngine", {}).get("softwareVolumeDevice") is None, 10)
+    record("目標裝置不在 → 不建（不在錯的裝置上默默衰減）", ok)
+
+    notify("softwareVolume", "fake-headphones|0.5|0")
+    ok, _ = wait_for(
+        lambda d: d.get("tapEngine", {}).get("softwareVolumeDevice") == "fake-headphones", 10)
+    record("重新指定回存在的裝置", ok)
+
+    notify("softwareVolume", "||0")
+    ok, _ = wait_for(lambda d: d.get("tapEngine", {}).get("softwareVolumeDevice") is None, 10)
+    record("關閉 → 收掉", ok)
+
+    print("\n[7] 停用與重啟後恢復", flush=True)
     notify("appGain", "com.apple.Music|0.3")
     ok, _ = wait_for(lambda d: tapped(d) == ["com.apple.Music"], 10)
     record("重新調一個 App", ok)

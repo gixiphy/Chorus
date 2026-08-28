@@ -308,6 +308,88 @@ struct TapEngineTests {
         #expect(backend.startedSessions.count == after)
     }
 
+    // MARK: - B6-4：裝置級軟體音量（三後端矩陣第三條）
+
+    @Test("開啟軟體音量 → 一條全域 session；關掉就收")
+    func softwareVolumeStartsAndStopsOneGlobalSession() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        #expect(engine.softwareVolumeDeviceUID == nil)
+
+        engine.updateSoftwareVolume(deviceUID: "fake-headphones", gain: 0.5, muted: false)
+        #expect(engine.softwareVolumeDeviceUID == "fake-headphones")
+        #expect(backend.globalSession?.initialGain == 0.5)
+
+        engine.updateSoftwareVolume(deviceUID: nil, gain: 1, muted: false)
+        #expect(engine.softwareVolumeDeviceUID == nil)
+        #expect(backend.globalSession?.stopped == true)
+    }
+
+    @Test("調音量不重建 session——只推 atomic")
+    func volumeChangesDoNotRebuild() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.updateSoftwareVolume(deviceUID: "fake-headphones", gain: 0.5, muted: false)
+        let after = backend.globalStartCount
+        engine.updateSoftwareVolume(deviceUID: "fake-headphones", gain: 0.2, muted: true)
+        #expect(backend.globalStartCount == after)
+        #expect(backend.globalSession?.lastGain == 0.2)
+        #expect(backend.globalSession?.lastMuted == true)
+    }
+
+    @Test("每一路音訊只處理一次：被 per-app tap 抓走的行程要從全域 tap 排除")
+    func perAppTappedProcessesAreExcluded() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        registry.injectFake([
+            .init(objectID: 1001, pid: 2001, bundleID: "com.apple.Music", name: "Music", isAudible: true),
+            .init(objectID: 1002, pid: 2002, bundleID: "com.apple.Safari", name: "Safari", isAudible: false),
+        ])
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.updateSoftwareVolume(deviceUID: "fake-headphones", gain: 0.5, muted: false)
+        #expect(!backend.globalExclusions.contains(1001))
+
+        // Music 被 per-app tap 接管 → 必須從全域 tap 排除，否則衰減兩次
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        #expect(backend.globalExclusions.contains(1001))
+        #expect(!backend.globalExclusions.contains(1002))
+
+        // 放掉 per-app → 回到全域 tap 的守備範圍
+        engine.reset(bundleID: "com.apple.Music")
+        #expect(!backend.globalExclusions.contains(1001))
+    }
+
+    @Test("目標裝置不在就不建——不要在錯的裝置上默默衰減")
+    func missingDeviceMeansNoSession() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.updateSoftwareVolume(deviceUID: "gone-uid", gain: 0.5, muted: false)
+        #expect(engine.softwareVolumeDeviceUID == nil)
+
+        backend.availableOutputUIDs.append("gone-uid")
+        engine.audioDevicesChanged()
+        engine.updateSoftwareVolume(deviceUID: "gone-uid", gain: 0.5, muted: false)
+        #expect(engine.softwareVolumeDeviceUID == "gone-uid")
+    }
+
+    @Test("停用引擎收掉全域 session（per-app 與裝置級一起收）")
+    func disablingStopsTheGlobalSession() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.updateSoftwareVolume(deviceUID: "fake-headphones", gain: 0.5, muted: false)
+        engine.setEnabled(false)
+        #expect(engine.softwareVolumeDeviceUID == nil)
+        #expect(backend.globalSession?.stopped == true)
+    }
+
     @Test("設定跨重啟保留：新引擎接上同一份設定，取得權限後自動恢復")
     func settingsSurviveRestart() {
         let backend = FakeTapBackend()

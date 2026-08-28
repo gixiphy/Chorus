@@ -63,6 +63,14 @@ protocol TapBackend: AnyObject {
         outputDeviceUID: String,
         initialGain: Float
     ) throws -> any TapSession
+    /// 裝置級軟體音量（B6-4）：排除式全域 tap，處理後寫回該裝置。
+    /// `excludingProcessObjects` 必須含 Chorus 自己**與所有已被 per-app
+    /// tap 捕獲的行程**——每一路音訊只能被處理一次（DESIGN §2.2）。
+    func startGlobalVolumeSession(
+        outputDeviceUID: String,
+        excludingProcessObjects: [AudioObjectID],
+        initialGain: Float
+    ) throws -> any TapSession
     /// 預設輸出裝置變更（session 要搬家）。
     func setDefaultOutputChangedHandler(_ handler: @escaping @MainActor () -> Void)
 }

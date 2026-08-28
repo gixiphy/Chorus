@@ -24,6 +24,11 @@ final class AudioDeviceModel: Identifiable {
     /// 有些螢幕不是 0–100，硬寫 0–100 會被忽略或夾錯。
     var bridgeVolumeMax: UInt16 = 100
 
+    /// 三後端矩陣的第三條正在這個裝置上生效（B6-4）：沒有硬體音量、
+    /// 沒有 DDC，改由排除式全域 tap 做軟體衰減。
+    /// 由 `AudioDeviceManager.refreshBridges()` 算出——**與前兩條互斥**。
+    var softwareVolumeActive = false
+
     var volume: Double
     var muted: Bool
     var isDefault: Bool
@@ -41,7 +46,7 @@ final class AudioDeviceModel: Identifiable {
     }
 
     var isVolumeControllable: Bool {
-        canSetVolume || bridgedDisplayID != nil
+        canSetVolume || bridgedDisplayID != nil || softwareVolumeActive
     }
 
     var transportLabel: String? {
