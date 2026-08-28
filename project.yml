@@ -91,6 +91,10 @@ targets:
         CFBundleVersion: "31"
         LSUIElement: true
         NSLocalNetworkUsageDescription: Chorus 會在區域網路上尋找你的其他 Mac，以同步亮度與音量。
+        # 系統音訊擷取（CoreAudio process taps，B6）。這個 key 不在 Xcode 的
+        # 下拉清單裡，是 kTCCServiceAudioCapture 的專屬 usage key；
+        # 對話框在 AudioDeviceStart 時觸發（不是建 tap 時）。
+        NSAudioCaptureUsageDescription: Chorus 需要擷取系統音訊，才能提供各 App 獨立音量與等化器。音訊只在本機處理，不會傳送到任何地方。
         NSBonjourServices:
           - _chorus._tcp
           - _chorus-pair._tcp

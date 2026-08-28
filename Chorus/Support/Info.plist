@@ -26,6 +26,8 @@
 	<false/>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Chorus 需要擷取系統音訊，才能提供各 App 獨立音量與等化器。音訊只在本機處理，不會傳送到任何地方。</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_chorus._tcp</string>
