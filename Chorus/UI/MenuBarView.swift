@@ -145,11 +145,11 @@ struct MenuBarView: View {
     }
 
     private var hiddenCount: Int {
-        appState.audioManager.devices.count - appState.audioManager.visibleDevices.count
+        appState.audioManager.listableDevices.count - appState.audioManager.visibleDevices.count
     }
 
     private var listedAudioDevices: [AudioDeviceModel] {
-        showHiddenDevices ? appState.audioManager.devices : appState.audioManager.visibleDevices
+        showHiddenDevices ? appState.audioManager.listableDevices : appState.audioManager.visibleDevices
     }
 }
 
@@ -159,11 +159,8 @@ private struct AlertVolumeRow: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: appState.alertVolume.volume == 0 ? "bell.slash" : "bell")
-                .imageScale(.small)
-                .foregroundStyle(.secondary)
-                .frame(width: 16)
+        HStack(spacing: SliderRow.spacing) {
+            SliderRow.leadingIcon(appState.alertVolume.volume == 0 ? "bell.slash" : "bell")
                 .help("提示音音量（與輸出音量分開）")
             Slider(
                 value: Binding(
@@ -172,11 +169,8 @@ private struct AlertVolumeRow: View {
                 ),
                 in: 0...1
             )
-            Text(appState.alertVolume.volume, format: .percent.precision(.fractionLength(0)))
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 38, alignment: .trailing)
+            SliderRow.trailingIcon("bell.fill")
+            SliderRow.value(appState.alertVolume.volume)
         }
         .onAppear { appState.alertVolume.refresh() }
     }

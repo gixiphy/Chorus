@@ -50,10 +50,8 @@ struct DisplaySliderRow: View {
                 .buttonStyle(.plain)
                 .help(powerHelp)
             }
-            HStack(spacing: 8) {
-                Image(systemName: "sun.min")
-                    .imageScale(.small)
-                    .foregroundStyle(.secondary)
+            HStack(spacing: SliderRow.spacing) {
+                SliderRow.leadingIcon("sun.min")
                 Slider(
                     value: Binding(
                         get: { model.brightness },
@@ -61,14 +59,8 @@ struct DisplaySliderRow: View {
                     ),
                     in: 0...1
                 )
-                Image(systemName: "sun.max")
-                    .imageScale(.small)
-                    .foregroundStyle(.secondary)
-                Text(model.brightness, format: .percent.precision(.fractionLength(0)))
-                    .font(.caption)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, alignment: .trailing)
+                SliderRow.trailingIcon("sun.max")
+                SliderRow.value(model.brightness)
             }
             // 關閉中不給調亮度：DDC 關機的螢幕收不到 I2C，
             // gamma 全黑的則會被 blackout 擋掉——滑桿動了沒反應比停用更難懂

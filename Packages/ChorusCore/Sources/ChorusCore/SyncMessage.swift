@@ -17,6 +17,41 @@ public enum SyncMessage: Codable, Sendable {
     case ambientReport(AmbientReport)
     /// 要求對方調整整機亮度差異值（配置圖遠端編輯用；舊版 peer 靜默忽略）。
     case setDeviceOffset(DeviceOffsetCommand)
+    /// 要求對方回報現值（打開遙控滑桿時；舊版 peer 靜默忽略）。
+    case stateQuery(StateQuery)
+    /// 現值回報：**純資訊**，收到者只更新顯示，永不套用到硬體、也不進 LWW。
+    case stateReport(StateReport)
+}
+
+/// 「你現在的亮度／音量是多少？」——遙控滑桿要顯示對方的實際值，
+/// 而 stateUpdate 只在對方**變更**時才發（同步關掉時連發都不發）。
+public struct StateQuery: Codable, Sendable, Equatable {
+    public let id: UUID
+
+    public init(id: UUID = UUID()) {
+        self.id = id
+    }
+}
+
+/// 現值回報。刻意與 FullState 分開：FullState 是 LWW 狀態的一部分，
+/// 收到會套用到硬體；這個只是「我現在長這樣」，拿來畫遙控滑桿的位置。
+public struct StateReport: Codable, Sendable, Equatable {
+    public struct Entry: Codable, Sendable, Equatable {
+        public let key: ControlKey
+        /// 0–1 正規化值（mute 用 0/1）。
+        public let value: Double
+
+        public init(key: ControlKey, value: Double) {
+            self.key = key
+            self.value = value
+        }
+    }
+
+    public let entries: [Entry]
+
+    public init(entries: [Entry]) {
+        self.entries = entries
+    }
 }
 
 public struct Hello: Codable, Sendable, Equatable {

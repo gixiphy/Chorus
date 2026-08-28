@@ -130,14 +130,14 @@ private struct AppVolumeRow: View {
                         .help("增益超過 100%，超出部分會過 soft limiter 防削波")
                 }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: SliderRow.spacing) {
                 Button {
                     appState.tapEngine.toggleMuted(bundleID: bundleID)
                 } label: {
                     Image(systemName: setting.muted ? "speaker.slash" : "speaker.wave.1")
                         .imageScale(.small)
                         .foregroundStyle(setting.muted ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                        .frame(width: 16)
+                        .frame(width: SliderRow.iconWidth)
                 }
                 .buttonStyle(.plain)
 
@@ -152,11 +152,8 @@ private struct AppVolumeRow: View {
                 )
                 .opacity(setting.muted ? 0.5 : 1)
 
-                Text(setting.gain, format: .percent.precision(.fractionLength(0)))
-                    .font(.caption)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, alignment: .trailing)
+                SliderRow.trailingIcon("speaker.wave.3")
+                SliderRow.value(Double(setting.gain))
             }
             routeCaption
                 .padding(.leading, 24)
@@ -169,12 +166,14 @@ private struct AppVolumeRow: View {
                     Label("跟隨系統預設", systemImage: setting.outputDeviceUID == nil ? "checkmark" : "")
                 }
                 Divider()
-                ForEach(appState.audioManager.devices) { device in
+                // 轉送目標併在虛擬裝置那一列（選單列一致）——同一個目的地
+                // 列兩次只會讓人選到沒有音量控制的那個
+                ForEach(appState.audioManager.listableDevices) { device in
                     Button {
                         appState.tapEngine.setOutputDevice(device.uid, bundleID: bundleID)
                     } label: {
                         Label(
-                            device.name,
+                            appState.audioManager.displayName(for: device),
                             systemImage: setting.outputDeviceUID == device.uid ? "checkmark" : ""
                         )
                     }
@@ -195,7 +194,8 @@ private struct AppVolumeRow: View {
     @ViewBuilder
     private var routeCaption: some View {
         if let routed = setting.outputDeviceUID {
-            let name = appState.audioManager.devices.first { $0.uid == routed }?.name
+            let name = appState.audioManager.devices.first { $0.uid == routed }
+                .map { appState.audioManager.displayName(for: $0) }
             let active = appState.tapEngine.activeOutputUID(bundleID: bundleID)
             if let name, active == routed {
                 Text("輸出到「\(name)」")

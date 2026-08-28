@@ -19,6 +19,12 @@ struct EnvelopeTests {
             .pong(7),
             .ambientReport(AmbientReport(originID: "A", hlc: hlc, lux: 420.5)),
             .setDeviceOffset(DeviceOffsetCommand(offset: -0.2)),
+            .stateQuery(StateQuery()),
+            .stateReport(StateReport(entries: [
+                .init(key: .brightness(displayUUID: nil), value: 0.42),
+                .init(key: .volume(deviceUID: nil), value: 0.18),
+                .init(key: .mute(deviceUID: nil), value: 0),
+            ])),
         ]
         for message in messages {
             let data = try EnvelopeCoding.encode(Envelope(msg: message))

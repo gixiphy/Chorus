@@ -35,10 +35,37 @@ final class AudioDeviceManager {
         devices.first(where: \.isDefault)
     }
 
+    /// BV 虛擬輸出裝置本身（未安裝／未載入時為 nil）。
+    var virtualDevice: AudioDeviceModel? {
+        devices.first { $0.uid == VirtualAudioDriverController.deviceUID }
+    }
+
+    /// 虛擬裝置目前轉送到的實體裝置。選單把兩者併成**一列**——
+    /// 「Chorus Screen Output」與它背後的螢幕是同一個輸出的兩個面向，
+    /// 分開列會讓使用者以為有兩個可選的目的地（選錯那個就沒有音量鍵）。
+    var virtualForwardTarget: AudioDeviceModel? {
+        guard virtualDevice != nil, let uid = virtualDriver?.targetUID else { return nil }
+        return devices.first { $0.uid == uid }
+    }
+
+    /// 選單可以列出的裝置：併進虛擬裝置那一列的轉送目標不單獨出現
+    /// （連「顯示隱藏裝置」展開後也不出現——它不是被隱藏，是被合併）。
+    var listableDevices: [AudioDeviceModel] {
+        let merged = virtualForwardTarget?.uid
+        return devices.filter { $0.uid != merged }
+    }
+
     /// 選單列顯示的裝置：排除使用者隱藏的；預設輸出永遠顯示（避免被劫走
-    /// 預設卻看不到是誰）。
+    /// 預設卻看不到是誰——被合併的轉送目標例外，虛擬裝置那一列會講）。
     var visibleDevices: [AudioDeviceModel] {
-        devices.filter { !settings.hiddenAudioDevices.contains($0.uid) || $0.isDefault }
+        listableDevices.filter { !settings.hiddenAudioDevices.contains($0.uid) || $0.isDefault }
+    }
+
+    /// 選單上顯示的名稱：虛擬裝置那一列掛的是轉送目標的名字
+    /// （使用者要選的是「那台螢幕」，「Chorus Screen Output」只是管路）。
+    func displayName(for device: AudioDeviceModel) -> String {
+        guard device.uid == VirtualAudioDriverController.deviceUID else { return device.name }
+        return virtualForwardTarget?.name ?? device.name
     }
 
     func setHidden(_ hidden: Bool, for device: AudioDeviceModel) {

@@ -18,12 +18,23 @@ struct VolumeSliderRow: View {
                 .buttonStyle(.plain)
                 .help("設為預設輸出裝置")
 
-                Text(device.name)
+                Text(displayName)
                     .font(.callout)
                     .lineLimit(1)
+                    .help(nameHelp)
                 Spacer()
                 // 徽章擇一：已橋接時 DDC 已含連接資訊（tooltip 補充），不再疊 transport
-                if device.bridgedDisplayID != nil {
+                if let target = forwardTarget {
+                    // 合併列：徽章講的是「音量怎麼送到那台螢幕」——
+                    // DDC 硬體鏡射（不損音質）或 driver 端數位衰減
+                    Text(mirrorsToDDC(target) ? "DDC" : "數位音量")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.quaternary, in: Capsule())
+                        .help(nameHelp)
+                } else if device.bridgedDisplayID != nil {
                     Text("DDC")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -37,14 +48,14 @@ struct VolumeSliderRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: SliderRow.spacing) {
                 Button {
                     manager.setMuted(!device.muted, for: device)
                 } label: {
                     Image(systemName: device.muted ? "speaker.slash" : "speaker.wave.1")
                         .imageScale(.small)
                         .foregroundStyle(.secondary)
-                        .frame(width: 16)
+                        .frame(width: SliderRow.iconWidth)
                 }
                 .buttonStyle(.plain)
                 .disabled(!device.hasMute && device.bridgedDisplayID == nil && !device.softwareVolumeActive)
@@ -63,14 +74,23 @@ struct VolumeSliderRow: View {
                         : "此裝置沒有軟體音量，且未橋接到可用的 DDC 螢幕（螢幕需支援 DDC/CI 音量）"
                 )
 
-                Image(systemName: "speaker.wave.3")
-                    .imageScale(.small)
+                SliderRow.trailingIcon("speaker.wave.3")
+                SliderRow.value(device.volume)
+            }
+            // 合併列的例外狀態：實體裝置被直接選成預設輸出時，音量鍵不會
+            // 經過我們——這時要講，否則使用者只看到一列沒被勾選的裝置。
+            if let target = forwardTarget, target.isDefault, !device.isDefault {
+                Text("系統目前直接輸出到螢幕——點左側圓圈改由 Chorus 轉送，音量鍵才會生效")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 24)
+            } else if let target = forwardTarget, target.bridgeUnresponsive {
+                Text("螢幕未回應 DDC 音量指令——已改用數位衰減")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
-                Text(device.volume, format: .percent.precision(.fractionLength(0)))
-                    .font(.caption)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, alignment: .trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 24)
             }
             // 螢幕音訊沒有 CoreAudio 音量：三種狀態各自說明——
             // 無法橋接／螢幕不理指令（寫後驗證戳破）／可用但音量鍵未接管。
@@ -127,5 +147,29 @@ struct VolumeSliderRow: View {
                 }
             }
         }
+    }
+
+    /// 這一列是虛擬輸出裝置、而且 driver 正在轉送到某個實體裝置時，
+    /// 兩者併成一列顯示（名稱用實體裝置的——使用者心裡的輸出目的地是
+    /// 那台螢幕，不是驅動程式）。轉送目標本身不再單獨列出。
+    private var forwardTarget: AudioDeviceModel? {
+        guard device.uid == VirtualAudioDriverController.deviceUID else { return nil }
+        return manager.virtualForwardTarget
+    }
+
+    private var displayName: String {
+        manager.displayName(for: device)
+    }
+
+    private var nameHelp: String {
+        guard let target = forwardTarget else { return device.name }
+        return mirrorsToDDC(target)
+            ? "由 Chorus 轉送到「\(target.name)」：音量直接寫進螢幕硬體（DDC，不損音質）"
+            : "由 Chorus 轉送到「\(target.name)」：音量以數位衰減調整"
+    }
+
+    /// 轉送目標的音量走 DDC 硬體鏡射（否則是 driver 端數位衰減）。
+    private func mirrorsToDDC(_ target: AudioDeviceModel) -> Bool {
+        target.bridgedDisplayID != nil && !target.bridgeUnresponsive
     }
 }

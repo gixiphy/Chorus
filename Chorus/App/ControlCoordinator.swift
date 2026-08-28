@@ -14,6 +14,9 @@ final class ControlCoordinator {
     @ObservationIgnored private var throttle = Throttle(intervalMillis: 50)
     @ObservationIgnored private var pendingValues: [ControlKey: Double] = [:]
     @ObservationIgnored private var pendingTasks: [ControlKey: Task<Void, Never>] = [:]
+    /// 待送出的現值回報（200ms 合併成一則）。
+    @ObservationIgnored private var pendingReports: [ControlKey: Double] = [:]
+    @ObservationIgnored private var reportTask: Task<Void, Never>?
 
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private weak var sessionManager: SyncSessionManager?
@@ -71,6 +74,7 @@ final class ControlCoordinator {
     func localBrightnessChanged(_ value: Double) {
         let key = ControlKey.brightness(displayUUID: nil)
         automationEvents?.publishControlChange(key: key, value: value)
+        reportLocalState(key: key, value: value)
         broadcastLocalChange(key: key, value: value)
     }
 
@@ -78,12 +82,14 @@ final class ControlCoordinator {
     func localVolumeChanged(_ value: Double) {
         let key = ControlKey.volume(deviceUID: nil)
         automationEvents?.publishControlChange(key: key, value: value)
+        reportLocalState(key: key, value: value)
         broadcastLocalChange(key: key, value: value)
     }
 
     func localMuteChanged(_ muted: Bool) {
         let key = ControlKey.mute(deviceUID: nil)
         automationEvents?.publishControlChange(key: key, value: muted ? 1 : 0)
+        reportLocalState(key: key, value: muted ? 1 : 0)
         broadcastLocalChange(key: key, value: muted ? 1 : 0)
     }
 
@@ -100,6 +106,7 @@ final class ControlCoordinator {
         switch key {
         case .brightness(nil): field = "brightness"
         case .volume(nil): field = "volume"
+        case .mute(nil): field = "muted"
         default: return
         }
         var known = settings.peerKnownControls[peerID] ?? [:]
@@ -127,6 +134,13 @@ final class ControlCoordinator {
             autoController?.receiveRemoteBaseline(report)
         case let .setDeviceOffset(command):
             autoController?.setDeviceOffset(command.offset)
+        case .stateQuery:
+            sessionManager?.send(Envelope(msg: .stateReport(currentStateReport())), to: peerID)
+        case let .stateReport(report):
+            // 純資訊：只更新「對方現在是多少」，不碰硬體、不進 LWW
+            for entry in report.entries {
+                recordPeerKnown(peerID: peerID, key: entry.key, value: entry.value)
+            }
         case .hello, .ping, .pong:
             break
         }
@@ -141,6 +155,50 @@ final class ControlCoordinator {
         if let report = autoController?.latestLocalReport() {
             sessionManager?.send(Envelope(msg: .ambientReport(report)), to: peerID)
         }
+        // 現值回報：對方的遙控滑桿要畫在正確的位置。fullState 幫不上忙——
+        // 它只含「本次啟動後改過的 key」，而且會被 LWW 當成狀態套進硬體。
+        sessionManager?.send(Envelope(msg: .stateReport(currentStateReport())), to: peerID)
+    }
+
+    // MARK: - 現值回報（遙控滑桿的顯示值）
+
+    /// 請對方回報現值。開啟選單列時呼叫——同步關掉、或對方的變更來自
+    /// 自動亮度（不廣播）時，我們手上的值可能已經過期好幾天。
+    func requestPeerState(from peerID: String) {
+        sessionManager?.send(Envelope(msg: .stateQuery(StateQuery())), to: peerID)
+    }
+
+    /// 本機現在的語意層亮度／音量。回報用，不進 SyncEngineCore。
+    private func currentStateReport() -> StateReport {
+        var entries: [StateReport.Entry] = []
+        if let brightness = displayManager?.displays.first?.brightness {
+            entries.append(StateReport.Entry(key: .brightness(displayUUID: nil), value: brightness))
+        }
+        if let device = audioManager?.defaultDevice {
+            entries.append(StateReport.Entry(key: .volume(deviceUID: nil), value: device.volume))
+            entries.append(StateReport.Entry(key: .mute(deviceUID: nil), value: device.muted ? 1 : 0))
+        }
+        return StateReport(entries: entries)
+    }
+
+    /// 本機變更 → 廣播現值。與 stateUpdate 分兩條：**同步開關關掉時也要送**
+    /// （對方的遙控滑桿仍該顯示我們的實際值），而且對方收到永不套用到硬體。
+    /// 200ms 合併：拖曳滑桿一秒鐘會產生數十次變更。
+    private func reportLocalState(key: ControlKey, value: Double) {
+        pendingReports[key] = value
+        guard reportTask == nil else { return }
+        reportTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            self?.flushReports()
+        }
+    }
+
+    private func flushReports() {
+        reportTask = nil
+        let entries = pendingReports.map { StateReport.Entry(key: $0.key, value: $0.value) }
+        pendingReports.removeAll()
+        guard !entries.isEmpty else { return }
+        sessionManager?.broadcast(Envelope(msg: .stateReport(StateReport(entries: entries))))
     }
 
     /// 配置圖：調整某個 peer 的整機亮度差異值。

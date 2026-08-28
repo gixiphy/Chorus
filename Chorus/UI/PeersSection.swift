@@ -1,3 +1,4 @@
+import ChorusCore
 import SwiftUI
 
 struct PeersSection: View {
@@ -86,74 +87,57 @@ struct PeersSection: View {
 }
 
 /// 遙控已連線 peer 的亮度與音量（送出絕對值 command）。
-/// 初始位置來自最後已知值（對方的 stateUpdate/fullState 與我們送過的指令）。
+///
+/// 滑桿位置直接讀「對方回報的現值」（`peerKnownControls`）——以前是開啟
+/// 選單時複製一份到 @State 就不再更新，對方自己動過（或我們上次連線是
+/// 好幾天前）就會顯示錯的值。現值來源有三條：對方變更時的 stateUpdate、
+/// 任何變更都會發的 stateReport，以及這個 view 出現時主動送的 stateQuery。
 private struct PeerRemoteControls: View {
     @Environment(AppState.self) private var appState
     let peerID: String
 
-    @State private var brightness = 0.5
-    @State private var volume = 0.5
-    @State private var didLoadKnown = false
-
-    private var brightnessBinding: Binding<Double> {
-        Binding {
-            brightness
-        } set: { value in
-            brightness = value
-            appState.coordinator.sendRemoteCommand(
-                to: peerID, key: .brightness(displayUUID: nil), value: value
-            )
-        }
+    private var known: [String: Double] {
+        appState.settings.peerKnownControls[peerID] ?? [:]
     }
 
-    private var volumeBinding: Binding<Double> {
+    private func binding(_ field: String, key: ControlKey) -> Binding<Double> {
         Binding {
-            volume
+            known[field] ?? 0.5
         } set: { value in
-            volume = value
-            appState.coordinator.sendRemoteCommand(
-                to: peerID, key: .volume(deviceUID: nil), value: value
-            )
+            appState.coordinator.sendRemoteCommand(to: peerID, key: key, value: value)
         }
     }
 
     var body: some View {
         VStack(spacing: 4) {
-            HStack(spacing: 8) {
-                Image(systemName: "sun.max")
-                    .imageScale(.small)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
-                Slider(value: brightnessBinding, in: 0...1)
-                    .controlSize(.mini)
-                Text(brightness, format: .percent.precision(.fractionLength(0)))
-                    .font(.caption2)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, alignment: .trailing)
+            HStack(spacing: SliderRow.spacing) {
+                SliderRow.leadingIcon("sun.min")
+                Slider(value: binding("brightness", key: .brightness(displayUUID: nil)), in: 0...1)
+                SliderRow.trailingIcon("sun.max")
+                value(known["brightness"])
             }
-            HStack(spacing: 8) {
-                Image(systemName: "speaker.wave.2")
-                    .imageScale(.small)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
-                Slider(value: volumeBinding, in: 0...1)
-                    .controlSize(.mini)
-                Text(volume, format: .percent.precision(.fractionLength(0)))
-                    .font(.caption2)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, alignment: .trailing)
+            HStack(spacing: SliderRow.spacing) {
+                SliderRow.leadingIcon(known["muted"] == 1 ? "speaker.slash" : "speaker.wave.1")
+                Slider(value: binding("volume", key: .volume(deviceUID: nil)), in: 0...1)
+                SliderRow.trailingIcon("speaker.wave.3")
+                value(known["volume"])
             }
         }
-        .padding(.leading, 13)
-        .onAppear {
-            guard !didLoadKnown else { return }
-            didLoadKnown = true
-            if let known = appState.settings.peerKnownControls[peerID] {
-                if let value = known["brightness"] { brightness = value }
-                if let value = known["volume"] { volume = value }
-            }
+        // 對方可能在斷線期間自己調過（或跑舊版不會主動回報）——每次顯示
+        // 都問一次，答案幾毫秒內就會回來並更新滑桿。
+        .onAppear { appState.coordinator.requestPeerState(from: peerID) }
+    }
+
+    /// 還沒收到任何回報時不要假裝知道：顯示「—」而不是一個編出來的數字。
+    @ViewBuilder
+    private func value(_ known: Double?) -> some View {
+        if let known {
+            SliderRow.value(known)
+        } else {
+            Text("—")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: SliderRow.valueWidth, alignment: .trailing)
         }
     }
 }

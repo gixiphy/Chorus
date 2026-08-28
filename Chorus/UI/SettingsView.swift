@@ -884,7 +884,7 @@ private struct AudioSettingsTab: View {
             Button("移除驅動…", role: .destructive) { uninstall() }
                 .disabled(busy)
         }
-        Text("把音量鍵／Touch Bar 交給它：設為預設輸出。之後調整音量都會轉到上面選的實體輸出。")
+        Text("把音量鍵／Touch Bar 交給它：設為預設輸出。之後調整音量都會轉到上面選的實體輸出。選單列會把兩者併成一列——轉送目標不再單獨出現。")
             .font(.caption)
             .foregroundStyle(.secondary)
     }
