@@ -1,8 +1,9 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 照射設備配置圖：可拖拉的裝置節點（本機顯示器＋已配對裝置）擺在畫布上
-/// 反映實際擺設，可匯入桌面照片當背景；每個節點提供亮度差異值調整。
+/// 裝置配置視窗，分成三個區塊：
+/// 配置圖（各裝置的亮度差異值控制）｜照片（把節點拖到實際位置）｜建議（光環境分析）。
+/// 照片與建議可隱藏，配置圖恆在。
 /// 差異值語意：疊加在環境基準亮度之上（本機顯示器改 ambientDisplayOffsets、
 /// peer 節點送 setDeviceOffset 給對方）。
 struct DeviceDiagramView: View {
@@ -11,17 +12,41 @@ struct DeviceDiagramView: View {
     @State private var showingFirstUseConfirm = false
     @State private var showingScenarioName = false
     @State private var newScenarioName = ""
+    @State private var showPhoto = true
+    @State private var showAdvice = false
 
     var body: some View {
-        @Bindable var advisor = appState.advisor
         VStack(spacing: 0) {
-            canvas
+            HStack(spacing: 0) {
+                devicePane
+                if showPhoto {
+                    Divider()
+                    photoPane
+                }
+                if showAdvice {
+                    Divider()
+                    advicePane
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
             advisorBar
             Divider()
             footer
         }
         .frame(minWidth: 560, minHeight: 400)
+        .toolbar {
+            ToolbarItemGroup {
+                Toggle(isOn: $showPhoto) {
+                    Label("照片", systemImage: "photo")
+                }
+                .help("顯示／隱藏照片區")
+                Toggle(isOn: $showAdvice) {
+                    Label("建議", systemImage: "lightbulb.max")
+                }
+                .help("顯示／隱藏建議區")
+            }
+        }
         // 注意：同一個 view 只能掛一個 fileImporter（掛兩個只有一個會生效），
         // 所以背景照與補充照共用同一次匯入：第一張當背景、其餘當補充視角。
         .fileImporter(
@@ -37,9 +62,9 @@ struct DeviceDiagramView: View {
                 for url in accessed { url.stopAccessingSecurityScopedResource() }
             }
         }
-        .sheet(item: $advisor.result) { result in
-            AdviceSheetView(result: result)
-                .environment(appState)
+        // 分析完成或改看歷史時自動把建議區帶出來，結果才不會沒人看到。
+        .onChange(of: appState.advisor.result?.id) { _, id in
+            if id != nil { showAdvice = true }
         }
         .alert("分析光環境", isPresented: $showingFirstUseConfirm) {
             Button("繼續") {
@@ -61,6 +86,196 @@ struct DeviceDiagramView: View {
             Text("記住目前的照片、節點位置與亮度設定；之後接上同一組螢幕會自動切換。")
         }
         .onAppear { appState.advisor.loadHistoryIfNeeded() }
+    }
+
+    private func paneTitle(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption)
+            .fontWeight(.medium)
+            .foregroundStyle(.secondary)
+    }
+
+    // MARK: - 配置圖區（裝置亮度控制）
+
+    private var devicePane: some View {
+        VStack(spacing: 0) {
+            HStack {
+                paneTitle("配置圖", systemImage: "slider.horizontal.3")
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            Divider()
+            if nodes.isEmpty {
+                Spacer()
+                Text("沒有可顯示的裝置")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            } else {
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(nodes, id: \.key) { node in
+                            DiagramNodeView(node: node)
+                        }
+                    }
+                    .padding(10)
+                }
+            }
+        }
+        .frame(minWidth: 180, idealWidth: 210, maxWidth: hasSidePanes ? 240 : .infinity)
+    }
+
+    private var hasSidePanes: Bool { showPhoto || showAdvice }
+
+    // MARK: - 照片區（節點定位）
+
+    private var photoPane: some View {
+        VStack(spacing: 0) {
+            HStack {
+                paneTitle("照片", systemImage: "photo")
+                Spacer()
+                if appState.diagram.backgroundImageURL != nil {
+                    Text("拖拉節點擺放實際位置")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            Divider()
+            photoCanvas
+            Divider()
+            photoBar
+        }
+        .frame(minWidth: 200, maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var photoCanvas: some View {
+        if appState.diagram.backgroundImageURL == nil {
+            VStack(spacing: 10) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.largeTitle)
+                    .foregroundStyle(.tertiary)
+                Text("尚未匯入桌面照片")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("匯入桌面照片…") { showingImporter = true }
+                    .controlSize(.small)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .underPageBackgroundColor))
+        } else {
+            GeometryReader { geometry in
+                let rect = contentRect(in: geometry.size)
+                ZStack {
+                    background(in: rect)
+                    ForEach(Array(nodes.enumerated()), id: \.element.key) { index, node in
+                        PhotoMarkerView(node: node)
+                            .position(position(for: node.key, index: index, in: rect))
+                            .gesture(dragGesture(for: node.key, in: rect))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .background(Color(nsColor: .underPageBackgroundColor))
+            .clipped()
+        }
+    }
+
+    private var photoBar: some View {
+        HStack(spacing: 6) {
+            if !appState.advisor.extraPhotos.isEmpty {
+                ForEach(appState.advisor.extraPhotos, id: \.self) { url in
+                    PhotoThumbnailView(url: url)
+                }
+                Text("補充視角")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            if appState.diagram.backgroundImageURL != nil {
+                Button("移除") {
+                    appState.diagram.removeBackground()
+                    appState.advisor.clearExtraPhotos()
+                }
+                .controlSize(.small)
+            }
+            Button("匯入…") { showingImporter = true }
+                .controlSize(.small)
+                .help("可一次選多張（最多 \(LightingAdvisor.maxPhotos) 張）：第一張作為配置圖背景與座標基準，其餘為分析用補充視角")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+    }
+
+    /// 照片在畫布上實際佔用的矩形（等比縮放置中）；沒有照片時就是整塊畫布。
+    /// 節點座標一律以這個矩形為基準——照片是直式而區塊是橫式時，兩側會留白，
+    /// 若仍以整塊畫布換算，節點會飄在照片外，送去分析的「照片座標」也就失真。
+    private func contentRect(in size: CGSize) -> CGRect {
+        guard let url = appState.diagram.backgroundImageURL,
+              let image = DiagramImageCache.image(for: url),
+              image.size.width > 0, image.size.height > 0
+        else { return CGRect(origin: .zero, size: size) }
+        let scale = min(size.width / image.size.width, size.height / image.size.height)
+        let fitted = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        return CGRect(
+            x: (size.width - fitted.width) / 2,
+            y: (size.height - fitted.height) / 2,
+            width: fitted.width,
+            height: fitted.height
+        )
+    }
+
+    /// 背景照完整顯示（不裁切），並描一道邊讓可擺放區域一眼可辨。
+    @ViewBuilder
+    private func background(in rect: CGRect) -> some View {
+        if let url = appState.diagram.backgroundImageURL,
+           let image = DiagramImageCache.image(for: url) {
+            Image(nsImage: image)
+                .resizable()
+                .frame(width: rect.width, height: rect.height)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                .position(x: rect.midX, y: rect.midY)
+                .allowsHitTesting(false)
+        }
+    }
+
+    // MARK: - 建議區
+
+    private var advicePane: some View {
+        Group {
+            if let result = appState.advisor.result {
+                AdvicePanelView(result: result) { showAdvice = false }
+            } else {
+                VStack(spacing: 0) {
+                    HStack {
+                        paneTitle("建議", systemImage: "lightbulb.max")
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    Divider()
+                    VStack(spacing: 10) {
+                        Image(systemName: "lightbulb.max")
+                            .font(.largeTitle)
+                            .foregroundStyle(.tertiary)
+                        Text("尚未有分析結果")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !appState.advisor.history.isEmpty {
+                            Button("看上次分析結果") { appState.advisor.showLatestHistory() }
+                                .controlSize(.small)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .frame(minWidth: 280, idealWidth: 330, maxWidth: showPhoto ? 400 : .infinity)
     }
 
     // MARK: - 桌面情境
@@ -120,14 +335,6 @@ struct DeviceDiagramView: View {
                     .controlSize(.small)
             } else {
                 analyzeButton
-                if !appState.advisor.extraPhotos.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(appState.advisor.extraPhotos, id: \.self) { url in
-                            PhotoThumbnailView(url: url)
-                        }
-                    }
-                    .help("補充照片：分析時與背景照一併提供（點擊可放大）")
-                }
                 if !appState.advisor.history.isEmpty {
                     Button("上次分析結果") { appState.advisor.showLatestHistory() }
                         .controlSize(.small)
@@ -195,80 +402,14 @@ struct DeviceDiagramView: View {
         }
     }
 
-    private var canvas: some View {
-        GeometryReader { geometry in
-            let rect = contentRect(in: geometry.size)
-            ZStack {
-                background(in: rect)
-                ForEach(Array(nodes.enumerated()), id: \.element.key) { index, node in
-                    DiagramNodeView(node: node)
-                        .position(position(for: node.key, index: index, in: rect))
-                        .gesture(dragGesture(for: node.key, in: rect))
-                }
-                if nodes.isEmpty {
-                    Text("沒有可顯示的裝置")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .background(Color(nsColor: .underPageBackgroundColor))
-        .clipped()
-    }
-
-    /// 照片在畫布上實際佔用的矩形（等比縮放置中）；沒有照片時就是整塊畫布。
-    /// 節點座標一律以這個矩形為基準——照片是直式而視窗是橫式時，兩側會留白，
-    /// 若仍以整塊畫布換算，節點會飄在照片外，送去分析的「照片座標」也就失真。
-    private func contentRect(in size: CGSize) -> CGRect {
-        guard let url = appState.diagram.backgroundImageURL,
-              let image = DiagramImageCache.image(for: url),
-              image.size.width > 0, image.size.height > 0
-        else { return CGRect(origin: .zero, size: size) }
-        let scale = min(size.width / image.size.width, size.height / image.size.height)
-        let fitted = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        return CGRect(
-            x: (size.width - fitted.width) / 2,
-            y: (size.height - fitted.height) / 2,
-            width: fitted.width,
-            height: fitted.height
-        )
-    }
-
-    /// 背景照完整顯示（不裁切），並描一道邊讓可擺放區域一眼可辨。
-    @ViewBuilder
-    private func background(in rect: CGRect) -> some View {
-        if let url = appState.diagram.backgroundImageURL,
-           let image = DiagramImageCache.image(for: url) {
-            // 節點卡片有 material 底，照片可以清楚顯示；留一點淡化避免搶走節點。
-            Image(nsImage: image)
-                .resizable()
-                .opacity(0.85)
-                .frame(width: rect.width, height: rect.height)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
-                .position(x: rect.midX, y: rect.midY)
-                .allowsHitTesting(false)
-        }
-    }
-
     private var footer: some View {
         HStack {
             scenarioMenu
-            Text("拖拉節點擺放實際位置；差異值會疊加在環境基準亮度上")
+            Text("差異值會疊加在環境基準亮度上")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer()
-            if appState.diagram.backgroundImageURL != nil {
-                Button("移除照片") {
-                    appState.diagram.removeBackground()
-                    appState.advisor.clearExtraPhotos()
-                }
-                .controlSize(.small)
-            }
-            Button("匯入桌面照片…") { showingImporter = true }
-                .controlSize(.small)
-                .help("可一次選多張（最多 \(LightingAdvisor.maxPhotos) 張）：第一張作為配置圖背景與座標基準，其餘為分析用補充視角")
         }
         .padding(10)
     }
@@ -326,7 +467,7 @@ struct DeviceDiagramView: View {
 /// 已載入照片的快取：避免拖動節點時每次重繪都從磁碟重讀。
 /// 以修改時間一併比對——背景照的檔名固定，換照片時 URL 不變、只有內容變。
 @MainActor
-private enum DiagramImageCache {
+enum DiagramImageCache {
     private static var entries: [URL: (modified: Date?, image: NSImage)] = [:]
 
     static func image(for url: URL) -> NSImage? {
@@ -358,7 +499,7 @@ private struct PhotoThumbnailView: View {
                     Rectangle().fill(.quaternary)
                 }
             }
-            .frame(width: 44, height: 30)
+            .frame(width: 40, height: 28)
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.quaternary))
         }
@@ -386,8 +527,62 @@ enum DiagramNode {
         case let .peer(peerID, _, _, _, _): "peer:\(peerID)"
         }
     }
+
+    var name: String {
+        switch self {
+        case let .localDisplay(_, name, _): name
+        case let .peer(_, name, _, _, _): name
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case let .localDisplay(_, _, isBuiltin): isBuiltin ? "laptopcomputer" : "display"
+        case let .peer(_, _, kind, _, _):
+            switch kind {
+            case "iphone": "iphone"
+            case "ipad": "ipad"
+            default: "desktopcomputer"
+            }
+        }
+    }
 }
 
+/// 照片上的定位標記：只標示是哪台裝置與目前差異值，控制項在配置圖區。
+private struct PhotoMarkerView: View {
+    @Environment(AppState.self) private var appState
+    let node: DiagramNode
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: node.icon)
+                .imageScale(.small)
+                .foregroundStyle(.secondary)
+            Text(node.name)
+                .font(.caption2)
+                .fontWeight(.medium)
+                .lineLimit(1)
+            Text(offsetText)
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.quaternary))
+        .shadow(radius: 2, y: 1)
+        .fixedSize()
+        .help("拖曳以標示這台裝置在桌面上的實際位置")
+    }
+
+    private var offsetText: String {
+        guard case let .localDisplay(uuid, _, _) = node else { return "" }
+        return String(format: "%+.0f%%", (appState.settings.ambientDisplayOffsets[uuid] ?? 0) * 100)
+    }
+}
+
+/// 配置圖區的裝置卡片：名稱、徽章與亮度差異值滑桿。
 private struct DiagramNodeView: View {
     @Environment(AppState.self) private var appState
     let node: DiagramNode
@@ -421,13 +616,12 @@ private struct DiagramNodeView: View {
             }
         }
         .padding(10)
-        .frame(width: 190)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(.quaternary)
         )
-        .shadow(radius: 2, y: 1)
     }
 
     private func header(icon: String, name: String, badges: [String], statusColor: Color) -> some View {
