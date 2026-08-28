@@ -570,6 +570,12 @@ private struct AdvisorSettingsTab: View {
                 .font(.caption)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 200)
+                .help(engine.modelHint)
+                Text(engine.modelHint)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer(minLength: 0)
             }
         }

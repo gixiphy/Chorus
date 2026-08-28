@@ -189,6 +189,17 @@ final class TestHooks {
                     appState.keepAwake.activate(KeepAwakePlanner.decode(value))
                 }
             }
+        case "setAdvisorModel":
+            // value = "<engineID>:<模型>"；空模型＝清掉（用 CLI 預設）
+            if let raw = info["value"] {
+                let parts = raw.split(separator: ":", maxSplits: 1)
+                if let engineID = parts.first.map(String.init) {
+                    let model = parts.count == 2 ? String(parts[1]) : ""
+                    var ids = appState.settings.advisorModelIDs
+                    if model.isEmpty { ids.removeValue(forKey: engineID) } else { ids[engineID] = model }
+                    appState.settings.advisorModelIDs = ids
+                }
+            }
         case "analyzeReal":
             // value = "<engineID>:<照片路徑>"；設定引擎與背景照後跑**真實**分析
             // （不走 FakeAdviceProvider）。E1 的 agy 端到端驗收用。

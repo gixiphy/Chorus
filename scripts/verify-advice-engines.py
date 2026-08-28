@@ -113,9 +113,12 @@ def cleanup():
 ENGINES = ["claude", "agy", "grok", "codex", "opencode"]
 
 
-def verify_engine(engine_id, photo):
-    """對單一引擎跑一次真實分析並斷言結果。"""
-    print(f"\n--- {engine_id} ---", flush=True)
+def verify_engine(engine_id, photo, model=""):
+    """對單一引擎跑一次真實分析並斷言結果。model 非空時一併驗 --model 路徑。"""
+    label = f"{engine_id}" + (f"（模型 {model}）" if model else "")
+    print(f"\n--- {label} ---", flush=True)
+    notify("setAdvisorModel", f"{engine_id}:{model}")
+    time.sleep(1)
     notify("analyzeReal", f"{engine_id}:{photo}")
     ok, _ = wait_for(lambda d: d["advisor"]["isAnalyzing"] is True, 20)
     if not ok:
@@ -175,9 +178,11 @@ def main():
     if not ok:
         return 1
 
+    # 參數可寫 "engine" 或 "engine=model"（後者一併驗 --model 路徑）
     wanted = [a for a in sys.argv[1:] if not a.startswith("-")] or ENGINES
-    for engine_id in wanted:
-        verify_engine(engine_id, photo)
+    for item in wanted:
+        engine_id, _, model = item.partition("=")
+        verify_engine(engine_id, photo, model)
 
     print("\n=== 總結 ===", flush=True)
     passed = sum(1 for _, ok in results if ok)

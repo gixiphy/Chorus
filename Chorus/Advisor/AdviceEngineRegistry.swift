@@ -21,6 +21,9 @@ struct KnownCLIEngine: Identifiable, Sendable {
     let experimental: Bool
     /// 支援 `--model`／`-m`：設定頁給一個自訂模型欄位。
     let supportsModelSelection: Bool
+    /// 模型欄位的格式提示。各家寫法不同——尤其 opencode 要 `provider/model`，
+    /// 只填模型名會直接失敗，這種事不該讓使用者自己試出來。
+    let modelHint: String
     /// 給 prompt 的照片讀取措辭（僅 `.pathInPrompt` 用得到）。
     let readInstruction: String
     /// 未登入時提示使用者到終端執行的指令。
@@ -48,7 +51,9 @@ struct KnownCLIEngine: Identifiable, Sendable {
     func invocation(prompt: String, run: RunContext) -> (arguments: [String], stdin: String?) {
         switch id {
         case "claude":
-            return (["-p", "--output-format", "json", "--allowedTools", "Read"], prompt)
+            var arguments = ["-p", "--output-format", "json", "--allowedTools", "Read"]
+            if let model = run.model, !model.isEmpty { arguments += ["--model", model] }
+            return (arguments, prompt)
 
         case "agy":
             var arguments = ["-p", prompt, "--output-format", "json"]
@@ -105,7 +110,8 @@ struct KnownCLIEngine: Identifiable, Sendable {
         KnownCLIEngine(
             id: "claude", executableName: "claude", displayName: "Claude Code",
             codec: .jsonEnvelope, photoDelivery: .pathInPrompt,
-            pendingIntegration: false, experimental: false, supportsModelSelection: false,
+            pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            modelHint: "別名 opus／sonnet／fable，或完整名稱如 claude-opus-5",
             readInstruction: "用 Read 工具讀取後再分析",
             loginCommand: "claude /login"
         ),
@@ -113,6 +119,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             id: "agy", executableName: "agy", displayName: "Antigravity",
             codec: .responseEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            modelHint: "slug，如 gemini-3.1-pro-high、claude-sonnet-4-6",
             readInstruction: "請先讀取照片再分析",
             loginCommand: "agy"
         ),
@@ -120,6 +127,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             id: "grok", executableName: "grok", displayName: "Grok Build",
             codec: .textEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            modelHint: "模型 ID（見 grok 的模型清單）",
             readInstruction: "請先讀取照片再分析",
             loginCommand: "grok"
         ),
@@ -127,6 +135,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             id: "codex", executableName: "codex", displayName: "Codex CLI",
             codec: .plainStdout, photoDelivery: .attached,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            modelHint: "模型名稱，如 gpt-5.6-terra",
             readInstruction: "照片已附加",
             loginCommand: "codex login"
         ),
@@ -134,6 +143,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             id: "opencode", executableName: "opencode", displayName: "OpenCode",
             codec: .plainStdout, photoDelivery: .attached,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            modelHint: "provider/model 格式，如 anthropic/claude-sonnet-4-6",
             readInstruction: "照片已附加",
             loginCommand: "opencode auth login"
         ),
