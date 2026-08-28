@@ -15,6 +15,14 @@ final class GammaDimmer {
 
     private var originals: [CGDirectDisplayID: OriginalTable] = [:]
 
+    /// 此顯示器目前是否處於軟體調光中。
+    /// 原始 table 只在 setFactor 真的調暗時才會被擷取、restore 時清掉，
+    /// 因此「有快取」＝「我們正在調暗它」，可用來區分使用者實際調過的顯示器
+    /// 與只是帶著初始佔位亮度、從未套用過調光的顯示器。
+    func isDimming(_ displayID: CGDirectDisplayID) -> Bool {
+        originals[displayID] != nil
+    }
+
     nonisolated init() {
         // process 結束時還原所有顯示器的 ColorSync gamma（closure 無捕捉，可當 C 函式指標）
         atexit {

@@ -164,6 +164,7 @@ final class DisplayManager {
             gamma.forget(old.id)
         }
         displays = models
+        reapplySoftwareDimming()
         audioManager?.refreshBridges()
         scenarioStore?.displaysDidChange(Set(models.map(\.uuid)))
     }
@@ -250,14 +251,20 @@ final class DisplayManager {
     /// 同步協定不受影響：跨機傳的是 0–1 滑桿值，各機依自己的 pipeline 映射。
     private static let subZeroThreshold = 0.25
 
-    private func apply(_ model: DisplayModel) {
-        // Sub-zero 只給 DDC 螢幕：DisplayServices 顯示器的 poller 以硬體值
-        // 對帳 model，滑桿≠硬體的映射會被誤判成外部變更而互相拉扯
-        let pipeline = BrightnessPipeline(
+    /// Sub-zero 只給 DDC 螢幕：DisplayServices 顯示器的 poller 以硬體值
+    /// 對帳 model，滑桿≠硬體的映射會被誤判成外部變更而互相拉扯
+    private func pipeline(for model: DisplayModel) -> BrightnessPipeline {
+        BrightnessPipeline(
             softwareThreshold: model.subZeroDimming && model.backend == .ddc && model.hasHardwareControl
                 ? Self.subZeroThreshold : 0
         )
-        let output = pipeline.map(slider: model.brightness, hasHardwareControl: model.hasHardwareControl)
+    }
+
+    private func apply(_ model: DisplayModel) {
+        let output = pipeline(for: model).map(
+            slider: model.brightness,
+            hasHardwareControl: model.hasHardwareControl
+        )
 
         if let hardware = output.hardware {
             switch model.backend {
@@ -275,6 +282,29 @@ final class DisplayManager {
             }
         }
         gamma.setFactor(output.softwareFactor, for: model.id)
+    }
+
+    /// refresh 後重新套用軟體調光。
+    ///
+    /// 顯示器組態變更（解析度切換、睡醒後 link retraining）會讓 macOS 重設
+    /// gamma transfer table：調光靜靜失效、螢幕跳回全亮，滑桿卻還停在調暗的值。
+    ///
+    /// 只重下 gamma，不碰 DDC／DisplayServices——硬體亮度就是剛剛探測到的現值，
+    /// 補寫 I2C 只會在每次螢幕參數變動時多打一輪沒必要的匯流排流量。
+    ///
+    /// 只處理「已在調光中」的顯示器（gamma 有快取原始 table）。這是必要的過濾：
+    /// 沒有歷史值的顯示器 initialBrightness 會給 0.5 佔位，無條件套用會把剛接上、
+    /// 使用者從沒調過的螢幕直接調暗一半。
+    ///
+    /// setFactor 一律以快取的原始 table 重算，重複套用不會疊加變暗。
+    private func reapplySoftwareDimming() {
+        for model in displays where gamma.isDimming(model.id) {
+            let output = pipeline(for: model).map(
+                slider: model.brightness,
+                hasHardwareControl: model.hasHardwareControl
+            )
+            gamma.setFactor(output.softwareFactor, for: model.id)
+        }
     }
 
     /// 初始亮度：DisplayServices 直接讀；DDC 用分類時的讀值（停用 read 時為 nil）；

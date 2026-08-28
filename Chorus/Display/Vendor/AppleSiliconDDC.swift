@@ -4,6 +4,9 @@
 //  (MIT License, revision 97af3818b9803e51412fb50cac1506db1d73b5bf).
 //  Vendored because the package's header-only ObjC target fails to link with
 //  Xcode 26; prototypes live in Chorus-Bridging-Header.h instead.
+//
+//  本檔含一處**本機修改**（重新 vendor 時務必保留）：讀取回覆的框架驗證，
+//  見 `isValidGetVCPReply` 與 `performDDCCommunication`／`read` 中的引用處。
 
 import Foundation
 import IOKit
@@ -81,7 +84,8 @@ public class AppleSiliconDDC: NSObject {
     if Self.performDDCCommunication(service: service, send: &send, reply: &reply, writeSleepTime: writeSleepTime, numOfWriteCycles: numOfWriteCycles, readSleepTime: readSleepTime, numOfRetryAttemps: numOfRetryAttemps, retrySleepTime: retrySleepTime) {
       let max = UInt16(reply[6]) * 256 + UInt16(reply[7])
       let current = UInt16(reply[8]) * 256 + UInt16(reply[9])
-      values = (current, max)
+      // 本機修改：值域上限 0 不可能合法（會讓後續每次寫入都算成 0），視同讀取失敗。
+      values = max > 0 ? (current, max) : nil
     } else {
       values = nil
     }
@@ -110,7 +114,10 @@ public class AppleSiliconDDC: NSObject {
       if !reply.isEmpty {
         usleep(readSleepTime ?? 50000)
         if IOAVServiceReadI2C(service, UInt32(ARM64_DDC_7BIT_ADDRESS), UInt32(dataAddress), &reply, UInt32(reply.count)) == 0 {
+          // 本機修改：checksum 之外再驗框架（見 isValidGetVCPReply）。
+          // 放在重試迴圈內是刻意的——不合格的框架會繼續重試，而不是當場放棄。
           success = self.checksum(chk: 0x50, data: &reply, start: 0, end: reply.count - 2) == reply[reply.count - 1]
+            && self.isValidGetVCPReply(reply, command: send.first)
         }
       }
       if success {
@@ -119,6 +126,29 @@ public class AppleSiliconDDC: NSObject {
       usleep(retrySleepTime ?? 20000)
     }
     return success
+  }
+
+  /// 本機修改（非上游）：驗證 Get VCP Feature Reply 的框架。
+  ///
+  /// 上游只驗 checksum。但卡死的 DDC controller（Crisp 記錄在 AOC Q27G3XMN 上）
+  /// 會 ACK 讀取卻吐出雜訊或前一筆的殘留框架，偶爾湊巧連 checksum 都通過——
+  /// 呼叫端於是收下 bogus 的 max（實例：8824 而非 100，亮度滑桿上段整段失效）
+  /// 或別的 VCP 的值（音量橋接的寫後驗證會因此誤判螢幕不支援 0x62）。
+  ///
+  /// DDC/CI Get VCP Feature Reply 框架（`read` 用 11 bytes，index 即以下位置）：
+  ///   [0] 來源位址 0x6E   [1] 長度 0x88   [2] reply opcode 0x02   [3] result code
+  ///   [4] VCP echo        [5] 型別        [6][7] max hi/lo        [8][9] current hi/lo
+  ///   [10] checksum
+  ///
+  /// 不驗 [1]（長度）：部分螢幕會回非標準值，但不影響 [6]–[9] 的取值位置。
+  /// `command` 取自送出的 request——本檔中帶 reply 的請求只有 `read`，
+  /// 它固定送單一 byte 的 VCP code。
+  static func isValidGetVCPReply(_ reply: [UInt8], command: UInt8?) -> Bool {
+    guard reply.count >= 11, let command else { return false }
+    return reply[0] == 0x6E   // 來源位址
+      && reply[2] == 0x02     // Get VCP Feature Reply
+      && reply[3] == 0x00     // result code：0 以外代表螢幕不支援此 VCP，資料無意義
+      && reply[4] == command  // 回的正是我們問的那個 VCP
   }
 
   // DDC checksum calculator
