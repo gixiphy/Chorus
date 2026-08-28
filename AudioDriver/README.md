@@ -27,10 +27,14 @@ Chorus 監聽虛擬裝置的音量變更：
 
 ## 建置與安裝
 
-    scripts/build-audio-driver.sh      # 產出 dist/ChorusAudioDevice.driver（CLT 即可，不需 Xcode）
-    scripts/install-audio-driver.sh    # sudo 複製到 /Library/Audio/Plug-Ins/HAL + 重啟 coreaudiod
+driver 是 Chorus.xcodeproj 的 `ChorusAudioDevice` target，**隨 App 一起建置並
+內嵌在 Chorus.app/Contents/PlugIns**——不是分開的產物。
 
-或由 Chorus 設定頁「螢幕音量」分頁一鍵安裝（要求管理員密碼一次）。
+安裝＝把內嵌的 driver 複製到 `/Library/Audio/Plug-Ins/HAL`（HAL plugin 的
+macOS 硬性要求）＋重啟 coreaudiod：
+
+- 正常路徑：Chorus 設定頁「音訊」分頁一鍵安裝（管理員密碼一次）。
+- 備援（無 GUI）：`sudo scripts/install-audio-driver.sh`（從 App 內嵌處取）。
 
 ## 設定通道（與上游同協議）
 

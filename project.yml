@@ -17,22 +17,43 @@ settings:
     DEVELOPMENT_TEAM: 2ENEDJHX95
 
 targets:
+  # BV 虛擬音訊輸出（HAL AudioServerPlugIn）。隨 App 一起建置、內嵌在
+  # Contents/PlugIns；設定頁一鍵安裝時從那裡複製到 /Library/Audio/Plug-Ins/HAL。
+  ChorusAudioDevice:
+    type: bundle
+    platform: macOS
+    sources: [AudioDriver/Source]
+    settings:
+      base:
+        WRAPPER_EXTENSION: driver
+        INFOPLIST_FILE: AudioDriver/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        PRODUCT_BUNDLE_IDENTIFIER: com.hermes.ChorusAudioDevice
+        MACOSX_DEPLOYMENT_TARGET: "12.0"
+        CLANG_CXX_LANGUAGE_STANDARD: c++17
+        HEADER_SEARCH_PATHS:
+          - AudioDriver/Source
+          - AudioDriver/Source/PublicUtility
+    dependencies:
+      - sdk: CoreAudio.framework
+      - sdk: CoreFoundation.framework
+      - sdk: CoreServices.framework
+      - sdk: IOKit.framework
+
   Chorus:
     type: application
     platform: macOS
-    sources:
-      - Chorus
-      # BV 虛擬音訊驅動（package.sh 產出；開發建置沒有也能過）
-      - path: AudioDriver/prebuilt/ChorusAudioDevice.driver
-        buildPhase: resources
-        type: folder
-        optional: true
+    sources: [Chorus]
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: Chorus/Support/Chorus-Bridging-Header.h
     dependencies:
       - package: ChorusCore
       - sdk: CoreDisplay.framework
+      - target: ChorusAudioDevice
+        embed: true
+        copy:
+          destination: plugins
     info:
       path: Chorus/Support/Info.plist
       properties:

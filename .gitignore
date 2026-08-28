@@ -12,5 +12,3 @@ docs/
 # Build artifacts 打包產物
 dist/
 .b1-work/
-.build-audio-driver/
-AudioDriver/prebuilt/

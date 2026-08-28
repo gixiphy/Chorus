@@ -45,9 +45,14 @@ final class VirtualAudioDriverController {
     /// CoreAudio 呼叫可能阻塞——全部走這條 serial queue。
     @ObservationIgnored private let queue = DispatchQueue(label: "com.hermes.Chorus.virtualDriver", qos: .userInitiated)
 
-    /// App 內附的 driver bundle（打包時由 package.sh 放進 Resources；開發版可能沒有）。
+    /// App 內嵌的 driver bundle（ChorusAudioDevice target 隨 App 建置、
+    /// 內嵌在 Contents/PlugIns——安裝就是把它複製到系統 HAL 目錄）。
     nonisolated static var bundledDriverURL: URL? {
-        Bundle.main.url(forResource: "ChorusAudioDevice", withExtension: "driver")
+        guard let url = Bundle.main.builtInPlugInsURL?
+            .appendingPathComponent("ChorusAudioDevice.driver"),
+            FileManager.default.fileExists(atPath: url.path)
+        else { return nil }
+        return url
     }
 
     // MARK: - 狀態
