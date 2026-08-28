@@ -41,6 +41,8 @@ final class VirtualAudioDriverController {
     private(set) var targetUID: String?
     /// 目前是否為 DDC 鏡射模式（applyVolume=0）。nil = 尚未讀到。
     private(set) var mirrorMode: Bool?
+    /// 已安裝的 driver 版本落後 App 內嵌版本（Info.plist CFBundleVersion 比對）。
+    private(set) var updateAvailable = false
 
     /// CoreAudio 呼叫可能阻塞——全部走這條 serial queue。
     @ObservationIgnored private let queue = DispatchQueue(label: "com.hermes.Chorus.virtualDriver", qos: .userInitiated)
@@ -59,6 +61,13 @@ final class VirtualAudioDriverController {
 
     func refreshStatus() {
         let installed = FileManager.default.fileExists(atPath: Self.driverPath)
+        if installed, let bundled = Self.bundledDriverURL {
+            let installedVersion = Self.driverBundleVersion(at: Self.driverPath)
+            let bundledVersion = Self.driverBundleVersion(at: bundled.path)
+            updateAvailable = bundledVersion != nil && installedVersion != bundledVersion
+        } else {
+            updateAvailable = false
+        }
         Task {
             let box = await findBox()
             if box != kAudioObjectUnknown {
@@ -70,6 +79,13 @@ final class VirtualAudioDriverController {
                 mirrorMode = nil
             }
         }
+    }
+
+    nonisolated private static func driverBundleVersion(at path: String) -> String? {
+        guard let data = FileManager.default.contents(atPath: path + "/Contents/Info.plist"),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        else { return nil }
+        return plist["CFBundleVersion"] as? String
     }
 
     private func refreshConfig(box: AudioObjectID) async {

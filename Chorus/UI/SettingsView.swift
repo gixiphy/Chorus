@@ -531,15 +531,14 @@ private struct AudioSettingsTab: View {
         HStack {
             Button(busy ? "安裝中…" : "安裝驅動…") { install() }
                 .disabled(busy || VirtualAudioDriverController.bundledDriverURL == nil)
-            if VirtualAudioDriverController.bundledDriverURL == nil {
-                Text("此建置未附驅動：專案目錄執行 scripts/build-audio-driver.sh 與 sudo scripts/install-audio-driver.sh")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("需要管理員密碼一次；會重啟音訊服務（聲音短暫中斷）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text("需要管理員密碼一次；會重啟音訊服務（聲音短暫中斷）。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if VirtualAudioDriverController.bundledDriverURL == nil {
+            Text("找不到 App 內嵌的驅動——這個 App 可能已損壞，請重新安裝 Chorus。")
+                .font(.caption)
+                .foregroundStyle(.red)
         }
     }
 
@@ -550,6 +549,10 @@ private struct AudioSettingsTab: View {
         }
         HStack {
             Button("重新整理") { appState.virtualDriver.refreshStatus() }
+            if appState.virtualDriver.updateAvailable {
+                Button(busy ? "更新中…" : "重新安裝驅動…") { install() }
+                    .disabled(busy)
+            }
             Button("移除驅動…", role: .destructive) { uninstall() }
                 .disabled(busy)
             Text("剛安裝完請稍候幾秒再重新整理；一直沒出現時重開機。")
@@ -586,6 +589,15 @@ private struct AudioSettingsTab: View {
                 Text("數位衰減（軟體音量）").foregroundStyle(.secondary)
             case nil:
                 Text("讀取中…").foregroundStyle(.secondary)
+            }
+        }
+        if appState.virtualDriver.updateAvailable {
+            HStack {
+                Button(busy ? "更新中…" : "更新驅動…") { install() }
+                    .disabled(busy)
+                Text("App 內附的驅動比已安裝的新；更新會重啟音訊服務。")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
         }
         HStack {
