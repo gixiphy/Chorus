@@ -17,6 +17,8 @@ struct InstanceConfig: Sendable {
     let fakeALS: Bool
     /// 停用光感器（僅 DEBUG build 生效；在有感器的機器上模擬桌機 follower）。
     let disableALS: Bool
+    /// tap 引擎用 FakeTapBackend（僅 DEBUG；E2E 不需權限與真硬體）。
+    let fakeTaps: Bool
 
     init(arguments: [String]) {
         func value(after flag: String) -> String? {
@@ -28,6 +30,7 @@ struct InstanceConfig: Sendable {
         pairListenPort = value(after: "--pair-port").flatMap(UInt16.init)
         fakeALS = arguments.contains("--fake-als")
         disableALS = arguments.contains("--no-als")
+        fakeTaps = arguments.contains("--fake-taps")
     }
 
     private static let baseIdentifier = Bundle.main.bundleIdentifier ?? "com.hermes.Chorus"

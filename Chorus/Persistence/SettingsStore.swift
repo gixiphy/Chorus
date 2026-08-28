@@ -31,6 +31,7 @@ final class SettingsStore {
         static let advisorConfirmed = "chorus.advisor.confirmed"
         static let advisorModelIDs = "chorus.advisor.modelIDs"
         static let advisorModelCache = "chorus.advisor.modelCache"
+        static let audioTaps = "chorus.audio.tapsEnabled"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
         static let automationServer = "chorus.automation.serverEnabled"
@@ -158,6 +159,12 @@ final class SettingsStore {
         didSet { defaults.set(advisorModelCache, forKey: Key.advisorModelCache) }
     }
 
+    /// Process tap 引擎（per-app 音量的基礎設施，B6）。**預設關閉**
+    /// （權限功能紀律）；開啟時走 DESIGN-M12 §1.2 的權限流程。
+    var audioTapsEnabled: Bool {
+        didSet { defaults.set(audioTapsEnabled, forKey: Key.audioTaps) }
+    }
+
     /// 螢幕長亮時是否連系統待機一起擋（預設只擋螢幕待機）。
     var keepAwakePreventsSystemSleep: Bool {
         didSet { defaults.set(keepAwakePreventsSystemSleep, forKey: Key.keepAwakeSystemSleep) }
@@ -210,6 +217,7 @@ final class SettingsStore {
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)
         advisorModelIDs = (defaults.dictionary(forKey: Key.advisorModelIDs) as? [String: String]) ?? [:]
         advisorModelCache = (defaults.dictionary(forKey: Key.advisorModelCache) as? [String: [String]]) ?? [:]
+        audioTapsEnabled = defaults.bool(forKey: Key.audioTaps)
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)

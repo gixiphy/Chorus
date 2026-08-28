@@ -679,11 +679,58 @@ private struct AdvisorSettingsTab: View {
 /// BV：虛擬輸出裝置（螢幕音量）。安裝／狀態／轉送目標／模式。
 private struct AudioSettingsTab: View {
     @Environment(AppState.self) private var appState
+
+    /// 權限狀態沒有 API 可查（DESIGN-M12 §1.2），文案要照實講「怎麼判的」。
+    private var tapStateCaption: String {
+        switch appState.tapEngine.state {
+        case .off:
+            "未啟用。"
+        case .probing:
+            "確認權限中——播放任何聲音即可完成檢查（權限被拒不會有錯誤訊息，只能靠聲音判讀）。"
+        case .active:
+            "就緒。個別 App 的音量控制將在後續版本出現在選單列。"
+        case .denied:
+            "偵測到系統音訊全為靜音——權限可能被拒。請到系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製 開啟 Chorus。"
+        case let .failed(message):
+            message
+        }
+    }
+
+    private var tapStateIsError: Bool {
+        switch appState.tapEngine.state {
+        case .denied, .failed: true
+        default: false
+        }
+    }
     @State private var busy = false
     @State private var errorMessage: String?
 
     var body: some View {
         Form {
+            Section("各 App 音量與等化（建置中）") {
+                Toggle("啟用 App 音訊接管", isOn: Binding(
+                    get: { appState.settings.audioTapsEnabled },
+                    set: { appState.tapEngine.setEnabled($0) }
+                ))
+                Text(tapStateCaption)
+                    .font(.caption)
+                    .foregroundStyle(tapStateIsError ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                if case .denied = appState.tapEngine.state {
+                    HStack {
+                        Button("重新檢查") { appState.tapEngine.retryPermission() }
+                            .controlSize(.small)
+                        Button("開啟系統設定") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+                }
+                Text("開啟後系統會詢問「系統音訊錄製」權限。音訊只在本機處理，不會傳送到任何地方；未被調整的 App 完全不經過 Chorus。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("螢幕音量（虛擬輸出裝置）") {
                 explanation
                 switch appState.virtualDriver.status {

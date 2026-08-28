@@ -1,0 +1,67 @@
+#if DEBUG
+import CoreAudio
+import Foundation
+
+/// 可腳本化的 tap backend：E2E 與單元測試不需要權限、不碰 CoreAudio。
+/// `mode` 控制 fake session 的統計走向——`.audio` 模擬有權限（樣本非零）、
+/// `.zeros` 模擬權限被拒（回呼照跑、樣本全零，與實測的失敗形狀一致）。
+@MainActor
+final class FakeTapBackend: TapBackend {
+    enum Mode { case audio, zeros }
+    var mode: Mode = .audio
+    private(set) var startedSessions: [(kind: TapSessionKind, target: String)] = []
+
+    func defaultOutputDeviceUID() -> String? { "fake-output-uid" }
+
+    func startProbeSession(
+        outputDeviceUID: String,
+        excludingProcessObjects: [AudioObjectID]
+    ) throws -> any TapSession {
+        startedSessions.append((.captureOnly, "probe"))
+        return FakeTapSession(kind: .captureOnly, backend: self)
+    }
+
+    func startPlaythroughSession(bundleID: String, outputDeviceUID: String) throws -> any TapSession {
+        guard bundleID != Bundle.main.bundleIdentifier else {
+            throw TapBackendError.refusedSelfTap
+        }
+        startedSessions.append((.playthrough, bundleID))
+        return FakeTapSession(kind: .playthrough, backend: self)
+    }
+
+    private var outputChangedHandler: (@MainActor () -> Void)?
+    func setDefaultOutputChangedHandler(_ handler: @escaping @MainActor () -> Void) {
+        outputChangedHandler = handler
+    }
+    func simulateDefaultOutputChange() { outputChangedHandler?() }
+}
+
+@MainActor
+final class FakeTapSession: TapSession {
+    let kind: TapSessionKind
+    private weak var backend: FakeTapBackend?
+    private var accumulated = TapSessionStats()
+    private(set) var stopped = false
+    private(set) var lastGain: Float = 1
+    private(set) var lastMuted = false
+
+    init(kind: TapSessionKind, backend: FakeTapBackend) {
+        self.kind = kind
+        self.backend = backend
+    }
+
+    /// 每次讀 stats 前進約一秒的量（93 次回呼）；zeros 模式下非零數不動。
+    var stats: TapSessionStats {
+        guard !stopped else { return accumulated }
+        accumulated.callbacks += 93
+        if backend?.mode == .audio {
+            accumulated.nonZeroCallbacks += 93
+        }
+        return accumulated
+    }
+
+    func setGain(_ gain: Float) { lastGain = gain }
+    func setMuted(_ muted: Bool) { lastMuted = muted }
+    func stop() { stopped = true }
+}
+#endif

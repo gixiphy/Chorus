@@ -165,6 +165,39 @@ final class TestHooks {
             if let name = info["value"], let scene = appState.sceneStore.scene(named: name) {
                 appState.sceneStore.delete(id: scene.id)
             }
+        case "tapEngine":
+            // value = "1"/"0"
+            if let raw = info["value"] {
+                appState.tapEngine.setEnabled(raw == "1")
+            }
+        case "tapFakeMode":
+            // value = "audio"/"zeros"（--fake-taps 時有效）
+            if let fake = TestSupport.fakeTapBackend {
+                fake.mode = info["value"] == "zeros" ? .zeros : .audio
+            }
+        case "tapTick":
+            // 不等計時器，直接推一格健康判讀（E2E 提速）
+            appState.tapEngine.healthTick()
+        case "fakeAudioProcesses":
+            // value = "Name|bundle.id|1;Name2|bundle2|0"（audible 旗標）
+            if let raw = info["value"] {
+                let entries: [AudioProcessRegistry.Entry] = raw.split(separator: ";").enumerated().compactMap { index, part in
+                    let fields = part.split(separator: "|")
+                    guard fields.count == 3 else { return nil }
+                    return AudioProcessRegistry.Entry(
+                        objectID: AudioObjectID(1000 + index),
+                        pid: pid_t(2000 + index),
+                        bundleID: String(fields[1]),
+                        name: String(fields[0]),
+                        isAudible: fields[2] == "1"
+                    )
+                }
+                appState.tapEngine.registry.injectFake(entries)
+            }
+        case "tapApp":
+            if let bundle = info["value"] { appState.tapEngine.tap(bundleID: bundle) }
+        case "untapApp":
+            if let bundle = info["value"] { appState.tapEngine.untap(bundleID: bundle) }
         case "tapProbe":
             // B6-0 §1.2 的權限驗證：在 App 行程內建 tap＋aggregate＋IOProc
             // 抓 3 秒，回報每一步的 OSStatus 與峰值。全程 unmuted 不影響播放。
@@ -238,6 +271,16 @@ final class TestHooks {
             appState.advisor.undoLastApply()
         default:
             break
+        }
+    }
+
+    private static func describe(_ state: TapEngine.State) -> String {
+        switch state {
+        case .off: "off"
+        case .probing: "probing"
+        case .active: "active"
+        case .denied: "denied"
+        case let .failed(message): "failed:\(message)"
         }
     }
 
@@ -433,6 +476,15 @@ final class TestHooks {
             "scenes": appState.sceneStore.scenes.map { scene in
                 ["name": scene.name, "requests": scene.requests.count] as [String: Any]
             },
+            "tapEngine": [
+                "state": Self.describe(appState.tapEngine.state),
+                "tapped": appState.tapEngine.tappedBundles,
+                "probeCallbacks": appState.tapEngine.probeStats.callbacks,
+                "probeNonZero": appState.tapEngine.probeStats.nonZeroCallbacks,
+                "processes": appState.tapEngine.registry.processes.map { entry in
+                    ["name": entry.name, "bundle": entry.bundleID ?? "", "audible": entry.isAudible] as [String: Any]
+                },
+            ] as [String: Any],
             "tapProbe": tapProbeResult as Any? ?? NSNull(),
             "lastControl": lastControlResponse
                 .flatMap { try? JSONEncoder().encode($0) }
@@ -469,5 +521,7 @@ final class TestHooks {
 @MainActor
 enum TestSupport {
     static var hooks: TestHooks?
+    /// --fake-taps 時的 backend，TestHooks 靠它切換 audio/zeros 模式。
+    static var fakeTapBackend: FakeTapBackend?
 }
 #endif

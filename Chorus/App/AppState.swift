@@ -23,6 +23,7 @@ final class AppState {
     let emergencyRestore: EmergencyRestoreMonitor
     let automation: AutomationExecutor
     let sceneStore: SceneStore
+    let tapEngine: TapEngine
     let automationEvents: AutomationEventHub
     let automationServer: ControlHTTPServer
 
@@ -122,6 +123,21 @@ final class AppState {
         coordinator.automationEvents = automationEvents
         displayManager.automationEvents = automationEvents
 
+        let tapRegistry = AudioProcessRegistry()
+        #if DEBUG
+        let tapBackend: any TapBackend
+        if instance.fakeTaps {
+            let fake = FakeTapBackend()
+            TestSupport.fakeTapBackend = fake
+            tapBackend = fake
+        } else {
+            tapBackend = CoreAudioTapBackend()
+        }
+        #else
+        let tapBackend: any TapBackend = CoreAudioTapBackend()
+        #endif
+        tapEngine = TapEngine(backend: tapBackend, registry: tapRegistry, settings: settings)
+
         // 「接著這台螢幕時防睡眠」是唯一跨重啟保留的模式
         if let uuid = settings.keepAwakeDisplayUUID {
             keepAwake.activate(.whileDisplayConnected(uuid: uuid))
@@ -134,5 +150,6 @@ final class AppState {
         mediaKeys.updateActivation()
         virtualDriver.refreshStatus()
         automationServer.updateActivation()
+        tapEngine.start()
     }
 }
