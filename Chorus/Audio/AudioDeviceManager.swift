@@ -1,3 +1,4 @@
+import AppKit
 import ChorusCore
 import CoreAudio
 import Foundation
@@ -318,6 +319,7 @@ final class AudioDeviceManager {
             tapEngine?.audioDevicesChanged()
             restoreVolumes(forArrived: arrived)
             applyOutputPriority()
+            updateVirtualTarget(reattaching: arrived)
         }
     }
 
@@ -339,6 +341,7 @@ final class AudioDeviceManager {
                 }
             }
         }
+        updateVirtualTarget()
         updateVirtualMirrorMode()
         refreshSoftwareVolume()
     }
@@ -503,6 +506,82 @@ final class AudioDeviceManager {
               target.bridgedDisplayID != nil
         else { return nil }
         return target
+    }
+
+    // MARK: - 轉送目標：跟著使用中的螢幕走
+
+    /// 重算虛擬裝置該把聲音送到哪裡，需要時寫回 driver。
+    ///
+    /// 順位：使用者指定的裝置（還在的話）→ 使用中那台螢幕的音訊裝置 →
+    /// 其他還亮著的螢幕 → 任何螢幕音訊裝置 → **內建輸出**。最後一條是
+    /// 重點：螢幕被關掉／拔掉時寧可從 Mac 喇叭出來，也不要靜靜沒有聲音。
+    ///
+    /// 只在裝置清單或顯示器配置變動時重算——不跟著視窗焦點跑，
+    /// 否則點一下另一台螢幕上的視窗就會把播到一半的音訊切走。
+    ///
+    /// `reattaching` 是這一輪新出現的裝置：目標**重新出現**時即使 UID 沒變
+    /// 也要重寫一次設定。螢幕關掉再開之後聲音不會自己回來（driver 在裝置
+    /// 還沒就緒時就接上了，之後不會再收到通知），非得手動切一次輸出才恢復。
+    func updateVirtualTarget(reattaching arrived: Set<String> = []) {
+        guard let virtualDriver,
+              devices.contains(where: { $0.uid == VirtualAudioDriverController.deviceUID }),
+              let target = preferredVirtualTargetUID()
+        else { return }
+        if virtualDriver.targetUID == target {
+            guard arrived.contains(target) else { return }
+            // 同一個 UID 回來了：延遲一下再重寫，讓裝置先就緒
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(1500))
+                guard let self, self.virtualDriver?.targetUID == target,
+                      self.devices.contains(where: { $0.uid == target }) else { return }
+                self.virtualDriver?.setTarget(uid: target)
+                self.updateVirtualMirrorMode()
+            }
+            return
+        }
+        virtualDriver.setTarget(uid: target)
+        updateVirtualMirrorMode()
+    }
+
+    /// 轉送目標的順位計算。規則本身在 `VirtualOutputTarget`（純函式、有測試），
+    /// 這裡只負責把「使用中的螢幕」「還亮著的螢幕」翻成音訊裝置 UID。
+    private func preferredVirtualTargetUID() -> String? {
+        let liveDisplays = (displayManager?.displays ?? []).filter { !$0.isPoweredOff }
+        let activeDisplay = Self.activeDisplayID.flatMap { id in
+            liveDisplays.first { $0.id == id }
+        }
+        return VirtualOutputTarget.preferred(
+            pinned: settings.virtualTargetUID,
+            present: Set(devices.map(\.uid)),
+            activeScreen: activeDisplay.flatMap { screenAudioDevice(for: $0)?.uid },
+            liveScreens: liveDisplays.compactMap { screenAudioDevice(for: $0)?.uid },
+            anyScreens: devices.filter(isScreenAudioDevice).map(\.uid),
+            builtin: devices.first { $0.transportType == kAudioDeviceTransportTypeBuiltIn }?.uid
+        )
+    }
+
+    /// 螢幕自己的音訊端點（HDMI／DisplayPort）。虛擬裝置不算。
+    private func isScreenAudioDevice(_ device: AudioDeviceModel) -> Bool {
+        guard device.uid != VirtualAudioDriverController.deviceUID else { return false }
+        return device.transportType == kAudioDeviceTransportTypeHDMI
+            || device.transportType == kAudioDeviceTransportTypeDisplayPort
+    }
+
+    /// 這台螢幕對應的音訊裝置（名稱吻合；與 `bridgeTarget` 是同一套比對）。
+    private func screenAudioDevice(for display: DisplayModel) -> AudioDeviceModel? {
+        devices.first { device in
+            isScreenAudioDevice(device)
+                && (device.name.localizedCaseInsensitiveContains(display.name)
+                    || display.name.localizedCaseInsensitiveContains(device.name))
+        }
+    }
+
+    /// 使用中的螢幕：有鍵盤焦點的那一台（沒有視窗時是滑鼠所在的那台）。
+    private static var activeDisplayID: CGDirectDisplayID? {
+        guard let screen = NSScreen.main,
+              let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        else { return nil }
+        return CGDirectDisplayID(number.uint32Value)
     }
 
     /// 依鏡射可用性切 driver 模式：DDC 通 → 鏡射（樣本原樣通過）；

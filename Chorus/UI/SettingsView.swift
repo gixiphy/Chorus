@@ -842,18 +842,22 @@ private struct AudioSettingsTab: View {
             Text("運作中").foregroundStyle(.green)
         }
         Picker("轉送到", selection: Binding(
-            get: { appState.virtualDriver.targetUID },
+            get: { appState.settings.virtualTargetUID },
             set: { uid in
-                guard let uid else { return }
-                appState.virtualDriver.setTarget(uid: uid)
-                appState.audioManager.updateVirtualMirrorMode()
+                appState.settings.virtualTargetUID = uid
+                appState.audioManager.updateVirtualTarget()
             }
         )) {
+            Text("自動（跟著使用中的螢幕）").tag(String?.none)
             ForEach(proxyCandidates, id: \.uid) { device in
                 Text(device.name).tag(Optional(device.uid))
             }
-            if appState.virtualDriver.targetUID == nil {
-                Text("（未設定）").tag(String?.none)
+        }
+        LabeledContent("目前送到") {
+            if let name = currentTargetName {
+                Text(name).foregroundStyle(.secondary)
+            } else {
+                Text("找不到轉送目標——聲音會沒有").foregroundStyle(.orange)
             }
         }
         LabeledContent("音量模式") {
@@ -884,9 +888,15 @@ private struct AudioSettingsTab: View {
             Button("移除驅動…", role: .destructive) { uninstall() }
                 .disabled(busy)
         }
-        Text("把音量鍵／Touch Bar 交給它：設為預設輸出。之後調整音量都會轉到上面選的實體輸出。選單列會把兩者併成一列——轉送目標不再單獨出現。")
+        Text("把音量鍵／Touch Bar 交給它：設為預設輸出。自動模式下轉送目標會跟著使用中的螢幕走，螢幕關掉或拔掉就退回內建輸出——不會靜靜沒有聲音。選單列會把它與轉送目標併成一列。")
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    /// driver 現在實際轉送到哪台（自動模式下會隨螢幕變動）。
+    private var currentTargetName: String? {
+        guard let uid = appState.virtualDriver.targetUID else { return nil }
+        return appState.audioManager.devices.first { $0.uid == uid }?.name
     }
 
     private var virtualModel: AudioDeviceModel? {

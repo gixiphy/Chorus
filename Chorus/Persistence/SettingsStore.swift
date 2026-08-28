@@ -38,6 +38,7 @@ final class SettingsStore {
         static let outputPriority = "chorus.audio.outputPriority"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
+        static let virtualTargetUID = "chorus.audio.virtualTargetUID"
         static let automationServer = "chorus.automation.serverEnabled"
         static let automationPort = "chorus.automation.serverPort"
     }
@@ -223,6 +224,13 @@ final class SettingsStore {
         didSet { defaults.set(keepAwakeDisplayUUID, forKey: Key.keepAwakeDisplayUUID) }
     }
 
+    /// 虛擬輸出裝置的轉送目標：**nil＝自動**（跟著使用中的螢幕走，都沒有就
+    /// 回內建輸出）。指定 UID 則固定送那台——但它不在時仍會自動退回，
+    /// 不會讓聲音消失；它回來時再接回去。
+    var virtualTargetUID: String? {
+        didSet { defaults.set(virtualTargetUID, forKey: Key.virtualTargetUID) }
+    }
+
     /// localhost 自動化 HTTP 介面。**預設關閉**（權限功能紀律）；
     /// 開啟時才生成 token。
     var automationServerEnabled: Bool {
@@ -280,6 +288,7 @@ final class SettingsStore {
         outputPriority = defaults.stringArray(forKey: Key.outputPriority) ?? []
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
+        virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)
     }

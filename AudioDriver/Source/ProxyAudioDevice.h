@@ -73,7 +73,10 @@ class ProxyAudioDevice {
                             UInt32 inNumberAddresses,
                             const AudioObjectPropertyAddress *inAddresses);
     void setupAudioDevicesListener();
-    void setupTargetOutputDevice();
+    /// force：即使目標裝置的 id 沒變也整條重接。裝置消失又回來時 id 可能
+    /// 一樣，而我們手上的那個已經是死的——沒有 force 就會被「沒有變動」
+    /// 的捷徑擋掉，聲音再也回不來。App 明確寫入設定時一律 force。
+    void setupTargetOutputDevice(bool force = false);
     void initializeOutputDevice();
     void deinitializeOutputDeviceNoLock();
     void deinitializeOutputDevice();

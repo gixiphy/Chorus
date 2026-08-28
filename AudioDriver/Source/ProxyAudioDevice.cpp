@@ -4888,14 +4888,14 @@ void ProxyAudioDevice::matchOutputDeviceSampleRate()
     matchOutputDeviceSampleRateNoLock();
 }
 
-void ProxyAudioDevice::setupTargetOutputDevice() {
-    DebugMsg("ProxyAudio: setupTargetOutputDevice");
+void ProxyAudioDevice::setupTargetOutputDevice(bool force) {
+    DebugMsg("ProxyAudio: setupTargetOutputDevice force: %d", force);
     AudioDevice newOutputDevice = findTargetOutputAudioDevice();
 
     DebugMsg("ProxyAudio: setupTargetOutputDevice newOutputDevice: %d", newOutputDevice.id);
     CAMutex::Locker locker(outputDeviceMutex);
     
-    if (outputDevice.isValid() && outputDevice.id == newOutputDevice.id
+    if (!force && outputDevice.isValid() && outputDevice.id == newOutputDevice.id
         && outputDevice.bufferFrameSize == outputDeviceBufferFrameSize) {
         DebugMsg("ProxyAudio: setupTargetOutputDevice no change in device");
         return;
@@ -5739,7 +5739,7 @@ void ProxyAudioDevice::setOutputDevice(CFStringRef deviceUID) {
     });
     
     ExecuteInAudioOutputThread(^{
-        setupTargetOutputDevice();
+        setupTargetOutputDevice(true);
     });
 }
 
