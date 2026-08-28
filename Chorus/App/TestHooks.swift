@@ -1,5 +1,6 @@
 #if DEBUG
 import ChorusCore
+import CoreAudio
 import Foundation
 
 /// DEBUG 專用測試掛鉤：
@@ -16,6 +17,9 @@ final class TestHooks {
     private var observer: (any NSObjectProtocol)?
     /// 最近一次 `control` 動作的回應，寫進 state dump 供斷言。
     private var lastControlResponse: ControlResponse?
+    /// tapProbe 的結果（B6-1 權限驗證：spike 從終端機跑不算數，
+    /// TCC 歸屬的是負責行程，要在 Chorus.app 內實測）。
+    private var tapProbeResult: [String: Any]?
 
     init(appState: AppState) {
         self.appState = appState
@@ -161,6 +165,14 @@ final class TestHooks {
             if let name = info["value"], let scene = appState.sceneStore.scene(named: name) {
                 appState.sceneStore.delete(id: scene.id)
             }
+        case "tapProbe":
+            // B6-0 §1.2 的權限驗證：在 App 行程內建 tap＋aggregate＋IOProc
+            // 抓 3 秒，回報每一步的 OSStatus 與峰值。全程 unmuted 不影響播放。
+            tapProbeResult = ["state": "running"]
+            Task.detached { [weak self] in
+                let result = Self.performTapProbe()
+                await MainActor.run { self?.tapProbeResult = result }
+            }
         case "control":
             // value = ControlRequest JSON。走動詞層的完整路徑（驗證＋執行），
             // 不需要開 HTTP server 也不需要 token——B4-1 的 E2E 入口。
@@ -236,6 +248,105 @@ final class TestHooks {
         case let .duration(seconds): "duration:\(Int(seconds))"
         case let .whileDisplayConnected(uuid): "display:\(uuid)"
         }
+    }
+
+    // MARK: - Tap 權限探針（B6-1 前置）
+
+    private nonisolated static func performTapProbe() -> [String: Any] {
+        func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+            AudioObjectPropertyAddress(mSelector: selector,
+                                       mScope: kAudioObjectPropertyScopeGlobal,
+                                       mElement: kAudioObjectPropertyElementMain)
+        }
+        func uid(of object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
+            var addr = address(selector)
+            var size = UInt32(MemoryLayout<CFString?>.size)
+            var value: CFString?
+            guard AudioObjectGetPropertyData(object, &addr, 0, nil, &size, &value) == noErr else { return nil }
+            return value as String?
+        }
+
+        var defaultAddr = address(kAudioHardwarePropertyDefaultOutputDevice)
+        var outputID = AudioObjectID(kAudioObjectUnknown)
+        var idSize = UInt32(MemoryLayout<AudioObjectID>.size)
+        _ = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &defaultAddr, 0, nil, &idSize, &outputID)
+        guard let outputUID = uid(of: outputID, kAudioDevicePropertyDeviceUID) else {
+            return ["state": "done", "step": "defaultOutput", "status": -1]
+        }
+
+        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        description.name = "Chorus tap probe"
+        description.isPrivate = true
+        description.muteBehavior = .unmuted
+        var tapID = AudioObjectID(kAudioObjectUnknown)
+        let createStatus = AudioHardwareCreateProcessTap(description, &tapID)
+        guard createStatus == noErr else {
+            return ["state": "done", "step": "createTap", "status": Int(createStatus)]
+        }
+        defer { AudioHardwareDestroyProcessTap(tapID) }
+        guard let tapUID = uid(of: tapID, kAudioTapPropertyUID) else {
+            return ["state": "done", "step": "tapUID", "status": -1]
+        }
+
+        let aggregate: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "Chorus Tap Probe",
+            kAudioAggregateDeviceUIDKey: "com.hermes.Chorus.tapprobe.\(UUID().uuidString)",
+            kAudioAggregateDeviceMainSubDeviceKey: outputUID,
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceIsStackedKey: false,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: outputUID]],
+            kAudioAggregateDeviceTapListKey: [[
+                kAudioSubTapDriftCompensationKey: true,
+                kAudioSubTapUIDKey: tapUID,
+            ]],
+        ]
+        var aggregateID = AudioObjectID(kAudioObjectUnknown)
+        let aggregateStatus = AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &aggregateID)
+        guard aggregateStatus == noErr else {
+            return ["state": "done", "step": "createAggregate", "status": Int(aggregateStatus)]
+        }
+        defer { AudioHardwareDestroyAggregateDevice(aggregateID) }
+
+        final class Stats: @unchecked Sendable {
+            let lock = NSLock()
+            var callbacks = 0
+            var peak: Float = 0
+        }
+        let stats = Stats()
+        var procID: AudioDeviceIOProcID?
+        let procStatus = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, nil) { _, inInputData, _, _, _ in
+            let list = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
+            stats.lock.lock()
+            stats.callbacks += 1
+            for buffer in list {
+                guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+                for index in 0..<Int(buffer.mDataByteSize / 4) {
+                    stats.peak = max(stats.peak, abs(data[index]))
+                }
+            }
+            stats.lock.unlock()
+        }
+        guard procStatus == noErr, let procID else {
+            return ["state": "done", "step": "createIOProc", "status": Int(procStatus)]
+        }
+        defer { AudioDeviceDestroyIOProcID(aggregateID, procID) }
+
+        let startStatus = AudioDeviceStart(aggregateID, procID)
+        guard startStatus == noErr else {
+            return ["state": "done", "step": "start", "status": Int(startStatus)]
+        }
+        Thread.sleep(forTimeInterval: 3)
+        AudioDeviceStop(aggregateID, procID)
+
+        stats.lock.lock()
+        let callbacks = stats.callbacks
+        let peak = stats.peak
+        stats.lock.unlock()
+        return [
+            "state": "done", "step": "capture", "status": 0,
+            "callbacks": callbacks, "peak": Double(peak),
+        ]
     }
 
     private func startDumpLoop(to url: URL) {
@@ -322,6 +433,7 @@ final class TestHooks {
             "scenes": appState.sceneStore.scenes.map { scene in
                 ["name": scene.name, "requests": scene.requests.count] as [String: Any]
             },
+            "tapProbe": tapProbeResult as Any? ?? NSNull(),
             "lastControl": lastControlResponse
                 .flatMap { try? JSONEncoder().encode($0) }
                 .flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? NSNull(),
