@@ -21,6 +21,7 @@ final class AppState {
     let virtualDriver: VirtualAudioDriverController
     let keepAwake: KeepAwakeController
     let emergencyRestore: EmergencyRestoreMonitor
+    let automation: AutomationExecutor
 
     init(instance: InstanceConfig = .current) {
         self.instance = instance
@@ -93,6 +94,17 @@ final class AppState {
         AppStateRegistry.keepAwake = keepAwake
         coordinator.attachAutoController(autoBrightness)
         coordinator.attachKeepAwake(keepAwake)
+
+        automation = AutomationExecutor(
+            settings: settings,
+            displayManager: displayManager,
+            audioManager: audioManager,
+            autoBrightness: autoBrightness,
+            keepAwake: keepAwake,
+            coordinator: coordinator,
+            pairedPeers: pairedPeers,
+            sessionManager: sessionManager
+        )
 
         // 「接著這台螢幕時防睡眠」是唯一跨重啟保留的模式
         if let uuid = settings.keepAwakeDisplayUUID {

@@ -14,6 +14,8 @@ final class TestHooks {
     private let appState: AppState
     private var dumpTask: Task<Void, Never>?
     private var observer: (any NSObjectProtocol)?
+    /// 最近一次 `control` 動作的回應，寫進 state dump 供斷言。
+    private var lastControlResponse: ControlResponse?
 
     init(appState: AppState) {
         self.appState = appState
@@ -150,6 +152,18 @@ final class TestHooks {
                     }
                 }
             }
+        case "control":
+            // value = ControlRequest JSON。走動詞層的完整路徑（驗證＋執行），
+            // 不需要開 HTTP server 也不需要 token——B4-1 的 E2E 入口。
+            if let json = info["value"], let data = json.data(using: .utf8),
+               let request = try? JSONDecoder().decode(ControlRequest.self, from: data) {
+                lastControlResponse = appState.automation.execute(request)
+            } else {
+                lastControlResponse = .failure(.badValue(
+                    info["value"] ?? "",
+                    hint: "不是合法的 ControlRequest JSON"
+                ))
+            }
         case "restoreAllDisplayPower":
             appState.displayManager.restoreAllDisplayPower()
         case "emergencyGesture":
@@ -262,6 +276,9 @@ final class TestHooks {
                 "remaining": appState.keepAwake.remainingSeconds.map { $0 as Any } ?? NSNull(),
                 "preventsSystemSleep": appState.keepAwake.alsoPreventSystemSleep,
             ] as [String: Any],
+            "lastControl": lastControlResponse
+                .flatMap { try? JSONEncoder().encode($0) }
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? NSNull(),
             "emergencyRestore": [
                 "armed": appState.emergencyRestore.isArmed,
                 "trusted": appState.emergencyRestore.isTrusted,
