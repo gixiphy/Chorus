@@ -287,34 +287,47 @@ struct DeviceDiagramView: View {
     }
 }
 
-/// 配置圖背景照：完整顯示（scaledToFit，不裁切）；載入一次快取，
-/// 避免拖動節點時每次重繪都從磁碟重讀。
+/// 已載入照片的快取：避免拖動節點時每次重繪都從磁碟重讀。
+/// 以修改時間一併比對——背景照的檔名固定，換照片時 URL 不變、只有內容變。
+@MainActor
+private enum DiagramImageCache {
+    private static var entries: [URL: (modified: Date?, image: NSImage)] = [:]
+
+    static func image(for url: URL) -> NSImage? {
+        let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate
+        if let entry = entries[url], entry.modified == modified { return entry.image }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        entries[url] = (modified, image)
+        return image
+    }
+}
+
+/// 配置圖背景照：完整顯示（scaledToFit，不裁切）。
+/// 同步載入——非同步載入在初始內容為空、尺寸為零時不保證觸發，照片會整片不見。
 private struct DiagramBackgroundView: View {
     let url: URL
-    @State private var image: NSImage?
 
+    @ViewBuilder
     var body: some View {
-        Group {
-            if let image {
-                // 節點卡片有 material 底，照片可以清楚顯示；留一點淡化避免搶走節點。
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .opacity(0.8)
-            }
+        if let image = DiagramImageCache.image(for: url) {
+            // 節點卡片有 material 底，照片可以清楚顯示；留一點淡化避免搶走節點。
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .opacity(0.8)
+                .allowsHitTesting(false)
         }
-        .allowsHitTesting(false)
-        .task(id: url) { image = NSImage(contentsOf: url) }
     }
 }
 
 /// 補充照片縮圖：點擊以 popover 放大預覽（完整照片，不裁切）。
 private struct PhotoThumbnailView: View {
     let url: URL
-    @State private var image: NSImage?
     @State private var showingPreview = false
 
     var body: some View {
+        let image = DiagramImageCache.image(for: url)
         Button {
             showingPreview = true
         } label: {
@@ -341,7 +354,6 @@ private struct PhotoThumbnailView: View {
                     .padding(6)
             }
         }
-        .task(id: url) { image = NSImage(contentsOf: url) }
     }
 }
 
