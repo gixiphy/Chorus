@@ -104,23 +104,41 @@ final class AudioProcessRegistry {
             .map(\.objectID)
     }
 
+    /// 歸組結果快取（bundleID → root）。歸組是 O(執行中 App 數) 的前綴
+    /// 比對，而 listable／audible／member 每次查詢都要它——輸入
+    /// （processes、appKinds）只在 refresh／injectFake 變，就在那裡清。
+    @ObservationIgnored private var rootCache: [String: String??] = [:]
+
     private func rootBundleID(of entry: Entry) -> String? {
         guard let bundleID = entry.bundleID else { return nil }
-        return AudioProcessGrouping.rootBundleID(for: bundleID, appKinds: appKinds)
+        if let cached = rootCache[bundleID] { return cached ?? nil }
+        let root = AudioProcessGrouping.rootBundleID(for: bundleID, appKinds: appKinds)
+        rootCache[bundleID] = .some(root)
+        return root
     }
 
     /// App 圖示。行程還在就用它的（最快也最準）；已退出的 App
     /// （設定還留著、清單仍要顯示它）退回去查安裝位置。
+    ///
+    /// 快取而且**回傳同一個 NSImage 實例**：這在每列每次描繪都被呼叫
+    /// （拖滑桿＝每秒數十次 × 列數），每次都新建 NSImage 除了慢，
+    /// SwiftUI 還會把「新實例」當「圖變了」。圖示在 App 生命週期內
+    /// 實務上不變，不設失效。
     func icon(bundleID: String) -> NSImage? {
+        if let cached = iconCache.object(forKey: bundleID as NSString) { return cached }
+        let icon: NSImage?
         if let pid = entry(bundleID: bundleID)?.pid,
-           let icon = NSRunningApplication(processIdentifier: pid)?.icon {
-            return icon
+           let running = NSRunningApplication(processIdentifier: pid)?.icon {
+            icon = running
+        } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            icon = NSWorkspace.shared.icon(forFile: url.path)
+        } else {
+            icon = nil
         }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            return nil
-        }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        if let icon { iconCache.setObject(icon, forKey: bundleID as NSString) }
+        return icon
     }
+    @ObservationIgnored private let iconCache = NSCache<NSString, NSImage>()
 
     /// 顯示名稱。行程在就用行程的；不在就查安裝位置；都查不到就退回
     /// bundle id 的最後一段（總比一串反轉網域好認）。
@@ -136,6 +154,7 @@ final class AudioProcessRegistry {
         guard !isFake else { return }
         startListeningIfNeeded()
         cachedOwnProcessObjectID = nil // coreaudiod 重啟後 object 會換，見宣告處
+        rootCache = [:] // appKinds 要重建，歸組結果跟著失效
         // App root 來自執行中的 App 清單，不是音訊行程清單——
         // 主 App 可能根本沒有音訊行程（聲音全在 helper 裡）
         appKinds = NSWorkspace.shared.runningApplications.reduce(into: [:]) { kinds, app in
@@ -195,6 +214,7 @@ final class AudioProcessRegistry {
     #if DEBUG
     func injectFake(_ entries: [Entry]) {
         isFake = true
+        rootCache = [:]
         processes = entries
         // fake 沒有 NSWorkspace 可查：App root 直接取自 entries 自己的身分
         appKinds = entries.reduce(into: [:]) { kinds, entry in

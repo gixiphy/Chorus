@@ -9,6 +9,21 @@ import Observation
 final class SettingsStore {
     private let defaults: UserDefaults
 
+    /// 拖桿路徑（音量／亮度／逐 App 表／EQ）的持久化去抖。這些值在拖動
+    /// 時每秒寫 30–60 次，逐筆 JSON encode ＋ XPC 給 cfprefsd 是純浪費
+    /// ——記憶體裡的值才是權威，defaults 只要拿到尾端那筆。App 被殺
+    /// 最多丟半秒的滑桿位置，這些鍵都只是「上次的值」，可以承受。
+    @ObservationIgnored private var pendingPersists: [String: Task<Void, Never>] = [:]
+    private func persistDebounced(_ key: String, _ write: @escaping @MainActor () -> Void) {
+        pendingPersists[key]?.cancel()
+        pendingPersists[key] = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            write()
+            self?.pendingPersists[key] = nil
+        }
+    }
+
     private enum Key {
         static let forceSoftwareDimming = "chorus.display.forceSoftwareDimming"
         static let subZeroDimming = "chorus.display.subZeroDimming"
@@ -74,12 +89,22 @@ final class SettingsStore {
 
     /// 各顯示器最後設定的亮度（UUID → 0–1），重啟後作為初始值。
     private var lastBrightness: [String: Double] {
-        didSet { defaults.set(lastBrightness, forKey: Key.lastBrightness) }
+        didSet {
+            persistDebounced(Key.lastBrightness) { [weak self] in
+                guard let self else { return }
+                self.defaults.set(self.lastBrightness, forKey: Key.lastBrightness)
+            }
+        }
     }
 
     /// 各音訊裝置最後設定的音量（device UID → 0–1）；DDC 橋接裝置讀不到現值時用。
     private var lastVolume: [String: Double] {
-        didSet { defaults.set(lastVolume, forKey: Key.lastVolume) }
+        didSet {
+            persistDebounced(Key.lastVolume) { [weak self] in
+                guard let self else { return }
+                self.defaults.set(self.lastVolume, forKey: Key.lastVolume)
+            }
+        }
     }
 
     /// 自動亮度（環境光感器驅動）總開關。
@@ -181,8 +206,10 @@ final class SettingsStore {
     /// （B6-3 路由、B6-5 EQ），Codable 的往返比手工拆字典可靠。
     var appAudio: AppAudioSettings {
         didSet {
-            guard let data = try? JSONEncoder().encode(appAudio) else { return }
-            defaults.set(data, forKey: Key.appAudio)
+            persistDebounced(Key.appAudio) { [weak self] in
+                guard let self, let data = try? JSONEncoder().encode(self.appAudio) else { return }
+                self.defaults.set(data, forKey: Key.appAudio)
+            }
         }
     }
 
@@ -201,8 +228,10 @@ final class SettingsStore {
     /// 而 AutoEq 校正是綁在**那一支**上的。
     var deviceEQ: [String: EQSettings] {
         didSet {
-            guard let data = try? JSONEncoder().encode(deviceEQ) else { return }
-            defaults.set(data, forKey: Key.deviceEQ)
+            persistDebounced(Key.deviceEQ) { [weak self] in
+                guard let self, let data = try? JSONEncoder().encode(self.deviceEQ) else { return }
+                self.defaults.set(data, forKey: Key.deviceEQ)
+            }
         }
     }
 

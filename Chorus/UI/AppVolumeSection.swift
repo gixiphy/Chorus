@@ -14,6 +14,12 @@ struct AppVolumeSection: View {
 
     var body: some View {
         if case .active = appState.tapEngine.state {
+            // 兩份清單每次 body 都要重算（O(行程×App) 的歸組＋排序），
+            // 而 body 在滑桿拖動時每個 tick 都重跑——整個 body 只算一次，
+            // 不讓 dormantApps／listedApps 各自再算一輪 activeApps
+            let active = activeApps
+            let dormant = dormantApps(excluding: Set(active))
+            let listed = showAll ? active + dormant : active
             VStack(alignment: .leading, spacing: 8) {
                 Divider()
                 HStack(spacing: 6) {
@@ -21,8 +27,8 @@ struct AppVolumeSection: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    if !dormantApps.isEmpty {
-                        Button(showAll ? "只看使用中" : "全部 \(dormantApps.count + activeApps.count)") {
+                    if !dormant.isEmpty {
+                        Button(showAll ? "只看使用中" : "全部 \(dormant.count + active.count)") {
                             showAll.toggle()
                         }
                         .buttonStyle(.plain)
@@ -31,13 +37,13 @@ struct AppVolumeSection: View {
                     }
                 }
 
-                if listedApps.isEmpty {
+                if listed.isEmpty {
                     Text("目前沒有 App 在播放聲音")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(listedApps, id: \.self) { bundleID in
+                        ForEach(listed, id: \.self) { bundleID in
                             AppVolumeRow(bundleID: bundleID)
                         }
                     }
@@ -64,25 +70,21 @@ struct AppVolumeSection: View {
     }
 
     /// 有音訊行程但沒在發聲、也沒調整過的。
-    private var dormantApps: [String] {
-        let active = Set(activeApps)
-        return appState.tapEngine.registry.listableApps
+    private func dormantApps(excluding active: Set<String>) -> [String] {
+        appState.tapEngine.registry.listableApps
             .filter { !active.contains($0) }
-    }
-
-    private var listedApps: [String] {
-        showAll ? activeApps + dormantApps : activeApps
     }
 
     private func orderedUnique(_ bundleIDs: [String]) -> [String] {
         var seen = Set<String>()
         let registry = appState.tapEngine.registry
+        // 名稱先解一次再排序——比較器裡查 displayName 的話，已退出的 App
+        // 每次比較都是一趟 LaunchServices（與 registry.listableApps 同一個修法）
         return bundleIDs
             .filter { seen.insert($0).inserted }
-            .sorted {
-                registry.displayName(bundleID: $0)
-                    .localizedStandardCompare(registry.displayName(bundleID: $1)) == .orderedAscending
-            }
+            .map { (id: $0, name: registry.displayName(bundleID: $0)) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            .map(\.id)
     }
 }
 

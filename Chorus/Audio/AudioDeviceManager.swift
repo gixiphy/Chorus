@@ -363,7 +363,10 @@ final class AudioDeviceManager {
                 ? device : nil
         }
         for device in devices {
-            device.softwareVolumeActive = device.uid == volumeTarget?.uid
+            // @Observable 的同值寫入也會觸發 UI 失效，而這裡每個
+            // snapshot（拖音量時每秒最多 20 個）都跑——只寫有變的
+            let active = device.uid == volumeTarget?.uid
+            if device.softwareVolumeActive != active { device.softwareVolumeActive = active }
         }
         if let target = volumeTarget {
             // 上次記住的值（滑桿在裝置沒有可讀音量時的唯一來源）
@@ -536,22 +539,31 @@ final class AudioDeviceManager {
               devices.contains(where: { $0.uid == VirtualAudioDriverController.deviceUID }),
               let target = preferredVirtualTargetUID()
         else { return }
-        if virtualDriver.targetUID == target {
-            guard arrived.contains(target) else { return }
-            // 同一個 UID 回來了：延遲一下再重寫，讓裝置先就緒
-            Task { [weak self] in
+        let changed = virtualDriver.targetUID != target
+        if arrived.contains(target) {
+            // 目標裝置**這一輪才出現**（螢幕剛開回來）——不論 UID 有沒有變
+            // 都延遲重寫，讓裝置先就緒：沒就緒就接上的話 driver 之後收不到
+            // 通知，聲音不會自己回來。原本只有「同 UID 回來」那半有延遲，
+            // 「先退到內建、螢幕回來再切回去」這條常見路徑是立刻寫的。
+            // 單一可取消排程：喚醒時裝置常常連環重新宣告，只寫最後一次。
+            retargetTask?.cancel()
+            retargetTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(1500))
-                guard let self, self.virtualDriver?.targetUID == target,
-                      self.devices.contains(where: { $0.uid == target }) else { return }
+                guard !Task.isCancelled, let self,
+                      self.devices.contains(where: { $0.uid == target }),
+                      self.preferredVirtualTargetUID() == target else { return }
                 self.virtualDriver?.setTarget(uid: target)
                 self.updateVirtualMirrorMode()
+                if changed { self.syncVirtualVolume(toTargetUID: target) }
             }
             return
         }
+        guard changed else { return }
         virtualDriver.setTarget(uid: target)
         updateVirtualMirrorMode()
         syncVirtualVolume(toTargetUID: target)
     }
+    @ObservationIgnored private var retargetTask: Task<Void, Never>?
 
     /// 轉送目標換成有原生音量的裝置時，把虛擬裝置的滑桿對齊目標的現值
     /// ——鏡射的語意是「滑桿顯示目標的真實狀態」，與 DDC 路的

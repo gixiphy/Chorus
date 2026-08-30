@@ -165,10 +165,23 @@ final class TapEngine {
 
     private func update(bundleID: String, _ mutate: (inout AppAudioSetting) -> Void) {
         var all = settings.appAudio
-        var entry = all[bundleID]
+        let before = all[bundleID]
+        var entry = before
         mutate(&entry)
         all[bundleID] = entry
         settings.appAudio = all
+        // 快路徑：只有 gain／mute 在動（滑桿拖動每秒 30–60 個 tick），
+        // session 存在且組成、路由、EQ 都沒變 → 推 atomic 就好。全量對帳
+        // 一次要列舉兩輪 HAL 裝置清單，在拖動路徑上是主執行緒的大宗浪費。
+        // session 不在（建立失敗後重試耗盡）就照舊走全量——設定變更
+        // 本來就是讓它復活的自然事件之一。
+        if sessions[bundleID] != nil,
+           entry.needsTap, before.needsTap,
+           entry.outputDeviceUID == before.outputDeviceUID,
+           entry.eq == before.eq {
+            pushSessionProcessing(bundleID)
+            return
+        }
         reconcileSessions()
     }
 
@@ -207,8 +220,14 @@ final class TapEngine {
     func updateDeviceProcessing(
         deviceUID: String?, gain: Float, muted: Bool, eq: EQSettings?
     ) {
+        let gain = AppAudioSetting.clampGain(gain)
+        // 每個 AudioWorker snapshot（音量拖動時最多每秒 20 個）都會走到
+        // 這裡；內容沒變就別對帳——裝置清單或引擎狀態變動各有自己的
+        // 對帳入口（audioDevicesChanged、reconcileSessions）
+        guard deviceUID != deviceTarget || gain != deviceGain
+            || muted != deviceMuted || eq != deviceEQ else { return }
         deviceTarget = deviceUID
-        deviceGain = AppAudioSetting.clampGain(gain)
+        deviceGain = gain
         deviceMuted = muted
         deviceEQ = eq
         reconcileGlobalSession()
@@ -245,15 +264,24 @@ final class TapEngine {
     /// 排除清單是**每一路音訊只處理一次**的執行點（DESIGN §2.2）：
     /// 已被 per-app tap 捕獲的行程要從全域 tap 排除，Chorus 自己更要
     /// （否則我們寫回的音訊會被自己抓走＝回授）。
-    private func reconcileGlobalSession() {
-        // 裝置清單只列一次——列舉會對每個裝置做 stream 配置的 HAL 讀取，
-        // 下面的 debug log 不該再列第二次
-        let available = backend.outputDeviceUIDs()
-        guard state == .active, let target = deviceTarget, available.contains(target)
-        else {
-            log.debug("global session 不成立：state=\(String(describing: self.state), privacy: .public) target=\(self.deviceTarget ?? "nil", privacy: .public) 在清單=\(self.deviceTarget.map(available.contains) ?? false, privacy: .public)")
+    /// `knownAvailable`：呼叫端剛列過的裝置清單。列舉會對每個裝置做
+    /// stream 配置的 HAL 讀取，`reconcileSessions` 已經列過就別再列一輪。
+    private func reconcileGlobalSession(knownAvailable: [String]? = nil) {
+        // 先看便宜的條件——taps 沒開（state ≠ active）或沒有裝置級處理
+        // 時**完全不碰 HAL**。這條路每個 AudioWorker snapshot 都會走到，
+        // 沒開 taps 的使用者不該為它付每秒數十次的裝置列舉。
+        guard state == .active, let target = deviceTarget else {
+            log.debug("global session 不成立：state=\(String(describing: self.state), privacy: .public) target=\(self.deviceTarget ?? "nil", privacy: .public)")
             stopGlobalSession()
             globalError = nil // 不再需要全域 session，舊錯誤跟著清
+            refreshErrorDisplay()
+            return
+        }
+        let available = knownAvailable ?? backend.outputDeviceUIDs()
+        guard available.contains(target) else {
+            log.debug("global session 不成立：target=\(target, privacy: .public) 不在裝置清單")
+            stopGlobalSession()
+            globalError = nil
             refreshErrorDisplay()
             return
         }
@@ -368,6 +396,7 @@ final class TapEngine {
 
         // 每次對帳重新算一次說明，不留上一輪的殘影
         var notice: String?
+        var hadSessionFailure = false
         let available = Set(backend.outputDeviceUIDs())
 
         for bundleID in desired.sorted() {
@@ -425,18 +454,29 @@ final class TapEngine {
                     // 裝置音量／亮度／同步完全不受影響（DESIGN §6 降級表）
                     log.error("per-app session 失敗：\(bundleID, privacy: .public) → \(outputUID, privacy: .public) \(String(describing: error), privacy: .public)")
                     notice = "無法接管 \(bundleID)：\(error)"
+                    hadSessionFailure = true
                     scheduleRetry()
                     continue
                 }
             }
             pushSessionProcessing(bundleID)
         }
-        tappedBundles = sessions.keys.sorted()
+        // @Observable 的同值寫入也會觸發 UI 失效——組成沒變就不動它
+        let nowTapped = sessions.keys.sorted()
+        if tappedBundles != nowTapped { tappedBundles = nowTapped }
         sessionNotice = notice
         // per-app 的組成變了 → 全域 tap 的排除清單也要跟著變，
         // 否則同一路音訊會被處理兩次（reconcileGlobalSession 末尾會
-        // 一併更新 lastTapError 的顯示）
-        reconcileGlobalSession()
+        // 一併更新 lastTapError 的顯示）。裝置清單沿用上面剛列過的那份
+        reconcileGlobalSession(knownAvailable: Array(available))
+        // 這一輪全部就位 → 重試預算歸零。原本只有全域 session 成功會歸零，
+        // per-app 的瞬時失敗（每次藍牙重協商都可能吃一次）會**累計**耗盡
+        // 預算，之後的失敗再也沒有定時重試——「EQ 靜靜死掉」的慢速版。
+        // 全域建立失敗時不歸零（globalSession 會是 nil），上限照常擋住
+        // 持續壞掉的無限重試。
+        if !hadSessionFailure, deviceTarget == nil || globalSession != nil {
+            rebuildRetries = 0
+        }
     }
 
     /// 某個 App 的 session 目前實際建在哪個裝置上（`nil` ＝ 沒有 session）。

@@ -165,7 +165,7 @@ private struct AlertVolumeRow: View {
             Slider(
                 value: Binding(
                     get: { appState.alertVolume.volume },
-                    set: { appState.alertVolume.setVolume($0) }
+                    set: { appState.alertVolume.setVolumeCoalesced($0) }
                 ),
                 in: 0...1
             )

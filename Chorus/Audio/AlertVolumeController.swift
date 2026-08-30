@@ -38,7 +38,15 @@ final class AlertVolumeController {
     }
 
     func refresh() {
-        volume = readLive().map { Double($0) / 100 } ?? 1
+        applyTask?.cancel()
+        applyTask = nil
+        pendingPercent = nil
+        let live = readLive()
+        volume = live.map { Double($0) / 100 } ?? 1
+        // 去重基準對齊剛讀到的現值。少了這行，外部（系統設定）改過之後
+        // 把滑桿拉回「上次我們套用的值」會被 lastApplied 吞掉——
+        // UI 顯示新值、系統停在舊值，正是 D22 那種「調了沒效果」
+        lastApplied = live
     }
 
     func setVolume(_ value: Double) {
@@ -49,6 +57,30 @@ final class AlertVolumeController {
         lastApplied = percent
         applyLive(percent)
     }
+
+    /// 拖桿用：顯示值立即更新，AppleScript 套用合併到尾端（100 ms 內
+    /// 只跑最後一筆）。`applyLive` 是主執行緒上的同步編譯＋執行，
+    /// 拖動時每一格都跑會讓整個選單卡住。
+    func setVolumeCoalesced(_ value: Double) {
+        let clamped = min(max(value, 0), 1)
+        volume = clamped
+        let percent = Int((clamped * 100).rounded())
+        guard percent != lastApplied else { return }
+        pendingPercent = percent
+        guard applyTask == nil else { return } // 尾端已排程，更新 pending 即可
+        applyTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled, let self else { return }
+            self.applyTask = nil
+            if let pending = self.pendingPercent, pending != self.lastApplied {
+                self.lastApplied = pending
+                self.applyLive(pending)
+            }
+            self.pendingPercent = nil
+        }
+    }
+    @ObservationIgnored private var applyTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingPercent: Int?
 
     // MARK: - AppleScript 通道
 
