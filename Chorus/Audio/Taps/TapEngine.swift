@@ -74,6 +74,11 @@ final class TapEngine {
     @ObservationIgnored private var monitor = TapHealthMonitor()
     @ObservationIgnored private var lastProbeStats = TapSessionStats()
     @ObservationIgnored private var tickTask: Task<Void, Never>?
+    /// 延遲重建（裝置重新配置後鏈路要 1–2 秒才穩）與失敗重試的排程。
+    @ObservationIgnored private var rebuildTask: Task<Void, Never>?
+    @ObservationIgnored private var rebuildRetries = 0
+    /// 測試把它調成 .zero；正式值對齊 driver 端「目標重新出現等 1.5 秒」。
+    @ObservationIgnored var rebuildDelay: Duration = .seconds(1.5)
 
     init(backend: any TapBackend, registry: AudioProcessRegistry, settings: SettingsStore) {
         self.backend = backend
@@ -158,6 +163,13 @@ final class TapEngine {
     /// 音訊裝置清單變了（插拔耳機、虛擬裝置上線）。指定路由的 App
     /// 可能因此**找回**它的目標裝置，所以要重新對帳。
     func audioDevicesChanged() {
+        // 啟動時撞上裝置空窗（藍牙耳機正在接上）探測會 failed——那是
+        // 暫時性的，不該是終態：裝置面貌一變就再試一次。
+        // anc-log 實測：引擎死在 failed 後整輪 EQ 靜靜缺席，沒人發現。
+        if case .failed = state, settings.audioTapsEnabled {
+            beginProbe()
+            return
+        }
         reconcileSessions()
     }
 
@@ -233,13 +245,35 @@ final class TapEngine {
             globalSession?.onDeviceReconfigured = { [weak self] in
                 guard let self, self.globalSession != nil else { return }
                 self.stopGlobalSession()
-                self.reconcileGlobalSession()
+                self.scheduleRebuild(after: self.rebuildDelay)
             }
             pushDeviceProcessing()
+            rebuildRetries = 0
         } catch {
             lastTapError = "裝置級處理啟動失敗：\(error)"
             stopGlobalSession()
+            scheduleRetry()
         }
+    }
+
+    /// 延遲後重新對帳（per-app ＋ 裝置級一起）。連續事件互相取消，
+    /// 只在最後一次事件的 delay 之後跑一趟——切一輪降噪模式只重建一次。
+    private func scheduleRebuild(after delay: Duration) {
+        rebuildTask?.cancel()
+        rebuildTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            self.reconcileSessions()
+        }
+    }
+
+    /// 建立失敗後的重試。沒有它，切降噪模式的空窗撞掉一次重建，
+    /// EQ 就從此靜靜死掉（anc-log 實測：session 消失且再也沒回來）。
+    /// 上限 5 次——真的壞掉時錯誤留在 lastTapError，等下一個自然事件。
+    private func scheduleRetry() {
+        guard rebuildRetries < 5 else { return }
+        rebuildRetries += 1
+        scheduleRebuild(after: .seconds(2))
     }
 
     private func pushDeviceProcessing() {
@@ -321,11 +355,13 @@ final class TapEngine {
                     sessionOutputUIDs[bundleID] = outputUID
                     sessionMemberBundles[bundleID] = members
                     // 裝置中途改取樣率（藍牙耳機切降噪）→ 這條 session 的
-                    // aggregate 格式已經過期，收舊建新
+                    // aggregate 格式已經過期。立刻收掉（別讓過期格式繼續出
+                    // 雜音），但**延遲重建**——鏈路還在重新協商時建 aggregate
+                    // 幾乎必失敗（AirPods 實測，2026-08-30）
                     sessions[bundleID]?.onDeviceReconfigured = { [weak self] in
                         guard let self, self.sessions[bundleID] != nil else { return }
                         self.stopSession(bundleID)
-                        self.reconcileSessions()
+                        self.scheduleRebuild(after: self.rebuildDelay)
                     }
                 } catch {
                     // 單一 App 失敗不拖垮引擎：記錄並繼續，其他 session 與
@@ -435,11 +471,15 @@ final class TapEngine {
     }
 
     private func shutdownSessions() {
+        rebuildTask?.cancel()
+        rebuildTask = nil
+        rebuildRetries = 0
         stopProbe()
         stopGlobalSession()
         for (_, session) in sessions { session.stop() }
         sessions = [:]
         sessionOutputUIDs = [:]
+        sessionMemberBundles = [:]
         tappedBundles = []
         lastTapError = nil
     }

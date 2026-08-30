@@ -398,10 +398,11 @@ struct TapEngineTests {
         return settings
     }
 
-    @Test("裝置中途重新配置（藍牙耳機切降噪）→ session 收舊建新、設定原樣重放")
-    func deviceReconfigureRebuildsSession() {
+    @Test("裝置中途重新配置（藍牙耳機切降噪）→ 立即收掉、延遲後重建、設定原樣重放")
+    func deviceReconfigureRebuildsSession() async throws {
         let (engine, backend, registry) = makeEngine(mode: .audio)
         injectAudibleApp(registry)
+        engine.rebuildDelay = .zero // 正式值 1.5s（等藍牙鏈路穩定）
         engine.setEnabled(true)
         engine.healthTick()
         engine.setGain(0.5, bundleID: "com.apple.Music")
@@ -409,8 +410,14 @@ struct TapEngineTests {
         #expect(first != nil)
 
         first?.simulateDeviceReconfigured()
-        let rebuilt = backend.liveSessions["com.apple.Music"]
-        #expect(first?.stopped == true) // 舊的收掉
+        #expect(first?.stopped == true) // 立即收掉——過期格式不能繼續出聲
+
+        var rebuilt: FakeTapSession?
+        for _ in 0..<100 {
+            rebuilt = backend.liveSessions["com.apple.Music"]
+            if rebuilt !== first { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(rebuilt !== first) // 新的 aggregate（新格式）
         #expect(rebuilt?.lastGain == 0.5) // 設定原樣重放
         #expect(engine.tappedBundles == ["com.apple.Music"])
