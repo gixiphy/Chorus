@@ -366,6 +366,9 @@ private final class CoreAudioTapSession: TapSession {
     private var procID: AudioDeviceIOProcID?
     /// EQ 版本號：每換一組係數 +1，render 端靠它決定要不要歸零濾波器狀態。
     private var eqGeneration: UInt32 = 0
+    /// 上次真正推進 render 端的 EQ（nil＝旁通）。相同內容的重複推送
+    /// 在 `setEQ` 就地擋掉，見該處註解。
+    private var lastPushedEQ: EQSettings?
 
     init(
         kind: TapSessionKind, context: TapRenderContext,
@@ -399,8 +402,15 @@ private final class CoreAudioTapSession: TapSession {
     /// 立刻釋放是不行的：可能正好有一個回呼在讀它，而 realtime 端沒有
     /// 任何辦法告訴我們「我讀完了」。詳見 `EQCoefficientBlock`。
     func setEQ(_ settings: EQSettings?) {
+        // 內容沒變就不換區塊：generation 一變 render 端就把濾波器狀態歸零
+        // （換 preset 不拖尾音的機制），對帳每次都重推同一份 EQ 的話，
+        // 每一次歸零都是一聲短暫雜訊（場次 D14 實聽回報，2026-08-30）
+        let effective = (settings?.isActive == true) ? settings : nil
+        guard effective != lastPushedEQ else { return }
+        lastPushedEQ = effective
+
         let previous = context.eqBlock.load(ordering: .relaxed)
-        guard let settings, settings.isActive else {
+        guard let settings = effective else {
             context.eqBlock.store(0, ordering: .releasing)
             retire(previous)
             return
