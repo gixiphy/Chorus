@@ -230,6 +230,11 @@ final class TapEngine {
             globalOutputUID = target
             globalExclusions = excluded
             deviceTapUID = target
+            globalSession?.onDeviceReconfigured = { [weak self] in
+                guard let self, self.globalSession != nil else { return }
+                self.stopGlobalSession()
+                self.reconcileGlobalSession()
+            }
             pushDeviceProcessing()
         } catch {
             lastTapError = "裝置級處理啟動失敗：\(error)"
@@ -315,6 +320,13 @@ final class TapEngine {
                     )
                     sessionOutputUIDs[bundleID] = outputUID
                     sessionMemberBundles[bundleID] = members
+                    // 裝置中途改取樣率（藍牙耳機切降噪）→ 這條 session 的
+                    // aggregate 格式已經過期，收舊建新
+                    sessions[bundleID]?.onDeviceReconfigured = { [weak self] in
+                        guard let self, self.sessions[bundleID] != nil else { return }
+                        self.stopSession(bundleID)
+                        self.reconcileSessions()
+                    }
                 } catch {
                     // 單一 App 失敗不拖垮引擎：記錄並繼續，其他 session 與
                     // 裝置音量／亮度／同步完全不受影響（DESIGN §6 降級表）

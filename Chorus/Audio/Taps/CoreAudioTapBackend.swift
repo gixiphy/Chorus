@@ -338,12 +338,23 @@ final class CoreAudioTapBackend: TapBackend {
 
     // MARK: - property 小工具
 
-    private nonisolated static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+    nonisolated static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(
             mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
+    }
+
+    nonisolated static func doubleProperty(
+        _ object: AudioObjectID, _ selector: AudioObjectPropertySelector
+    ) -> Double? {
+        var addr = address(selector)
+        var value: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        guard AudioObjectGetPropertyData(object, &addr, 0, nil, &size, &value) == noErr,
+              value > 0 else { return nil }
+        return value
     }
 
     nonisolated static func stringProperty(
@@ -366,9 +377,12 @@ private final class CoreAudioTapSession: TapSession {
     private var procID: AudioDeviceIOProcID?
     /// EQ 版本號：每換一組係數 +1，render 端靠它決定要不要歸零濾波器狀態。
     private var eqGeneration: UInt32 = 0
-    /// 上次真正推進 render 端的 EQ（nil＝旁通）。相同內容的重複推送
-    /// 在 `setEQ` 就地擋掉，見該處註解。
+    /// 上次真正推進 render 端的 EQ（nil＝旁通）與當時的取樣率。
+    /// 相同內容的重複推送在 `setEQ` 就地擋掉，見該處註解。
     private var lastPushedEQ: EQSettings?
+    private var lastPushedSampleRate: Double = 0
+    var onDeviceReconfigured: (@MainActor () -> Void)?
+    private var rateListener: AudioObjectPropertyListenerBlock?
 
     init(
         kind: TapSessionKind, context: TapRenderContext,
@@ -379,6 +393,19 @@ private final class CoreAudioTapSession: TapSession {
         self.tapID = tapID
         self.aggregateID = aggregateID
         self.procID = procID
+        listenForRateChanges()
+    }
+
+    /// 藍牙耳機切降噪／通透會讓裝置中途改取樣率，aggregate 的格式綁在
+    /// 建立時——不重建輕則雜音、重則卡在無聲。這裡只負責通知，
+    /// 收舊建新由擁有者（TapEngine）做。
+    private func listenForRateChanges() {
+        var address = CoreAudioTapBackend.address(kAudioDevicePropertyNominalSampleRate)
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.onDeviceReconfigured?() }
+        }
+        rateListener = block
+        AudioObjectAddPropertyListenerBlock(aggregateID, &address, .main, block)
     }
 
     var stats: TapSessionStats {
@@ -406,8 +433,14 @@ private final class CoreAudioTapSession: TapSession {
         // （換 preset 不拖尾音的機制），對帳每次都重推同一份 EQ 的話，
         // 每一次歸零都是一聲短暫雜訊（場次 D14 實聽回報，2026-08-30）
         let effective = (settings?.isActive == true) ? settings : nil
-        guard effective != lastPushedEQ else { return }
+        // 係數必須用裝置的實際取樣率算——AirPods 這類裝置會跑在 24k，
+        // 用參考 48k 算出來的 EQ 整條頻率都是錯的
+        let sampleRate = CoreAudioTapBackend.doubleProperty(
+            aggregateID, kAudioDevicePropertyNominalSampleRate
+        ) ?? EQSettings.referenceSampleRate
+        guard effective != lastPushedEQ || sampleRate != lastPushedSampleRate else { return }
         lastPushedEQ = effective
+        lastPushedSampleRate = sampleRate
 
         let previous = context.eqBlock.load(ordering: .relaxed)
         guard let settings = effective else {
@@ -417,7 +450,7 @@ private final class CoreAudioTapSession: TapSession {
         }
         eqGeneration &+= 1
         let block = EQCoefficientBlock.allocate(
-            coefficients: settings.coefficients(),
+            coefficients: settings.coefficients(sampleRate: sampleRate),
             preamp: settings.preampGain,
             generation: eqGeneration
         )
@@ -435,6 +468,11 @@ private final class CoreAudioTapSession: TapSession {
 
     func stop() {
         guard let procID else { return }
+        if let rateListener {
+            var address = CoreAudioTapBackend.address(kAudioDevicePropertyNominalSampleRate)
+            AudioObjectRemovePropertyListenerBlock(aggregateID, &address, .main, rateListener)
+            self.rateListener = nil
+        }
         // AudioDeviceStop 是同步的：回來之後不會再有回呼在跑，
         // 這時候釋放 EQ 區塊不需要延遲（context 的 deinit 會收尾）
         AudioDeviceStop(aggregateID, procID)

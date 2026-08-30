@@ -398,6 +398,24 @@ struct TapEngineTests {
         return settings
     }
 
+    @Test("裝置中途重新配置（藍牙耳機切降噪）→ session 收舊建新、設定原樣重放")
+    func deviceReconfigureRebuildsSession() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        let first = backend.liveSessions["com.apple.Music"]
+        #expect(first != nil)
+
+        first?.simulateDeviceReconfigured()
+        let rebuilt = backend.liveSessions["com.apple.Music"]
+        #expect(first?.stopped == true) // 舊的收掉
+        #expect(rebuilt !== first) // 新的 aggregate（新格式）
+        #expect(rebuilt?.lastGain == 0.5) // 設定原樣重放
+        #expect(engine.tappedBundles == ["com.apple.Music"])
+    }
+
     @Test("per-app session 也套裝置級處理（相乘、單次）——被接管的 App 不再繞過裝置 EQ 與軟體音量")
     func perAppSessionCarriesDeviceProcessing() {
         let (engine, backend, registry) = makeEngine(mode: .audio)

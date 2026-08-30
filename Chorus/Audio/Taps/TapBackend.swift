@@ -31,6 +31,10 @@ struct TapSessionStats: Sendable, Equatable {
 protocol TapSession: AnyObject {
     var kind: TapSessionKind { get }
     var stats: TapSessionStats { get }
+    /// 輸出裝置中途重新配置（藍牙耳機切降噪／通透會改取樣率）時觸發。
+    /// aggregate 的格式綁在建立時——擁有者收到後應**收舊建新**，
+    /// 否則輕則雜音、重則卡在無聲（AirPods 實測，2026-08-30）。
+    var onDeviceReconfigured: (@MainActor () -> Void)? { get set }
     func setGain(_ gain: Float)
     func setMuted(_ muted: Bool)
     /// 裝置級等化（B6-5）。`nil` 或未生效的設定＝拆掉 EQ，樣本原樣通過。
