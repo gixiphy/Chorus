@@ -88,7 +88,7 @@ targets:
         CFBundleDisplayName: Chorus
         CFBundleIconFile: Chorus
         CFBundleShortVersionString: "1.1.0"
-        CFBundleVersion: "51"
+        CFBundleVersion: "52"
         LSUIElement: true
         NSLocalNetworkUsageDescription: Chorus 會在區域網路上尋找你的其他 Mac，以同步亮度與音量。
         # 系統音訊擷取（CoreAudio process taps，B6）。這個 key 不在 Xcode 的

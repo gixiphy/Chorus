@@ -35,6 +35,9 @@ final class SettingsStore {
         static let appAudio = "chorus.audio.appSettings"
         static let softwareVolume = "chorus.audio.softwareVolumeDevices"
         static let deviceEQ = "chorus.audio.deviceEQ"
+        static let deviceEffects = "chorus.audio.deviceEffects"
+        static let effectQuarantine = "chorus.audio.effectQuarantine"
+        static let effectPendingLoad = "chorus.audio.effectPendingLoad"
         static let outputPriority = "chorus.audio.outputPriority"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
@@ -203,6 +206,27 @@ final class SettingsStore {
         }
     }
 
+    /// 每裝置的 AU 效果鏈（B6-8）。與 deviceEQ 同一個責任層與代價：
+    /// 鏈非空＝該裝置的所有音訊繞道 Chorus。順序即處理順序。
+    var deviceEffects: [String: [AUEffectEntry]] {
+        didSet {
+            guard let data = try? JSONEncoder().encode(deviceEffects) else { return }
+            defaults.set(data, forKey: Key.deviceEffects)
+        }
+    }
+
+    /// 被隔離的 AU 元件 key（上次載入時把 App 帶走的那些）。
+    /// 解除隔離是使用者的明確動作，不自動過期。
+    var effectQuarantine: Set<String> {
+        didSet { defaults.set(Array(effectQuarantine).sorted(), forKey: Key.effectQuarantine) }
+    }
+
+    /// 隔離閂：目前正在載入的元件 key。實例化前寫、成功後清；
+    /// 啟動時發現殘留＝上次載它時崩潰 → 收養進 effectQuarantine。
+    var effectPendingLoad: String? {
+        didSet { defaults.set(effectPendingLoad, forKey: Key.effectPendingLoad) }
+    }
+
     /// 輸出裝置的偏好順位（device UID，前面優先，B6-7）。**空陣列＝功能關閉**。
     ///
     /// 有順位時：偏好的裝置一接上就自動成為預設輸出，並還原它上次的音量。
@@ -285,6 +309,22 @@ final class SettingsStore {
         } else {
             deviceEQ = [:]
         }
+        if let data = defaults.data(forKey: Key.deviceEffects),
+           let decoded = try? JSONDecoder().decode([String: [AUEffectEntry]].self, from: data) {
+            deviceEffects = decoded
+        } else {
+            deviceEffects = [:]
+        }
+        // 隔離閂的收養（DESIGN-20260830-au-hosting §1.1）：殘留的載入中
+        // key ＝ 上次載那個外掛時整個 App 被帶走 → 進隔離名單
+        let adopted = EffectQuarantine.adopt(
+            pendingLoadKey: defaults.string(forKey: Key.effectPendingLoad),
+            into: Set(defaults.stringArray(forKey: Key.effectQuarantine) ?? [])
+        )
+        effectQuarantine = adopted
+        defaults.set(Array(adopted).sorted(), forKey: Key.effectQuarantine)
+        effectPendingLoad = nil
+        defaults.removeObject(forKey: Key.effectPendingLoad)
         outputPriority = defaults.stringArray(forKey: Key.outputPriority) ?? []
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
