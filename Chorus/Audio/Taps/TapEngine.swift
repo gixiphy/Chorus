@@ -181,6 +181,23 @@ final class TapEngine {
         deviceMuted = muted
         deviceEQ = eq
         reconcileGlobalSession()
+        // per-app session 的音訊已從全域 tap 排除——裝置級處理不在這裡
+        // 一併推，被接管的 App 就永遠套不到裝置 EQ／軟體音量
+        for bundleID in sessions.keys { pushSessionProcessing(bundleID) }
+    }
+
+    /// 把「App 自己的調整 × 裝置級處理」推進一條 per-app session。
+    ///
+    /// 它的輸出裝置正是裝置級處理的目標時，EQ 與軟體音量在這裡套
+    /// （相乘、單次——全域 tap 已排除這些行程，D17 的「只處理一次」
+    /// 由排除清單保證）；不是目標時只套 App 自己的調整。
+    private func pushSessionProcessing(_ bundleID: String) {
+        guard let session = sessions[bundleID] else { return }
+        let entry = settings.appAudio[bundleID]
+        let onDeviceChain = sessionOutputUIDs[bundleID] == deviceTarget
+        session.setGain(onDeviceChain ? entry.gain * deviceGain : entry.gain)
+        session.setMuted(entry.muted || (onDeviceChain && deviceMuted))
+        session.setEQ(onDeviceChain ? deviceEQ : nil)
     }
 
     /// per-app session 換人、裝置換人、權限狀態改變後都要重算。
@@ -287,11 +304,14 @@ final class TapEngine {
             }
             if sessions[bundleID] == nil {
                 do {
+                    // initialGain 也要是有效值（含裝置級軟體音量）——
+                    // 否則建立瞬間會先響一段只套 App 增益的音量再滑下去
+                    let onDeviceChain = outputUID == deviceTarget
                     sessions[bundleID] = try backend.startPlaythroughSession(
                         bundleID: bundleID,
                         memberBundleIDs: Array(members).sorted(),
                         outputDeviceUID: outputUID,
-                        initialGain: entry.gain
+                        initialGain: onDeviceChain ? entry.gain * deviceGain : entry.gain
                     )
                     sessionOutputUIDs[bundleID] = outputUID
                     sessionMemberBundles[bundleID] = members
@@ -302,8 +322,7 @@ final class TapEngine {
                     continue
                 }
             }
-            sessions[bundleID]?.setGain(entry.gain)
-            sessions[bundleID]?.setMuted(entry.muted)
+            pushSessionProcessing(bundleID)
         }
         tappedBundles = sessions.keys.sorted()
         lastTapError = notice

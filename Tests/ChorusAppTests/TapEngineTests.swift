@@ -398,6 +398,43 @@ struct TapEngineTests {
         return settings
     }
 
+    @Test("per-app session 也套裝置級處理（相乘、單次）——被接管的 App 不再繞過裝置 EQ 與軟體音量")
+    func perAppSessionCarriesDeviceProcessing() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        // 裝置級處理的目標＝該 session 的輸出裝置（預設輸出）
+        engine.updateDeviceProcessing(
+            deviceUID: "fake-output-uid", gain: 0.5, muted: false, eq: sampleEQ
+        )
+        let session = backend.liveSessions["com.apple.Music"]
+        #expect(session?.lastGain == 0.25) // 0.5（App）× 0.5（裝置）——相乘檢查點 D7
+        #expect(session?.lastEQ?.bands.count == 10) // 裝置 EQ 跟著套（D14/D17 的形狀）
+
+        // 收掉裝置級處理 → per-app 回到只有 App 自己的調整
+        engine.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
+        #expect(session?.lastGain == 0.5)
+        #expect(session?.lastEQ == nil)
+    }
+
+    @Test("路由到別的裝置的 App 不套預設輸出的裝置級處理")
+    func routedSessionSkipsOtherDevicesProcessing() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        engine.setOutputDevice("fake-headphones", bundleID: "com.apple.Music")
+        engine.updateDeviceProcessing(
+            deviceUID: "fake-output-uid", gain: 0.5, muted: false, eq: sampleEQ
+        )
+        let session = backend.liveSessions["com.apple.Music"]
+        #expect(session?.lastGain == 0.5) // 不乘別台裝置的軟體音量
+        #expect(session?.lastEQ == nil)
+    }
+
     @Test("EQ 送到全域 session；軟體音量與 EQ 共用同一條 tap")
     func eqSharesTheDeviceTap() {
         let (engine, backend, registry) = makeEngine(mode: .audio)
