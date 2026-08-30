@@ -637,6 +637,9 @@ private struct AudioSettingsTab: View {
     }
     @State private var busy = false
     @State private var errorMessage: String?
+    /// 等化面板展開中的裝置。整列可點（不是只有 disclosure 小三角）——
+    /// 點裝置名稱就把整個面板攤開。
+    @State private var expandedEQDevices: Set<String> = []
 
     /// 已在順位裡的裝置，依順位排。已拔掉的也留著顯示——不然使用者
     /// 看不到自己設過什麼，也刪不掉。
@@ -742,24 +745,41 @@ private struct AudioSettingsTab: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(appState.audioManager.devices) { device in
-                        DisclosureGroup {
-                            EQPanelView(device: device)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Text(device.name).font(.callout)
-                                if device.isDefault {
-                                    Text("預設")
-                                        .font(.caption2)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 1)
-                                        .background(.quaternary, in: Capsule())
+                        let expanded = expandedEQDevices.contains(device.uid)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Button {
+                                if expanded {
+                                    expandedEQDevices.remove(device.uid)
+                                } else {
+                                    expandedEQDevices.insert(device.uid)
                                 }
-                                Spacer()
-                                if appState.audioManager.eqSettings(for: device).isActive {
-                                    Image(systemName: "waveform.path.ecg")
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "chevron.right")
                                         .imageScale(.small)
                                         .foregroundStyle(.secondary)
+                                        .rotationEffect(expanded ? .degrees(90) : .zero)
+                                    Text(device.name).font(.callout)
+                                    if device.isDefault {
+                                        Text("預設")
+                                            .font(.caption2)
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 1)
+                                            .background(.quaternary, in: Capsule())
+                                    }
+                                    Spacer()
+                                    if appState.audioManager.eqSettings(for: device).isActive {
+                                        Image(systemName: "waveform.path.ecg")
+                                            .imageScale(.small)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
+                                // 整列都是點擊範圍——不是只有 disclosure 的小三角
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            if expanded {
+                                EQPanelView(device: device)
                             }
                         }
                     }
