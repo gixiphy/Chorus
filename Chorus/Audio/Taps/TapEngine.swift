@@ -335,7 +335,9 @@ final class TapEngine {
             // 尚未取得權限：先不建 tap，設定照留。轉 active 時會再對一次帳
             return
         }
-        let desired = Set(settings.appAudio.adjustedBundleIDs)
+        // needsTap 而不是 adjustedBundleIDs：存了關著的 per-app EQ
+        // 不代表要接管那個 App 的音訊（B6-8 起兩者分開）
+        let desired = Set(settings.appAudio.bundleIDsNeedingTap)
         // Array(...)：下面會改 sessions，不要邊走邊改字典的鍵視圖
         for bundleID in Array(sessions.keys) where !desired.contains(bundleID) {
             stopSession(bundleID)

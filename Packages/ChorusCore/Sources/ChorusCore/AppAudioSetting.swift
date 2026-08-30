@@ -10,11 +10,31 @@ public struct AppAudioSetting: Codable, Sendable, Equatable {
     public var muted: Bool
     /// 指定輸出裝置的 UID；`nil` ＝ 跟隨系統預設輸出（B6-3）。
     public var outputDeviceUID: String?
+    /// App 層等化（B6-8 擴充：與裝置層是**不同責任的兩次**，
+    /// DESIGN-20260830-au-hosting §1.2）。`nil` ＝ 沒有。
+    public var eq: EQSettings?
+    /// App 層 AU 效果鏈（B6-8）。順序即處理順序；空陣列＝沒有。
+    public var effects: [AUEffectEntry]
 
-    public init(gain: Float = 1, muted: Bool = false, outputDeviceUID: String? = nil) {
+    public init(
+        gain: Float = 1, muted: Bool = false, outputDeviceUID: String? = nil,
+        eq: EQSettings? = nil, effects: [AUEffectEntry] = []
+    ) {
         self.gain = AppAudioSetting.clampGain(gain)
         self.muted = muted
         self.outputDeviceUID = outputDeviceUID
+        self.eq = eq
+        self.effects = effects
+    }
+
+    /// 舊存檔沒有 eq／effects 欄位——缺欄位就是「沒有」，不是解碼失敗。
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        gain = AppAudioSetting.clampGain(try container.decode(Float.self, forKey: .gain))
+        muted = try container.decode(Bool.self, forKey: .muted)
+        outputDeviceUID = try container.decodeIfPresent(String.self, forKey: .outputDeviceUID)
+        eq = try container.decodeIfPresent(EQSettings.self, forKey: .eq)
+        effects = try container.decodeIfPresent([AUEffectEntry].self, forKey: .effects) ?? []
     }
 
     public static let gainRange: ClosedRange<Float> = 0...GainRamp.maxGain
@@ -23,10 +43,19 @@ public struct AppAudioSetting: Codable, Sendable, Equatable {
         min(max(value, gainRange.lowerBound), gainRange.upperBound)
     }
 
-    /// 沒有任何調整。**這是「要不要建 tap」的判準**（DESIGN §2.3 規則 2：
-    /// 沒被調整的 App 一個 tap 都不建，完全走原生路徑）。
+    /// 沒有任何值得**保存**的東西（儲存判準）。注意與 `needsTap` 不同：
+    /// 「EQ 存著但關掉」要保留設定（使用者調了十分鐘的 preset 不能因為
+    /// 暫時關掉就蒸發——與裝置版 EQ 同一態度），但不值得為它建 tap。
     public var isNeutral: Bool {
         gain == 1 && !muted && outputDeviceUID == nil
+            && eq == nil && effects.isEmpty
+    }
+
+    /// **「要不要建 tap」的判準**（DESIGN §2.3 規則 2：沒被調整的 App
+    /// 一個 tap 都不建）。eq 要**生效**、效果鏈要有**啟用中的格**才算。
+    public var needsTap: Bool {
+        gain != 1 || muted || outputDeviceUID != nil
+            || eq?.isActive == true || effects.contains(where: \.enabled)
     }
 
     /// realtime 端要的最終目標增益——靜音就是「目標 0」而不是另一條旁路，
@@ -57,9 +86,16 @@ public struct AppAudioSettings: Codable, Sendable, Equatable {
         }
     }
 
-    /// 需要 tap 的 bundle（排序後，讓 UI 與 state dump 穩定）。
+    /// 有任何保存內容的 bundle（排序後，讓 UI 與 state dump 穩定）。
+    /// UI 的「已調整」清單用它——EQ 關著的 App 也要找得到地方調回來。
     public var adjustedBundleIDs: [String] {
         entries.keys.sorted()
+    }
+
+    /// 需要建 tap 的 bundle（`needsTap`，見 AppAudioSetting 的兩個判準）。
+    /// TapEngine 的對帳用它——存了關著的 EQ 不代表要接管音訊。
+    public var bundleIDsNeedingTap: [String] {
+        entries.filter { $0.value.needsTap }.keys.sorted()
     }
 
     public var isEmpty: Bool { entries.isEmpty }
