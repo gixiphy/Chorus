@@ -498,14 +498,17 @@ final class AudioDeviceManager {
         writeMute(muted, to: target)
     }
 
-    /// 鏡射目標：driver 設定的轉送裝置，且必須是 DDC 橋接的螢幕裝置。
+    /// 鏡射目標：driver 設定的轉送裝置，且音量有地方可寫——
+    /// DDC 橋接的螢幕（VCP 0x62），或**自己就有原生音量**的裝置
+    /// （退回內建喇叭的 fallback 就是這一種）。兩者 driver 都
+    /// applyVolume=0、樣本原樣通過；都沒有才輪到數位衰減——
+    /// 有硬體音量卻走數位衰減是純粹的損失（位深＋刻度對不上）。
     private func mirrorTarget() -> AudioDeviceModel? {
         guard let uid = virtualDriver?.targetUID,
-              let target = devices.first(where: { $0.uid == uid }),
-              !target.canSetVolume,
-              target.bridgedDisplayID != nil
+              let target = devices.first(where: { $0.uid == uid })
         else { return nil }
-        return target
+        if target.canSetVolume { return target }
+        return target.bridgedDisplayID != nil ? target : nil
     }
 
     // MARK: - 轉送目標：跟著使用中的螢幕走
@@ -541,6 +544,19 @@ final class AudioDeviceManager {
         }
         virtualDriver.setTarget(uid: target)
         updateVirtualMirrorMode()
+        syncVirtualVolume(toTargetUID: target)
+    }
+
+    /// 轉送目標換成有原生音量的裝置時，把虛擬裝置的滑桿對齊目標的現值
+    /// ——鏡射的語意是「滑桿顯示目標的真實狀態」，與 DDC 路的
+    /// `initializeBridgedVolume` 同一件事。不對齊的話，退回內建喇叭時
+    /// 會拿螢幕刻度的舊值去壓內建喇叭的音量。
+    private func syncVirtualVolume(toTargetUID uid: String) {
+        guard let target = devices.first(where: { $0.uid == uid }), target.canSetVolume,
+              let virtualDevice
+        else { return }
+        writeVolume(target.volume, to: virtualDevice)
+        if target.hasMute { writeMute(target.muted, to: virtualDevice) }
     }
 
     /// 轉送目標的順位計算。規則本身在 `VirtualOutputTarget`（純函式、有測試），

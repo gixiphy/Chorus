@@ -25,9 +25,9 @@ struct VolumeSliderRow: View {
                 Spacer()
                 // 徽章擇一：已橋接時 DDC 已含連接資訊（tooltip 補充），不再疊 transport
                 if let target = forwardTarget {
-                    // 合併列：徽章講的是「音量怎麼送到那台螢幕」——
-                    // DDC 硬體鏡射（不損音質）或 driver 端數位衰減
-                    Text(mirrorsToDDC(target) ? "DDC" : "數位音量")
+                    // 合併列：徽章講的是「音量怎麼送到目標裝置」——
+                    // DDC 硬體鏡射／原生音量鏡射（都不損音質）或 driver 端數位衰減
+                    Text(badgeText(for: target))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 5)
@@ -163,13 +163,31 @@ struct VolumeSliderRow: View {
 
     private var nameHelp: String {
         guard let target = forwardTarget else { return device.name }
-        return mirrorsToDDC(target)
-            ? "由 Chorus 轉送到「\(target.name)」：音量直接寫進螢幕硬體（DDC，不損音質）"
-            : "由 Chorus 轉送到「\(target.name)」：音量以數位衰減調整"
+        switch forwardVolumeMode(target) {
+        case .ddc:
+            return "由 Chorus 轉送到「\(target.name)」：音量直接寫進螢幕硬體（DDC，不損音質）"
+        case .native:
+            return "由 Chorus 轉送到「\(target.name)」：音量鏡射到該裝置自己的音量（不損音質）"
+        case .digital:
+            return "由 Chorus 轉送到「\(target.name)」：音量以數位衰減調整"
+        }
     }
 
-    /// 轉送目標的音量走 DDC 硬體鏡射（否則是 driver 端數位衰減）。
-    private func mirrorsToDDC(_ target: AudioDeviceModel) -> Bool {
-        target.bridgedDisplayID != nil && !target.bridgeUnresponsive
+    private func badgeText(for target: AudioDeviceModel) -> String {
+        switch forwardVolumeMode(target) {
+        case .ddc: "DDC"
+        case .native: "鏡射"
+        case .digital: "數位音量"
+        }
+    }
+
+    /// 轉送目標的音量怎麼做：DDC 硬體鏡射 → 原生音量鏡射（內建喇叭
+    /// 這類自己就有音量的裝置）→ 都沒有才是 driver 端數位衰減。
+    /// 與 `AudioDeviceManager.mirrorTarget()` 的判準一致。
+    private enum ForwardVolumeMode { case ddc, native, digital }
+    private func forwardVolumeMode(_ target: AudioDeviceModel) -> ForwardVolumeMode {
+        if target.bridgedDisplayID != nil, !target.bridgeUnresponsive { return .ddc }
+        if target.canSetVolume { return .native }
+        return .digital
     }
 }
