@@ -5018,8 +5018,8 @@ OSStatus ProxyAudioDevice::StartIO(AudioServerPlugInDriverRef inDriver,
         gDevice_AnchorSampleTime = 0;
         gDevice_AnchorHostTime = mach_absolute_time();
         gDevice_ElapsedTicks = 0;
-        outputAccumulatedRateRatio = 0.0;
-        outputAccumulatedRateRatioSamples = 0;
+        outputAccumulatedRateRatioFixed.store(0, std::memory_order_relaxed);
+        outputAccumulatedRateRatioSamples.store(0, std::memory_order_relaxed);
     } else {
         //    IO is already running, so just bump the counter
         ++gDevice_IOIsRunning;
@@ -5128,8 +5128,14 @@ OSStatus ProxyAudioDevice::GetZeroTimeStamp(AudioServerPlugInDriverRef inDriver,
         
         Float64 rateRatio = 1.0;
         
-        if (outputAccumulatedRateRatioSamples > 0) {
-            rateRatio = outputAccumulatedRateRatio / outputAccumulatedRateRatioSamples;
+        // exchange 一次取值並歸零：與 IOProc 的 fetch_add 之間沒有鎖。
+        // 兩個 exchange 不是同一個原子步驟，最壞情況是某一筆樣本被算進
+        // 下一個視窗——對一個滑動平均無害，而換來 IOProc 不必等鎖。
+        UInt64 accumulatedFixed = outputAccumulatedRateRatioFixed.exchange(0, std::memory_order_relaxed);
+        UInt64 accumulatedSamples = outputAccumulatedRateRatioSamples.exchange(0, std::memory_order_relaxed);
+
+        if (accumulatedSamples > 0) {
+            rateRatio = ((Float64)accumulatedFixed / kRateRatioScale) / (Float64)accumulatedSamples;
         }
         
         //    calculate the next host time
@@ -5148,8 +5154,6 @@ OSStatus ProxyAudioDevice::GetZeroTimeStamp(AudioServerPlugInDriverRef inDriver,
         *outSampleTime = gDevice_NumberTimeStamps * kDevice_RingBufferSize;
         *outHostTime = gDevice_AnchorHostTime + gDevice_ElapsedTicks;
         *outSeed = 1;
-        outputAccumulatedRateRatio = 0.0;
-        outputAccumulatedRateRatioSamples = 0;
     }
 
 Done:
@@ -5311,6 +5315,30 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
 #pragma unused(inNow)
 #pragma unused(inInputData)
 #pragma unused(inInputTime)
+    // ── P2：realtime 執行緒上不等鎖（Chorus 擴充）─────────────────────
+    //
+    // 上游在這個 IOProc 裡依序取三把鎖：IOMutex → stateMutex →
+    // getZeroTimestampMutex，而 stateMutex 有 35 個取用點，絕大多數來自
+    // 非即時的 property handler。任何一個在持鎖期間被排程走，這條
+    // realtime 執行緒就跟著停——priority inversion。
+    //
+    // 實測（2026-08-30 mini，driver v5）：resync 觸發時 margin 常常已經是
+    // −2176／−8088／−8544 frames。一個 output cycle 只有 10.67 ms，時鐘
+    // 誤差不可能在兩次相鄰檢查之間造成 178 ms 的落差——那是停頓，不是漂移。
+    // 而且停頓頻率跟系統負載相關（打包期間每 3 分鐘一次，機器閒下來後
+    // 拉長到 8–13 分鐘），這正是 priority inversion 的指紋。
+    //
+    // 作法：stateMutex 讀的六個純量改成 atomic（gDevice_ChannelsPerFrame
+    // 本來就是 const），getZeroTimestampMutex 保護的累加器改成定點 atomic。
+    // 三把鎖去掉兩把。
+    //
+    // **IOMutex 維持阻塞式**，這是刻意的。它保護 ring buffer 本身，而它
+    // 只有三個取用點：這裡、WriteMix（4 KB memcpy ≈ 1 µs）、resetInputData
+    // （705 KB memset ≈ 50 µs）——全部短且有界，沒有任何慢的非即時持有者。
+    // 造成 178 ms 停頓的是 stateMutex，不是它。
+    // 改成 try 反而更糟：IOProc 持鎖約 50 µs、cycle 是 10.67 ms，碰撞率
+    // 約 0.47%，換算每秒約 0.44 次「拿不到鎖 → 整個 buffer 靜音」——
+    // 那是持續的喀噠聲，比原本要修的問題還糟。
     CAMutex::Locker locker1(IOMutex);
 
     // In theory we don't need a locking mechanism here, because outputDevice will only be modified
@@ -5318,31 +5346,23 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
     Float64 currentOutputDeviceSampleRate = outputDevice.sampleRate;
     UInt32 currentOutputDeviceBufferFrameSize = outputDevice.bufferFrameSize;
     UInt32 currentOutputDeviceSafetyOffset = outputDevice.safetyOffset;
-    Float64 currentInputDeviceSampleRate;
-    UInt32 currentInputDeviceChannelCount;
-    Float32 currentVolumeR, currentVolumeL;
-    bool currentMute;
-    bool currentApplyVolume;
+    Float64 currentInputDeviceSampleRate = gDevice_SampleRate.load(std::memory_order_relaxed);
+    UInt32 currentInputDeviceChannelCount = gDevice_ChannelsPerFrame; // const，本來就不需要鎖
+    Float32 currentVolumeR = gVolume_Output_R_Value.load(std::memory_order_relaxed);
+    Float32 currentVolumeL = gVolume_Output_L_Value.load(std::memory_order_relaxed);
+    bool currentMute = gMute_Output_Mute.load(std::memory_order_relaxed);
+    bool currentApplyVolume = applyVolumeToSamples.load(std::memory_order_relaxed);
 
-    {
-        CAMutex::Locker stateLocker(&stateMutex);
-        currentInputDeviceSampleRate = gDevice_SampleRate;
-        currentInputDeviceChannelCount = gDevice_ChannelsPerFrame;
-        currentVolumeR = gVolume_Output_R_Value;
-        currentVolumeL = gVolume_Output_L_Value;
-        currentMute = gMute_Output_Mute;
-        currentApplyVolume = applyVolumeToSamples;
-    }
-    
-    {
-        CAMutex::Locker locker(&getZeroTimestampMutex);
-        
-        // We don't need to keep taking samples of the device's ratio past
-        // 10000 samples. If we get that far then the device is idling.
-        if (outputAccumulatedRateRatioSamples < 10000) {
-            outputAccumulatedRateRatio += inOutputTime->mRateScalar;
-            outputAccumulatedRateRatioSamples += 1;
-        }
+    // 六個獨立的 atomic 讀不是同一個原子快照：最壞情況是左右聲道的音量
+    // 差一個 cycle（10.67 ms 的斜坡，聽不出來）。要真正的一致快照得付
+    // seqlock 的代價，而這裡沒有任何一致性需求值得那個複雜度。
+
+    // We don't need to keep taking samples of the device's ratio past
+    // 10000 samples. If we get that far then the device is idling.
+    if (outputAccumulatedRateRatioSamples.load(std::memory_order_relaxed) < 10000) {
+        outputAccumulatedRateRatioFixed.fetch_add(
+            (UInt64)(inOutputTime->mRateScalar * kRateRatioScale), std::memory_order_relaxed);
+        outputAccumulatedRateRatioSamples.fetch_add(1, std::memory_order_relaxed);
     }
     
     inputCycleCount = 0;

@@ -535,18 +535,24 @@ class ProxyAudioDevice {
     // 再也不會等於 -1。這兩個欄位是門檻硬重同步用的。見 outputDeviceIOProc。
     UInt64 lastResyncHostTime = 0;
     UInt64 resyncCount = 0;
-    Float64 outputAccumulatedRateRatio = 0.0;
-    UInt64 outputAccumulatedRateRatioSamples = 0;
+    // P2：這兩個原本由 getZeroTimestampMutex 保護，而那把鎖是 IOProc 取的
+    // 第三把。改成 atomic 之後 IOProc 一把鎖都不用取。
+    // mRateScalar ≈ 1.0，定點放大 2^30 後每筆約 1.07e9，上限 10000 筆
+    // ≈ 1.07e13，離 UInt64 的天花板還有六個數量級；量化誤差 9.3e-10，
+    // 比我們在意的速率偏差（約 1e-5）細四個數量級。
+    static constexpr Float64 kRateRatioScale = 1073741824.0; // 2^30
+    std::atomic<UInt64> outputAccumulatedRateRatioFixed{0};
+    std::atomic<UInt64> outputAccumulatedRateRatioSamples{0};
     ActiveCondition outputDeviceActiveCondition = ActiveCondition::userActive;
     bool outputDeviceHideWhenUnavailable = kOutputDeviceDefaultHideWhenUnavailable;
     // Chorus 擴充：false = DDC 鏡射模式——IOProc 不做數位衰減（樣本原樣通過、
     // 音量由 Chorus 鏡射到螢幕的 VCP 0x62），mute 仍然有效。預設 true（數位衰減）。
-    bool applyVolumeToSamples = true;
+    std::atomic<bool> applyVolumeToSamples{true};
     
     UInt32 gPlugIn_RefCount = 0;
     AudioServerPlugInHostRef gPlugIn_Host = NULL;
     Boolean gBox_Acquired = true;
-    Float64 gDevice_SampleRate = 44100.0;
+    std::atomic<Float64> gDevice_SampleRate{44100.0};
     std::vector<Float64> gDevice_SampleRates = {22050, 44100, 48000, 88200, 96000, 176400, 192000};
     UInt64 gDevice_IOIsRunning = 0;
     const UInt32 kDevice_RingBufferSize = 16384;
@@ -561,9 +567,9 @@ class ProxyAudioDevice {
     // 常見下限（HANDOFF §7 裁決）。
     const Float32 kVolume_MinDB = -60.0;
     const Float32 kVolume_MaxDB = 0.0;
-    Float32 gVolume_Output_L_Value = 0.0;
-    Float32 gVolume_Output_R_Value = 0.0;
-    bool gMute_Output_Mute = false;
+    std::atomic<Float32> gVolume_Output_L_Value{0.0};
+    std::atomic<Float32> gVolume_Output_R_Value{0.0};
+    std::atomic<bool> gMute_Output_Mute{false};
     const UInt32 gDevice_BytesPerFrameInChannel = 4;
     const UInt32 gDevice_ChannelsPerFrame = 2;
     const UInt32 gDevice_SafetyOffset = 0;

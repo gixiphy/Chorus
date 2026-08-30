@@ -57,6 +57,10 @@ chmod -R go+rX dist/Chorus.app
 # 建置產物會帶著 com.apple.FinderInfo 等擴充屬性，codesign --strict 會判為
 # 「detritus not allowed」而驗證失敗——之後送 Developer ID 公證會直接被擋。
 xattr -cr dist/Chorus.app
+# xattr -c 清不掉目錄自身的 com.apple.FinderInfo（它在 catalog 裡，不是一般
+# xattr），而 codesign --strict 會判它是 detritus。這個 repo 在同步資料夾裡，
+# 同步用戶端會替 bundle 掛上 FinderInfo——所以不是一次性意外，會再犯。
+xattr -d com.apple.FinderInfo dist/Chorus.app 2>/dev/null || true
 
 # 硬性驗證：巢狀 code（HAL driver、chorus CLI）都要簽得過才算打包成功。
 if ! codesign --verify --deep --strict dist/Chorus.app; then
