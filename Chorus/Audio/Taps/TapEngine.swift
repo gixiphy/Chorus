@@ -163,14 +163,24 @@ final class TapEngine {
     /// 音訊裝置清單變了（插拔耳機、虛擬裝置上線）。指定路由的 App
     /// 可能因此**找回**它的目標裝置，所以要重新對帳。
     func audioDevicesChanged() {
-        // 啟動時撞上裝置空窗（藍牙耳機正在接上）探測會 failed——那是
-        // 暫時性的，不該是終態：裝置面貌一變就再試一次。
-        // anc-log 實測：引擎死在 failed 後整輪 EQ 靜靜缺席，沒人發現。
-        if case .failed = state, settings.audioTapsEnabled {
-            beginProbe()
-            return
+        // failed 與 denied 都不該是終態。failed：啟動撞上裝置空窗。
+        // denied：探測期間撞上藍牙重協商——「來源發聲 × 全零」兩格就
+        // latch，TCC 明明允許也會被誤判（anc-log 實測：引擎死在 denied，
+        // 整輪 EQ 靜靜缺席）。裝置面貌一變就延遲重探測；真被拒的話
+        // 重探測還是 denied，不會跳對話框（TCC 已有決定），指引照常顯示。
+        switch state {
+        case .failed, .denied:
+            guard settings.audioTapsEnabled else { return }
+            rebuildTask?.cancel()
+            rebuildTask = Task { [weak self] in
+                try? await Task.sleep(for: self?.rebuildDelay ?? .seconds(1.5))
+                guard let self, !Task.isCancelled else { return }
+                if case .active = self.state { return } // 期間已經活了就別打斷
+                self.beginProbe()
+            }
+        default:
+            reconcileSessions()
         }
-        reconcileSessions()
     }
 
     // MARK: - 裝置級處理（B6-4 軟體音量＋B6-5 等化）

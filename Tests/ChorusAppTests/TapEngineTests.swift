@@ -57,6 +57,26 @@ struct TapEngineTests {
         #expect(engine.state == .probing)
     }
 
+    @Test("denied 不是終態：裝置變動後自動重探測（藍牙重協商的誤判要能自癒）")
+    func deniedReProbesOnDeviceChange() async throws {
+        let (engine, backend, registry) = makeEngine(mode: .zeros)
+        injectAudibleApp(registry)
+        engine.rebuildDelay = .zero
+        engine.setEnabled(true)
+        engine.healthTick(); engine.healthTick()
+        #expect(engine.state == .denied)
+
+        backend.mode = .audio // 空窗過了，樣本恢復非零
+        engine.audioDevicesChanged()
+        for _ in 0..<100 {
+            if engine.state == .probing { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(engine.state == .probing)
+        engine.healthTick()
+        #expect(engine.state == .active)
+    }
+
     @Test("denied 後 retry 會重新探測；權限修好即轉 active")
     func retryAfterDenied() {
         let (engine, backend, registry) = makeEngine(mode: .zeros)
