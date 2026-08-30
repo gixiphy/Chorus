@@ -5468,7 +5468,9 @@ void ProxyAudioDevice::calculateVolumeFactors(Float32 volumeL,
     } else if (volumeL >= 1.0) {
         volumeFactorL = 1.0;
     } else {
-        volumeFactorL = pow(10, (volumeL * (kVolume_MaxDB - kVolume_MinDB) + kVolume_MinDB) / 10);
+        // 振幅比是 dB/20；除以 10 是功率比——那個 bug 讓滑桿 13% 變成
+        // -43 dBFS，退回內建喇叭（數位衰減路徑）時聽起來就是「沒聲音」
+        volumeFactorL = pow(10, (volumeL * (kVolume_MaxDB - kVolume_MinDB) + kVolume_MinDB) / 20);
     }
 
     if (volumeR <= 0.0 || mute) {
@@ -5476,7 +5478,7 @@ void ProxyAudioDevice::calculateVolumeFactors(Float32 volumeL,
     } else if (volumeR >= 1.0) {
         volumeFactorR = 1.0;
     } else {
-        volumeFactorR = pow(10, (volumeR * (kVolume_MaxDB - kVolume_MinDB) + kVolume_MinDB) / 10);
+        volumeFactorR = pow(10, (volumeR * (kVolume_MaxDB - kVolume_MinDB) + kVolume_MinDB) / 20);
     }
 }
 

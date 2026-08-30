@@ -17,6 +17,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# P5：driver 源碼變了但 CFBundleVersion 沒 +1 → 擋下打包。
+# 忘了 +1 的話設定頁不會跳「更新驅動」，改動就靜靜地沒生效。
+DRIVER_VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' AudioDriver/Info.plist)
+DRIVER_HASH=$(find AudioDriver/Source -type f | sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1)
+DRIVER_STAMP_FILE=AudioDriver/.source-version
+if [[ -f "$DRIVER_STAMP_FILE" ]]; then
+  read -r STAMP_VER STAMP_HASH < "$DRIVER_STAMP_FILE"
+  if [[ "$DRIVER_HASH" != "$STAMP_HASH" && "$DRIVER_VER" == "$STAMP_VER" ]]; then
+    echo "✗ driver 源碼變了，但 AudioDriver/Info.plist 的 CFBundleVersion 還是 $DRIVER_VER" >&2
+    echo "  請 +1 後再打包（否則設定頁不會出現「更新驅動」）" >&2
+    exit 1
+  fi
+fi
+echo "$DRIVER_VER $DRIVER_HASH" > "$DRIVER_STAMP_FILE"
+
 # 讀取並遞增 project.yml 裡的版本欄位
 VERSION=$(grep 'CFBundleShortVersionString:' project.yml | sed 's/.*"\(.*\)".*/\1/')
 BUILD=$(grep 'CFBundleVersion:' project.yml | sed 's/.*"\(.*\)".*/\1/')

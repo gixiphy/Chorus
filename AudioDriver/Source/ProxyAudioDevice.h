@@ -534,7 +534,10 @@ class ProxyAudioDevice {
     Float64 gDevice_ElapsedTicks = 0.0;
     UInt64 gDevice_AnchorHostTime = 0;
     bool gStream_Output_IsActive = true;
-    const Float32 kVolume_MinDB = -25.0;
+    // P1 修正（build 42 / driver v3）：曲線改用振幅比（/20）後，-25 的下限
+    // 太淺——滑桿貼底仍有 10^(-25/20) ≈ 0.056，靜不下來。-60 是音量滑桿的
+    // 常見下限（HANDOFF §7 裁決）。
+    const Float32 kVolume_MinDB = -60.0;
     const Float32 kVolume_MaxDB = 0.0;
     Float32 gVolume_Output_L_Value = 0.0;
     Float32 gVolume_Output_R_Value = 0.0;
