@@ -99,9 +99,7 @@ final class AudioProcessRegistry {
 
     private func rootBundleID(of entry: Entry) -> String? {
         guard let bundleID = entry.bundleID else { return nil }
-        return AudioProcessGrouping.rootBundleID(
-            for: bundleID, appBundleIDs: Set(appKinds.keys)
-        )
+        return AudioProcessGrouping.rootBundleID(for: bundleID, appKinds: appKinds)
     }
 
     /// App 圖示。行程還在就用它的（最快也最準）；已退出的 App

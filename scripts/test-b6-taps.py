@@ -317,10 +317,12 @@ def main():
 
     # 歸組（2026-08-30 bug 批）：helper 併入主 App、daemon 與 Apple 的
     # accessory 不列——選單塞滿 audiomxd／assistantd／helper 的那張截圖
+    # helper 刻意標 accessory——Chromium/Electron 的 helper 帶 LSUIElement，
+    # 系統就是這樣回報的（2026-08-30 實機截圖的回歸）
     notify("fakeAudioProcesses",
            "Music|com.apple.Music|0|regular;"
            "Vivaldi|com.vivaldi.Vivaldi|0|regular;"
-           "helper|com.vivaldi.Vivaldi.helper|1|other;"
+           "helper|com.vivaldi.Vivaldi.helper|1|accessory;"
            "audiomxd|com.apple.audio.audiomxd|1|other;"
            "ControlCenter|com.apple.controlcenter|1|accessory")
     response = control({"verb": "get", "target": "allApps"})

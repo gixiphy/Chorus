@@ -24,16 +24,26 @@ public enum AudioProcessGrouping {
         case other
     }
 
-    /// `bundleID` 應歸到哪個 App root。自己就是 App → 自己；
-    /// 否則取**最長**的 App bundle `R` 使 `bundleID` 以 `R + "."` 開頭
-    /// （helper 歸主 App）；都不是 → `nil`（不可列）。
+    /// `bundleID` 應歸到哪個 App root。
+    ///
+    /// - regular App（有 Dock 圖示）永遠是自己的 root——Safari 網頁 App
+    ///   （`com.apple.Safari.WebApp.…`）是獨立 App，不因前綴被併進 Safari。
+    /// - 其餘（accessory、helper、daemon）**先找爸媽再認自己**：取最長的
+    ///   App bundle `R`（`R ≠ bundleID`）使 `bundleID` 以 `R + "."` 開頭。
+    ///   順序不能反過來——Chromium／Electron 的 helper 在 Info.plist 標
+    ///   `LSUIElement`，系統回報它們是 accessory「App」；先認自己的話
+    ///   helper 全部自成一列，而主 App 的 tap 也不會把它算進成員
+    ///   （聲音正是從 helper 出來的，等於整個 per-app 調整無效）。
+    /// - 找不到爸媽、自己也不是 App → `nil`（不可列）。
     public static func rootBundleID(
-        for bundleID: String, appBundleIDs: Set<String>
+        for bundleID: String, appKinds: [String: Kind]
     ) -> String? {
-        if appBundleIDs.contains(bundleID) { return bundleID }
-        return appBundleIDs
-            .filter { bundleID.hasPrefix($0 + ".") }
+        if appKinds[bundleID] == .regularApp { return bundleID }
+        let parent = appKinds.keys
+            .filter { $0 != bundleID && bundleID.hasPrefix($0 + ".") }
             .max { $0.count < $1.count }
+        if let parent { return parent }
+        return appKinds[bundleID] != nil ? bundleID : nil
     }
 
     /// 這個 root 該不該出現在清單上。Apple 自家的 accessory／daemon
