@@ -282,10 +282,12 @@ final class CoreAudioTapBackend: TapBackend {
                 }
             }
 
-            // >1x 才過 limiter：增益 ≤ 1 時任何壓縮都是不請自來的染色。
-            // EQ 開著時一律過——正增益的段即使配了 negative preamp，
-            // 疊在本來就接近滿刻度的素材上仍可能過頂
-            let boosting = startGain > 1 || endGain > 1 || eqCount > 0
+            // 膝點分兩檔：>1x boost 用 0.7（大幅增益需要提早平緩地收）；
+            // 純 EQ 用 0.95 只防真正過頂——0.7 對貼滿刻度的母帶是持續失真
+            // （D14 實聽：不定時沙沙）。兩者都不成立就完全不碰樣本。
+            let boosted = startGain > 1 || endGain > 1
+            let clipping = boosted || eqCount > 0
+            let clipKnee: Float = boosted ? SoftClip.threshold : SoftClip.protectThreshold
             var channelBase = 0
 
             var sawNonZero = false
@@ -314,7 +316,7 @@ final class CoreAudioTapBackend: TapBackend {
                                     value = states[slot + band].process(value, eqCoefficients[band])
                                 }
                             }
-                            destination[offset] = boosting ? SoftClip.apply(value) : value
+                            destination[offset] = clipping ? SoftClip.apply(value, threshold: clipKnee) : value
                         }
                     }
                     // 通道數不整除時剩下的尾巴補零，別讓上一輪的內容漏出去

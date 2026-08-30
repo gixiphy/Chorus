@@ -9,15 +9,21 @@
 /// `@inlinable` 是必要的——跨模組呼叫若不能內聯，realtime 端就會多一次
 /// 函式呼叫與潛在的 retain/release（PLAN §8-2）。
 public enum SoftClip: Sendable {
-    /// 線性區的上限。低於此值原樣通過——**增益 ≤ 1 時不該有任何染色**，
-    /// 這條線就是「什麼時候開始介入」。
+    /// 線性區的上限（**boost 用**）。低於此值原樣通過。
+    /// 0.7 是給 >1x 增益的緩衝——大幅 boost 需要提早、平緩地收。
     public static let threshold: Float = 0.7
+
+    /// 線性區的上限（**純保護用**）。增益 ≤ 1、只掛 EQ 時，素材頂多因
+    /// 頻段間疊加微幅過頂（實測 preset 約 +0.04 dB）——這時 0.7 的膝點
+    /// 等於對貼著滿刻度的現代母帶持續失真（場次 D14 實聽：不定時沙沙，
+    /// 播放器音量降一半就消失）。保護膝點只在真正逼近天花板時介入。
+    public static let protectThreshold: Float = 0.95
 
     /// 曲線碰到天花板 ±1 的輸入振幅。超過這裡就是真的限幅了
     /// （4x 增益打進本來就接近滿刻度的訊號，任何 limiter 都只能這樣）。
     public static let ceilingInput: Float = threshold + 3 * (1 - threshold) // 1.6
 
-    /// Soft knee：|x| ≤ threshold 原樣通過，超過的部分壓進 (threshold, 1]。
+    /// Soft knee：|x| ≤ t 原樣通過，超過的部分壓進 (t, 1]。
     ///
     /// 公式（自導，非搬碼）：
     ///
@@ -28,11 +34,11 @@ public enum SoftClip: Sendable {
     /// 值與斜率都連續。硬 knee 在接點斜率跳變，那個轉折聽得出來。
     @inlinable
     @inline(__always)
-    public static func apply(_ sample: Float) -> Float {
+    public static func apply(_ sample: Float, threshold t: Float = threshold) -> Float {
         let magnitude = abs(sample)
-        guard magnitude > threshold else { return sample }
-        let knee = 1 - threshold
-        let compressed = threshold + knee * saturate((magnitude - threshold) / knee)
+        guard magnitude > t else { return sample }
+        let knee = 1 - t
+        let compressed = t + knee * saturate((magnitude - t) / knee)
         return sample < 0 ? -compressed : compressed
     }
 

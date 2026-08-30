@@ -11,6 +11,23 @@ struct SoftClipTests {
         }
     }
 
+    @Test("保護膝點（0.95）：滿刻度以下的母帶近乎透明——EQ-only 路徑不再持續失真")
+    func protectKneeIsTransparentForMasteredMaterial() {
+        // 0.95 以下完全原樣（0.7 膝點在這一段會持續壓＝D14 聽到的沙沙）
+        for sample in stride(from: Float(-0.94), through: 0.94, by: 0.05) {
+            #expect(SoftClip.apply(sample, threshold: SoftClip.protectThreshold) == sample)
+        }
+        // 仍然守住天花板
+        for raw in stride(from: Float(-2), through: 2, by: 0.01) {
+            let clipped = SoftClip.apply(raw, threshold: SoftClip.protectThreshold)
+            #expect(clipped <= 1.0001 && clipped >= -1.0001)
+        }
+        // 接點連續：0.95 兩側值接得上
+        let below = SoftClip.apply(0.9499, threshold: SoftClip.protectThreshold)
+        let above = SoftClip.apply(0.9501, threshold: SoftClip.protectThreshold)
+        #expect(abs(above - below) < 0.001)
+    }
+
     @Test("永遠不超過 ±1：4x 增益打進滿刻度訊號也不會 clip 成方波")
     func neverExceedsFullScale() {
         for raw in stride(from: Float(-4), through: 4, by: 0.01) {
