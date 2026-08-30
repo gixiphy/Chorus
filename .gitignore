@@ -22,3 +22,6 @@ dist/
 *.dia
 *.swiftdeps
 *.swiftconstvalues
+
+# xcodebuild -target 直接建置時的 SYMROOT（package.sh 走 dist/）
+build/

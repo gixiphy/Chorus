@@ -133,7 +133,7 @@ final class TapEngine {
 
     /// 0–4x。>1 由 realtime 端的 `SoftClip` 保護。
     func setGain(_ gain: Float, bundleID: String) {
-        update(bundleID: bundleID) { $0.gain = AppAudioSetting.clampGain(gain) }
+        update(bundleID: bundleID) { $0.gain = AppAudioSetting.snapGain(gain) }
     }
 
     func setMuted(_ muted: Bool, bundleID: String) {

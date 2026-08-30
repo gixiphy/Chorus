@@ -148,6 +148,42 @@ struct AppAudioSettingTests {
         #expect(!AppAudioSetting(outputDeviceUID: "uid").isNeutral)
     }
 
+    /// 2026-08-30 mini 實機：Vivaldi 的 gain 存成 0.995621（−0.038 dB），
+    /// 因為 0–4x 的滑桿在選單列寬度下一個 pixel 約 0.027，拖到「看起來是
+    /// 100%」永遠停不在 1.0。舊判準 `gain != 1` 於是為了聽不出來的
+    /// −0.038 dB 永久多建一條 tap，把那個 App 推進另一個時鐘域。
+    @Test("滑桿碰不到的 unity 有頓點——幾乎等於 1 就是 1")
+    func nearUnityGainSnapsToUnity() {
+        #expect(AppAudioSetting.snapGain(0.995621) == 1)
+        #expect(AppAudioSetting.snapGain(1.015) == 1)
+        // 頓點只吃 ±0.17 dB，真正的調整原樣通過
+        #expect(AppAudioSetting.snapGain(0.9) == 0.9)
+        #expect(AppAudioSetting.snapGain(2) == 2)
+        // 夾限仍然先發生
+        #expect(AppAudioSetting.snapGain(9) == 4)
+        #expect(AppAudioSetting.snapGain(-1) == 0)
+    }
+
+    @Test("幾乎等於 1 不建 tap，也不值得保存")
+    func nearUnityGainNeedsNoTap() {
+        let almost = AppAudioSetting(gain: 0.995621)
+        #expect(almost.isNeutral)
+        #expect(!almost.needsTap)
+        // 但真的調小了就要接管
+        #expect(AppAudioSetting(gain: 0.9).needsTap)
+        // 幾乎等於 1 但另有理由（靜音／路由）時照樣接管
+        #expect(AppAudioSetting(gain: 0.995621, muted: true).needsTap)
+    }
+
+    @Test("舊存檔裡的近似 1 在解碼當下就清掉，不用等使用者再動滑桿")
+    func decodingDropsStaleNearUnityEntries() throws {
+        // 這串就是 2026-08-30 mini 上 chorus.audio.appSettings 的實際內容
+        let json = Data(#"{"entries":{"com.vivaldi.Vivaldi":{"muted":false,"gain":0.995621},"com.colliderli.iina":{"muted":false,"gain":0}}}"#.utf8)
+        let decoded = try JSONDecoder().decode(AppAudioSettings.self, from: json)
+        #expect(decoded.adjustedBundleIDs == ["com.colliderli.iina"])
+        #expect(decoded.bundleIDsNeedingTap == ["com.colliderli.iina"])
+    }
+
     @Test("靜音的目標增益是 0——與音量走同一條斜坡")
     func mutedTargetsZero() {
         #expect(AppAudioSetting(gain: 2, muted: true).targetGain == 0)

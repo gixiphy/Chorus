@@ -4244,10 +4244,8 @@ OSStatus ProxyAudioDevice::GetControlPropertyData(AudioServerPlugInDriverRef inD
                         }
                     }
 
-                    //    Note that we square the scalar value before converting to dB so as to
-                    //    provide a better curve for the slider
-                    *((Float32 *)outData) *= *((Float32 *)outData);
-                    *((Float32 *)outData) = kVolume_MinDB + (*((Float32 *)outData) * (kVolume_MaxDB - kVolume_MinDB));
+                    //    scalar → dB：唯一來源，與乘進樣本的曲線是同一條
+                    *((Float32 *)outData) = volumeScalarToDecibels(*((Float32 *)outData));
 
                     //    report how much we wrote
                     *outDataSize = sizeof(Float32);
@@ -4281,10 +4279,8 @@ OSStatus ProxyAudioDevice::GetControlPropertyData(AudioServerPlugInDriverRef inD
                         *((Float32 *)outData) = 1.0;
                     }
 
-                    //    Note that we square the scalar value before converting to dB so as to
-                    //    provide a better curve for the slider
-                    *((Float32 *)outData) *= *((Float32 *)outData);
-                    *((Float32 *)outData) = kVolume_MinDB + (*((Float32 *)outData) * (kVolume_MaxDB - kVolume_MinDB));
+                    //    scalar → dB：唯一來源，與乘進樣本的曲線是同一條
+                    *((Float32 *)outData) = volumeScalarToDecibels(*((Float32 *)outData));
 
                     //    report how much we wrote
                     *outDataSize = sizeof(Float32);
@@ -4298,19 +4294,8 @@ OSStatus ProxyAudioDevice::GetControlPropertyData(AudioServerPlugInDriverRef inD
                                    "GetControlPropertyData: not enough space for the return value of "
                                    "kAudioLevelControlPropertyDecibelValue for the volume control");
 
-                    //    clamp the value to be between kVolume_MinDB and kVolume_MaxDB
-                    if (*((Float32 *)outData) < kVolume_MinDB) {
-                        *((Float32 *)outData) = kVolume_MinDB;
-                    }
-                    if (*((Float32 *)outData) > kVolume_MaxDB) {
-                        *((Float32 *)outData) = kVolume_MaxDB;
-                    }
-
-                    //    Note that we square the scalar value before converting to dB so as to
-                    //    provide a better curve for the slider. We undo that here.
-                    *((Float32 *)outData) = *((Float32 *)outData) - kVolume_MinDB;
-                    *((Float32 *)outData) /= kVolume_MaxDB - kVolume_MinDB;
-                    *((Float32 *)outData) = sqrtf(*((Float32 *)outData));
+                    //    dB → scalar：volumeScalarToDecibels 的反函數（含夾限）
+                    *((Float32 *)outData) = volumeDecibelsToScalar(*((Float32 *)outData));
 
                     //    report how much we wrote
                     *outDataSize = sizeof(Float32);
@@ -4576,17 +4561,8 @@ OSStatus ProxyAudioDevice::SetControlPropertyData(AudioServerPlugInDriverRef inD
                         theAnswer = kAudioHardwareBadPropertySizeError,
                         Done,
                         "SetControlPropertyData: wrong size for the data for kAudioLevelControlPropertyScalarValue");
-                    theNewVolume = *((const Float32 *)inData);
-                    if (theNewVolume < kVolume_MinDB) {
-                        theNewVolume = kVolume_MinDB;
-                    } else if (theNewVolume > kVolume_MaxDB) {
-                        theNewVolume = kVolume_MaxDB;
-                    }
-                    //    Note that we square the scalar value before converting to dB so as to
-                    //    provide a better curve for the slider. We undo that here.
-                    theNewVolume = theNewVolume - kVolume_MinDB;
-                    theNewVolume /= kVolume_MaxDB - kVolume_MinDB;
-                    theNewVolume = sqrtf(theNewVolume);
+                    //    dB → scalar：與回報路徑共用同一組換算（含夾限）
+                    theNewVolume = volumeDecibelsToScalar(*((const Float32 *)inData));
                     {
                         CAMutex::Locker locker(stateMutex);
                         if (inObjectID == kObjectID_Volume_Output_L) {
@@ -5396,19 +5372,59 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
 
     bool overrun = inputBuffer->Fetch(workBuffer, currentOutputDeviceBufferFrameSize, (SInt64)startFrame);
 
-#if DEBUG
-    // This is just some debugging info to tell when we might be gradually
-    // approaching the end of the input buffer and headed for a buffer
-    // overrun
+    // 讀窗尾端與寫頭之間還剩幾個 frame。正值＝安全邊際，負值＝讀頭已經
+    // 追過寫頭。**上游把這段包在 #if DEBUG 裡**，所以 release 驅動根本沒在
+    // 算它——漂移一路吃掉邊際也沒有任何人在看。
     SInt64 framesToBufferEnd =
         inputBuffer->mEndFrame - (SInt64(startFrame) + SInt64(currentOutputDeviceBufferFrameSize));
 
     if (smallestFramesToBufferEnd == -1
         || (framesToBufferEnd < smallestFramesToBufferEnd && smallestFramesToBufferEnd >= 0)) {
         smallestFramesToBufferEnd = framesToBufferEnd;
-        //DebugMsg("ProxyAudio: frames to buffer end shrunk, is now: %lld", smallestFramesToBufferEnd);
     }
-#endif
+
+    // ── 門檻硬重同步（Chorus 擴充）──────────────────────────────────
+    //
+    // 起始邊際只有 inputBufferFrameSize + outputBufferFrameSize +
+    // safetyOffset（約 20–30 ms），而 GetZeroTimeStamp 的
+    // outputAccumulatedRateRatio 只回授**速率**、不回授**位置**。掉一個
+    // output cycle 的位置誤差因此永久留著並持續累加；邊際被吃光後每個
+    // cycle 的讀窗都一半真資料、一半 Fetch 補的零，在 buffer 週期上固定
+    // 產生不連續——聽起來就是持續的嗡／沙，而不是偶發爆音。
+    //
+    // 而它**不會自癒**：inputOutputSampleDelta 只在等於 -1 時重算，算過
+    // 一次之後永遠不再等於 -1（resetInputData 只在 StartIO 與換轉送裝置時
+    // 呼叫）。這就是「重開 App 會好、跑一陣子又壞」的完整解釋。
+    //
+    // 對策：邊際掉到一個 output buffer 以下就把 delta 打回 -1，下一個
+    // cycle 重算回健康邊際。代價是一次極短的不連續，換掉永久的雜訊。
+    // 每秒最多一次，避免重算不出健康邊際時反覆抖動。
+    if (inputFinalFrameTime == -1 && framesToBufferEnd < SInt64(currentOutputDeviceBufferFrameSize)) {
+        UInt64 nowHostTime = mach_absolute_time();
+        Float64 hostTicksPerSecond = gDevice_HostTicksPerFrame * currentInputDeviceSampleRate;
+
+        if (lastResyncHostTime == 0 || (nowHostTime - lastResyncHostTime) > (UInt64)hostTicksPerSecond) {
+            lastResyncHostTime = nowHostTime;
+            resyncCount += 1;
+            inputOutputSampleDelta = -1;
+            smallestFramesToBufferEnd = -1;
+
+            // 與下面的 overrun 警告同一個節流間隔——重同步應該罕見，
+            // 一旦頻繁出現就是漂移速率本身有問題（例如 P2 的 priority
+            // inversion 在掉 cycle），那才是要查的東西。
+            static time_t lastResyncWarning = 0;
+            time_t seconds;
+            time(&seconds);
+
+            if ((seconds - lastResyncWarning) > 5) {
+                lastResyncWarning = seconds;
+                syslog(LOG_WARNING,
+                       "ProxyAudio: drift resync #%llu, margin was %lld frames",
+                       resyncCount,
+                       framesToBufferEnd);
+            }
+        }
+    }
 
     if (overrun && inputFinalFrameTime == -1 && startFrame >= inputBuffer->mStartFrame) {
         // Since this warning could conceivably happen every cycle, explicitly make it
@@ -5458,19 +5474,44 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
     return noErr;
 }
 
+Float32 ProxyAudioDevice::volumeScalarToDecibels(Float32 scalar) {
+    if (scalar <= 0.0f) {
+        return kVolume_MinDB;
+    }
+    if (scalar >= 1.0f) {
+        return kVolume_MaxDB;
+    }
+    // 振幅 = scalar² ⇒ dB = 20·log10(scalar²) = 40·log10(scalar)
+    Float32 decibels = 40.0f * log10f(scalar);
+    return decibels < kVolume_MinDB ? kVolume_MinDB : decibels;
+}
+
+Float32 ProxyAudioDevice::volumeDecibelsToScalar(Float32 decibels) {
+    if (decibels <= kVolume_MinDB) {
+        // 地板以下一律收成 0：否則滑桿最底端會停在 0.0316 而不是靜音
+        return 0.0f;
+    }
+    if (decibels >= kVolume_MaxDB) {
+        return 1.0f;
+    }
+    return powf(10.0f, decibels / 40.0f);
+}
+
 void ProxyAudioDevice::calculateVolumeFactors(Float32 volumeL,
                                               Float32 volumeR,
                                               bool mute,
                                               Float32 &volumeFactorL,
                                               Float32 &volumeFactorR) {
+    // 平方律 taper：振幅就是 scalar²。這與 volumeScalarToDecibels 回報給
+    // 系統的 dB 是同一條曲線——**回報與實際套用必須是同一個數**，兩者分家
+    // 正是 P1 那一類 bug 的形狀（實測回報 −44.81 dB／實套 −29.81 dB）。
+    // 順帶：這裡不再呼叫 pow，realtime 端每個 cycle 少兩次 libm。
     if (volumeL <= 0.0 || mute) {
         volumeFactorL = 0.0;
     } else if (volumeL >= 1.0) {
         volumeFactorL = 1.0;
     } else {
-        // 振幅比是 dB/20；除以 10 是功率比——那個 bug 讓滑桿 13% 變成
-        // -43 dBFS，退回內建喇叭（數位衰減路徑）時聽起來就是「沒聲音」
-        volumeFactorL = pow(10, (volumeL * (kVolume_MaxDB - kVolume_MinDB) + kVolume_MinDB) / 20);
+        volumeFactorL = volumeL * volumeL;
     }
 
     if (volumeR <= 0.0 || mute) {
@@ -5478,7 +5519,7 @@ void ProxyAudioDevice::calculateVolumeFactors(Float32 volumeL,
     } else if (volumeR >= 1.0) {
         volumeFactorR = 1.0;
     } else {
-        volumeFactorR = pow(10, (volumeR * (kVolume_MaxDB - kVolume_MinDB) + kVolume_MinDB) / 20);
+        volumeFactorR = volumeR * volumeR;
     }
 }
 

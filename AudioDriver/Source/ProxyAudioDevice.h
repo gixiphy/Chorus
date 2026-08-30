@@ -94,6 +94,22 @@ class ProxyAudioDevice {
                                 const AudioTimeStamp *inInputTime,
                                 AudioBufferList *outOutputData,
                                 const AudioTimeStamp *inOutputTime);
+    // ── 音量換算的單一來源（Chorus 擴充）───────────────────────────
+    //
+    // 音量有三個換算點必須互為反函數、而且與「真正乘進樣本的那個數」
+    // 一致：回報 DecibelValue、ConvertScalarToDecibels／DecibelsToScalar、
+    // 以及 calculateVolumeFactors。上游把它們各寫一份，於是實測（2026-08-30
+    // mini）回報 −44.81 dB、實際卻套 −29.81 dB，差 15 dB——build 42 修了
+    // calculateVolumeFactors 的 /10→/20，但回報路徑是「先平方再線性映射
+    // 到 [−60,0]」，兩條根本是不同曲線。這兩個函式就是那唯一的來源。
+    //
+    // 曲線：振幅 = scalar²（平方律 taper），因此 dB = 40·log10(scalar)。
+    // 滑桿 50% ＝ 振幅 25% ＝ −12 dB。舊的線性映射在 50% 是 −30 dB，
+    // 逼使唯一的類比增益（螢幕 OSD）開到底，把 ring buffer 的每一個
+    // 不連續一起放大 30 dB。
+    Float32 volumeScalarToDecibels(Float32 scalar);
+    Float32 volumeDecibelsToScalar(Float32 decibels);
+
     void calculateVolumeFactors(Float32 volumeL,
                                 Float32 volumeR,
                                 bool mute,
@@ -513,6 +529,12 @@ class ProxyAudioDevice {
     CFStringRef outputDeviceUID = NULL;
     UInt32 outputDeviceBufferFrameSize = kOutputDeviceDefaultBufferFrameSize;
     SInt64 smallestFramesToBufferEnd = -1;
+    // Chorus 擴充：位置回授。上游只校時鐘「速率」（outputAccumulatedRateRatio），
+    // 從不校讀寫頭的「位置」——掉一個 output cycle 造成的位置誤差是永久的，
+    // 而且只會累加。到不了自癒，因為 inputOutputSampleDelta 算過一次之後
+    // 再也不會等於 -1。這兩個欄位是門檻硬重同步用的。見 outputDeviceIOProc。
+    UInt64 lastResyncHostTime = 0;
+    UInt64 resyncCount = 0;
     Float64 outputAccumulatedRateRatio = 0.0;
     UInt64 outputAccumulatedRateRatioSamples = 0;
     ActiveCondition outputDeviceActiveCondition = ActiveCondition::userActive;

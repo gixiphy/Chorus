@@ -43,18 +43,38 @@ public struct AppAudioSetting: Codable, Sendable, Equatable {
         min(max(value, gainRange.lowerBound), gainRange.upperBound)
     }
 
+    /// 「等於 1」的容差。**存在的理由是滑桿碰不到 1.0**：per-app 增益的
+    /// 滑桿跨 0–4x，在選單列的寬度下一個 pixel 約 0.027，拖到「看起來是
+    /// 100%」實際會停在 0.9956 之類的值。用 `gain != 1` 當建 tap 的判準，
+    /// 那個 App 就會為了 −0.038 dB（聽不出來）永久多繞一整段
+    /// tap → aggregate → IOProc 的路徑，走進和其他 App 不同的時鐘域。
+    /// 0.02 ＝ ±0.17 dB，遠在可聞閾（約 1 dB）以下，但寬過一個 pixel。
+    public static let unityDeadband: Float = 0.02
+
+    /// 這個增益實際上就是「不動它」。
+    public static func isUnityGain(_ value: Float) -> Bool {
+        abs(value - 1) < unityDeadband
+    }
+
+    /// 滑桿寫回模型前先過這裡：落在 unity 頓點內就吸附成正好 1，
+    /// 於是 `needsTap` 為假、tap 收掉、UI 也顯示乾淨的 100%。
+    public static func snapGain(_ value: Float) -> Float {
+        let clamped = clampGain(value)
+        return isUnityGain(clamped) ? 1 : clamped
+    }
+
     /// 沒有任何值得**保存**的東西（儲存判準）。注意與 `needsTap` 不同：
     /// 「EQ 存著但關掉」要保留設定（使用者調了十分鐘的 preset 不能因為
     /// 暫時關掉就蒸發——與裝置版 EQ 同一態度），但不值得為它建 tap。
     public var isNeutral: Bool {
-        gain == 1 && !muted && outputDeviceUID == nil
+        Self.isUnityGain(gain) && !muted && outputDeviceUID == nil
             && eq == nil && effects.isEmpty
     }
 
     /// **「要不要建 tap」的判準**（DESIGN §2.3 規則 2：沒被調整的 App
     /// 一個 tap 都不建）。eq 要**生效**、效果鏈要有**啟用中的格**才算。
     public var needsTap: Bool {
-        gain != 1 || muted || outputDeviceUID != nil
+        !Self.isUnityGain(gain) || muted || outputDeviceUID != nil
             || eq?.isActive == true || effects.contains(where: \.enabled)
     }
 
@@ -71,6 +91,14 @@ public struct AppAudioSettings: Codable, Sendable, Equatable {
 
     public init(entries: [String: AppAudioSetting] = [:]) {
         self.entries = entries.filter { !$0.value.isNeutral }
+    }
+
+    /// 解碼走同一道過濾。舊版存下來的「幾乎等於 1」（滑桿碰不到 1.0 的
+    /// 產物，見 `unityDeadband`）在載入當下就清掉，不必等使用者再動一次
+    /// 滑桿——否則那個 App 會一直掛在「已調整」清單裡卻顯示 100%。
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(entries: try container.decode([String: AppAudioSetting].self, forKey: .entries))
     }
 
     public subscript(bundleID: String) -> AppAudioSetting {
