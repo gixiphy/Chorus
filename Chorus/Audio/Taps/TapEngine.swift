@@ -237,6 +237,7 @@ final class TapEngine {
         guard state == .active, let target = deviceTarget,
               backend.outputDeviceUIDs().contains(target)
         else {
+            log.debug("global session 不成立：state=\(String(describing: self.state), privacy: .public) target=\(self.deviceTarget ?? "nil", privacy: .public) 在清單=\(self.deviceTarget.map { self.backend.outputDeviceUIDs().contains($0) } ?? false, privacy: .public)")
             stopGlobalSession()
             globalError = nil // 不再需要全域 session，舊錯誤跟著清
             refreshErrorDisplay()

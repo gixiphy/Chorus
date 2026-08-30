@@ -3,6 +3,7 @@ import ChorusCore
 import CoreAudio
 import Foundation
 import Observation
+import os
 
 /// 輸出裝置清單與音量/mute/預設裝置控制的入口（MainActor）。
 /// 實際 CoreAudio IO 在 AudioWorker 的 serial queue 上。
@@ -369,17 +370,22 @@ final class AudioDeviceManager {
             target.volume = settings.lastVolume(for: target.uid) ?? target.volume
         }
         guard engineReady, let defaultDevice else {
+            log.debug("deviceProcessing 清空：engineReady=\(engineReady, privacy: .public) default=\(defaultDevice?.uid ?? "nil", privacy: .public)")
             tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
             return
         }
         let eq = effectiveEQ(for: defaultDevice.uid)
         guard volumeTarget != nil || eq != nil else {
             // 兩個都不需要 → 一個 tap 都不建（DESIGN §2.3 規則 2）
+            log.debug("deviceProcessing 不需要：default=\(defaultDevice.uid, privacy: .public) 存的EQ鍵=\(Array(self.settings.deviceEQ.keys).joined(separator: ","), privacy: .public)")
             tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
             return
         }
+        log.debug("deviceProcessing 推送：default=\(defaultDevice.uid, privacy: .public) eq=\(eq != nil, privacy: .public) 軟體音量=\(volumeTarget != nil, privacy: .public)")
         pushDeviceProcessing(defaultDevice)
     }
+
+    @ObservationIgnored private let log = Logger(subsystem: "com.hermes.Chorus", category: "audio")
 
     /// 音量只有在軟體音量後端生效時才由我們衰減——否則裝置音量歸
     /// 前兩條後端管，這裡送 1.0（責任矩陣 §3.2：一層只管一件事）。
