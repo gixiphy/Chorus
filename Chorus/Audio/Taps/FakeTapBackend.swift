@@ -101,6 +101,7 @@ final class FakeTapSession: TapSession {
     }
 
     private(set) var lastEQ: EQSettings?
+    private(set) var lastAppEQ: EQSettings?
     var onDeviceReconfigured: (@MainActor () -> Void)?
 
     /// 測試鉤：模擬輸出裝置中途重新配置（藍牙耳機切降噪模式）。
@@ -109,6 +110,7 @@ final class FakeTapSession: TapSession {
     func setGain(_ gain: Float) { lastGain = gain }
     func setMuted(_ muted: Bool) { lastMuted = muted }
     func setEQ(_ settings: EQSettings?) { lastEQ = settings }
+    func setAppEQ(_ settings: EQSettings?) { lastAppEQ = settings }
     func stop() { stopped = true }
 }
 #endif

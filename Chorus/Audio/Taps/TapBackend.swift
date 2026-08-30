@@ -39,6 +39,8 @@ protocol TapSession: AnyObject {
     func setMuted(_ muted: Bool)
     /// 裝置級等化（B6-5）。`nil` 或未生效的設定＝拆掉 EQ，樣本原樣通過。
     func setEQ(_ settings: EQSettings?)
+    /// App 層等化（B6-8）——與裝置層是不同責任的兩次，App 層先過。
+    func setAppEQ(_ settings: EQSettings?)
     func stop()
 }
 

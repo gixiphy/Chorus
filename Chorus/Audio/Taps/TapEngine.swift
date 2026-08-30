@@ -145,6 +145,12 @@ final class TapEngine {
     }
 
     /// 指定輸出裝置；`nil` ＝跟隨系統預設（B6-3）。
+    /// App 層等化（B6-8）。設定是唯一來源——寫進 appAudio 再對帳，
+    /// 與 gain／mute／路由同一條路。
+    func setAppEQ(_ eq: EQSettings?, bundleID: String) {
+        update(bundleID: bundleID) { $0.eq = eq }
+    }
+
     func setOutputDevice(_ uid: String?, bundleID: String) {
         update(bundleID: bundleID) { $0.outputDeviceUID = uid }
     }
@@ -225,6 +231,7 @@ final class TapEngine {
         let onDeviceChain = sessionOutputUIDs[bundleID] == deviceTarget
         session.setGain(onDeviceChain ? entry.gain * deviceGain : entry.gain)
         session.setMuted(entry.muted || (onDeviceChain && deviceMuted))
+        session.setAppEQ(entry.eq) // App 層先過（B6-8）
         session.setEQ(onDeviceChain ? deviceEQ : nil)
     }
 

@@ -443,6 +443,32 @@ struct TapEngineTests {
         #expect(engine.tappedBundles == ["com.apple.Music"])
     }
 
+    @Test("App 層 EQ（B6-8）：只開 EQ 就建 tap，App 層與裝置層各自送達、互不混用")
+    func perAppEQFlowsToItsOwnLayer() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+
+        // gain 還是 1，只開 App 層 EQ → 也要建 tap（needsTap）
+        engine.setAppEQ(sampleEQ, bundleID: "com.apple.Music")
+        let session = backend.liveSessions["com.apple.Music"]
+        #expect(session != nil)
+        #expect(session?.lastAppEQ?.bands.count == 10)
+        #expect(session?.lastEQ == nil) // 裝置層沒開就不該有
+
+        // 裝置層也開 → 兩層各自送達（App 先、裝置後由 render 保證）
+        engine.updateDeviceProcessing(
+            deviceUID: "fake-output-uid", gain: 1, muted: false, eq: sampleEQ
+        )
+        #expect(session?.lastEQ?.bands.count == 10)
+        #expect(session?.lastAppEQ?.bands.count == 10)
+
+        // App 層 EQ 拆掉 → session 收掉（沒有其他調整了）
+        engine.setAppEQ(nil, bundleID: "com.apple.Music")
+        #expect(backend.liveSessions["com.apple.Music"]?.stopped == true)
+    }
+
     @Test("per-app session 也套裝置級處理（相乘、單次）——被接管的 App 不再繞過裝置 EQ 與軟體音量")
     func perAppSessionCarriesDeviceProcessing() {
         let (engine, backend, registry) = makeEngine(mode: .audio)
