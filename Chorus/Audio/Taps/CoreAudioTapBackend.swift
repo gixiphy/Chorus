@@ -117,14 +117,16 @@ final class CoreAudioTapBackend: TapBackend {
 
     func startPlaythroughSession(
         bundleID: String,
+        memberBundleIDs: [String],
         outputDeviceUID: String,
         initialGain: Float
     ) throws -> any TapSession {
-        guard bundleID != Bundle.main.bundleIdentifier else {
+        if let own = Bundle.main.bundleIdentifier,
+           bundleID == own || memberBundleIDs.contains(own) {
             throw TapBackendError.refusedSelfTap
         }
         let description = CATapDescription(stereoMixdownOfProcesses: [])
-        description.bundleIDs = [bundleID]
+        description.bundleIDs = memberBundleIDs.isEmpty ? [bundleID] : memberBundleIDs
         // App 退出重啟由系統重綁，我們不用輪詢 process 清單（macOS 26）
         description.isProcessRestoreEnabled = true
         description.name = "Chorus per-app (\(bundleID))"

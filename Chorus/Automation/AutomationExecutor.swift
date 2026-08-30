@@ -400,7 +400,7 @@ final class AutomationExecutor {
     /// （可能已退出——設定還在，遙控端要改得回來）。
     private func resolveApps(_ target: ControlTarget) throws(ControlError) -> [String] {
         tapEngine.registry.refresh()
-        let running = tapEngine.registry.controllableProcesses.compactMap(\.bundleID)
+        let running = tapEngine.registry.listableApps
         let adjusted = settings.appAudio.adjustedBundleIDs
         var seen = Set<String>()
         let all = (running + adjusted).filter { seen.insert($0).inserted }

@@ -315,6 +315,21 @@ def main():
     notify("appReset", "com.apple.Music")
     notify("appReset", "com.apple.Safari")
 
+    # 歸組（2026-08-30 bug 批）：helper 併入主 App、daemon 與 Apple 的
+    # accessory 不列——選單塞滿 audiomxd／assistantd／helper 的那張截圖
+    notify("fakeAudioProcesses",
+           "Music|com.apple.Music|0|regular;"
+           "Vivaldi|com.vivaldi.Vivaldi|0|regular;"
+           "helper|com.vivaldi.Vivaldi.helper|1|other;"
+           "audiomxd|com.apple.audio.audiomxd|1|other;"
+           "ControlCenter|com.apple.controlcenter|1|accessory")
+    response = control({"verb": "get", "target": "allApps"})
+    bundles = sorted(r.get("value") for r in (response or {}).get("results", [])
+                     if r.get("property") == "bundleID")
+    record("歸組：helper 併入主 App、daemon 與 Apple accessory 不列",
+           bundles == ["com.apple.Music", "com.vivaldi.Vivaldi"])
+    notify("fakeAudioProcesses", "Music|com.apple.Music|1;Safari|com.apple.Safari|0")
+
     print("\n[9] 權限未到手時 app: 整組不可用（降級表）", flush=True)
     notify("tapEngine", "0")
     ok, _ = wait_for(lambda d: tap_state(d) == "off", 10)

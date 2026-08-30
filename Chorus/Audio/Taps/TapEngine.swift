@@ -59,6 +59,10 @@ final class TapEngine {
     /// 每條 session 實際建在哪個裝置的 UID 上。存它才分得出「設定改了但
     /// 裝置沒變」（推 atomic 就好）與「裝置換了」（非重建不可）。
     @ObservationIgnored private var sessionOutputUIDs: [String: String] = [:]
+    /// 每條 session 的 tap 描述涵蓋了哪些 bundle（root＋helper）。
+    /// 新成員出現才重建；成員消失不動——`processRestoreEnabled` 靠的
+    /// 就是描述留著，App 重啟由系統重綁。
+    @ObservationIgnored private var sessionMemberBundles: [String: Set<String>] = [:]
     /// 裝置級處理的一條全域 session（B6-4 軟體音量＋B6-5 等化共用）。
     @ObservationIgnored private var globalSession: (any TapSession)?
     @ObservationIgnored private var globalOutputUID: String?
@@ -77,6 +81,11 @@ final class TapEngine {
         self.settings = settings
         backend.setDefaultOutputChangedHandler { [weak self] in
             self?.defaultOutputChanged()
+        }
+        // helper 出現時 tap 描述要補上它（聲音多半從 helper 出來），
+        // 全域 tap 的排除清單也要跟著長
+        registry.onProcessesChanged = { [weak self] in
+            self?.reconcileSessions()
         }
     }
 
@@ -270,14 +279,22 @@ final class TapEngine {
             if let actual = sessionOutputUIDs[bundleID], actual != outputUID {
                 stopSession(bundleID)
             }
+            // 新成員（helper）出現＝現有描述抓不到它的聲音，非重建不可；
+            // 成員消失不重建——描述留著，App 重啟由系統重綁
+            let members = Set(registry.memberBundleIDs(bundleID: bundleID))
+            if let covered = sessionMemberBundles[bundleID], !members.isSubset(of: covered) {
+                stopSession(bundleID)
+            }
             if sessions[bundleID] == nil {
                 do {
                     sessions[bundleID] = try backend.startPlaythroughSession(
                         bundleID: bundleID,
+                        memberBundleIDs: Array(members).sorted(),
                         outputDeviceUID: outputUID,
                         initialGain: entry.gain
                     )
                     sessionOutputUIDs[bundleID] = outputUID
+                    sessionMemberBundles[bundleID] = members
                 } catch {
                     // 單一 App 失敗不拖垮引擎：記錄並繼續，其他 session 與
                     // 裝置音量／亮度／同步完全不受影響（DESIGN §6 降級表）
@@ -303,6 +320,7 @@ final class TapEngine {
     private func stopSession(_ bundleID: String) {
         sessions.removeValue(forKey: bundleID)?.stop()
         sessionOutputUIDs.removeValue(forKey: bundleID)
+        sessionMemberBundles.removeValue(forKey: bundleID)
     }
 
     // MARK: - 探測與健康判讀

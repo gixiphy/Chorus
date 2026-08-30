@@ -57,9 +57,8 @@ struct AppVolumeSection: View {
     /// 現在正在發聲、或已經被調整過的 App——這兩類永遠列出來。
     /// 「已調整但已退出」也要在：不然使用者找不到地方把它調回來。
     private var activeApps: [String] {
-        let audible = appState.tapEngine.registry.controllableProcesses
-            .filter(\.isAudible)
-            .compactMap(\.bundleID)
+        let registry = appState.tapEngine.registry
+        let audible = registry.listableApps.filter { registry.isGroupAudible(bundleID: $0) }
         let adjusted = appState.settings.appAudio.adjustedBundleIDs
         return orderedUnique(audible + adjusted)
     }
@@ -67,8 +66,7 @@ struct AppVolumeSection: View {
     /// 有音訊行程但沒在發聲、也沒調整過的。
     private var dormantApps: [String] {
         let active = Set(activeApps)
-        return appState.tapEngine.registry.controllableProcesses
-            .compactMap(\.bundleID)
+        return appState.tapEngine.registry.listableApps
             .filter { !active.contains($0) }
     }
 
@@ -186,7 +184,7 @@ private struct AppVolumeRow: View {
     }
 
     private var isAudible: Bool {
-        appState.tapEngine.registry.entry(bundleID: bundleID)?.isAudible ?? false
+        appState.tapEngine.registry.isGroupAudible(bundleID: bundleID)
     }
 
     /// 路由狀態（B6-3）。只在使用者明確指定過裝置時才佔一行——

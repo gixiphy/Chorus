@@ -59,10 +59,14 @@ protocol TapBackend: AnyObject {
     /// `processRestoreEnabled`，App 重啟由系統重綁）、mutedWhenTapped、
     /// 處理後寫回輸出裝置。
     ///
+    /// `memberBundleIDs` 是描述要涵蓋的整組 bundle（root＋helper）——
+    /// 瀏覽器類 App 的聲音從 helper 行程出來，只描述主 bundle 會抓不到。
+    ///
     /// `initialGain` 讓 session 從使用者設定的值起步。少了它，一個設成
     /// 20% 的 App 每次重啟都會先響一段全音量再滑下去。
     func startPlaythroughSession(
         bundleID: String,
+        memberBundleIDs: [String],
         outputDeviceUID: String,
         initialGain: Float
     ) throws -> any TapSession

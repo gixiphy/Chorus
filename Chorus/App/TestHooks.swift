@@ -194,17 +194,25 @@ final class TestHooks {
             // 不等計時器，直接推一格健康判讀（E2E 提速）
             appState.tapEngine.healthTick()
         case "fakeAudioProcesses":
-            // value = "Name|bundle.id|1;Name2|bundle2|0"（audible 旗標）
+            // value = "Name|bundle.id|1;Name2|bundle2|0"（audible 旗標）。
+            // 第 4 欄可選：regular（預設）／accessory／other——
+            // other 用來模擬 helper 與 daemon（歸組規則的 E2E）
             if let raw = info["value"] {
                 let entries: [AudioProcessRegistry.Entry] = raw.split(separator: ";").enumerated().compactMap { index, part in
                     let fields = part.split(separator: "|")
-                    guard fields.count == 3 else { return nil }
+                    guard fields.count >= 3 else { return nil }
+                    let kind: AudioProcessGrouping.Kind = switch fields.count >= 4 ? fields[3] : "regular" {
+                    case "accessory": .accessoryApp
+                    case "other": .other
+                    default: .regularApp
+                    }
                     return AudioProcessRegistry.Entry(
                         objectID: AudioObjectID(1000 + index),
                         pid: pid_t(2000 + index),
                         bundleID: String(fields[1]),
                         name: String(fields[0]),
-                        isAudible: fields[2] == "1"
+                        isAudible: fields[2] == "1",
+                        kind: kind
                     )
                 }
                 appState.tapEngine.registry.injectFake(entries)
