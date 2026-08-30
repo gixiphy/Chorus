@@ -88,6 +88,18 @@ protocol TapBackend: AnyObject {
     func setDefaultOutputChangedHandler(_ handler: @escaping @MainActor () -> Void)
 }
 
+extension TapBackend {
+    /// 回音紀律的共同防呆：絕不 tap Chorus 自己（含歸組成員）。
+    /// 放在協定層——policy 只寫一份，fake 與真實 backend 必然一致，
+    /// 測試驗到的就是正式路徑的那條規則。
+    func rejectSelfTap(bundleID: String, memberBundleIDs: [String]) throws {
+        if let own = Bundle.main.bundleIdentifier,
+           bundleID == own || memberBundleIDs.contains(own) {
+            throw TapBackendError.refusedSelfTap
+        }
+    }
+}
+
 enum TapBackendError: Error, Equatable {
     case noOutputDevice
     case createTapFailed(OSStatus)

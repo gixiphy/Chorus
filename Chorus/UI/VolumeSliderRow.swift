@@ -163,7 +163,7 @@ struct VolumeSliderRow: View {
 
     private var nameHelp: String {
         guard let target = forwardTarget else { return device.name }
-        switch forwardVolumeMode(target) {
+        switch target.forwardVolumeMode {
         case .ddc:
             return "由 Chorus 轉送到「\(target.name)」：音量直接寫進螢幕硬體（DDC，不損音質）"
         case .native:
@@ -174,20 +174,10 @@ struct VolumeSliderRow: View {
     }
 
     private func badgeText(for target: AudioDeviceModel) -> String {
-        switch forwardVolumeMode(target) {
+        switch target.forwardVolumeMode {
         case .ddc: "DDC"
         case .native: "鏡射"
         case .digital: "數位音量"
         }
-    }
-
-    /// 轉送目標的音量怎麼做：DDC 硬體鏡射 → 原生音量鏡射（內建喇叭
-    /// 這類自己就有音量的裝置）→ 都沒有才是 driver 端數位衰減。
-    /// 與 `AudioDeviceManager.mirrorTarget()` 的判準一致。
-    private enum ForwardVolumeMode { case ddc, native, digital }
-    private func forwardVolumeMode(_ target: AudioDeviceModel) -> ForwardVolumeMode {
-        if target.bridgedDisplayID != nil, !target.bridgeUnresponsive { return .ddc }
-        if target.canSetVolume { return .native }
-        return .digital
     }
 }

@@ -504,17 +504,17 @@ final class AudioDeviceManager {
         writeMute(muted, to: target)
     }
 
-    /// 鏡射目標：driver 設定的轉送裝置，且音量有地方可寫——
-    /// DDC 橋接的螢幕（VCP 0x62），或**自己就有原生音量**的裝置
-    /// （退回內建喇叭的 fallback 就是這一種）。兩者 driver 都
-    /// applyVolume=0、樣本原樣通過；都沒有才輪到數位衰減——
-    /// 有硬體音量卻走數位衰減是純粹的損失（位深＋刻度對不上）。
+    /// 鏡射目標：driver 設定的轉送裝置，且音量有地方可寫（三態判準見
+    /// `AudioDeviceModel.forwardVolumeMode`）。有地方可寫時 driver
+    /// applyVolume=0、樣本原樣通過；都沒有才輪到數位衰減——有硬體音量
+    /// 卻走數位衰減是純粹的損失（位深＋刻度對不上）。
+    /// 暫時 unresponsive 的 DDC 橋**照樣是目標**：寫後驗證是它恢復
+    /// 判定的來源，停寫它就再也回不來。
     private func mirrorTarget() -> AudioDeviceModel? {
         guard let uid = virtualDriver?.targetUID,
               let target = devices.first(where: { $0.uid == uid })
         else { return nil }
-        if target.canSetVolume { return target }
-        return target.bridgedDisplayID != nil ? target : nil
+        return (target.canSetVolume || target.bridgedDisplayID != nil) ? target : nil
     }
 
     // MARK: - 轉送目標：跟著使用中的螢幕走
@@ -612,7 +612,7 @@ final class AudioDeviceManager {
         guard let virtualDriver,
               devices.contains(where: { $0.uid == VirtualAudioDriverController.deviceUID })
         else { return }
-        let mirrors = mirrorTarget().map { !$0.bridgeUnresponsive } ?? false
+        let mirrors = mirrorTarget().map { $0.forwardVolumeMode != .digital } ?? false
         virtualDriver.setMirrorMode(mirrors)
     }
 

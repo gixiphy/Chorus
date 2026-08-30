@@ -408,7 +408,7 @@ final class TestHooks {
 
         let aggregate: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Chorus Tap Probe",
-            kAudioAggregateDeviceUIDKey: "com.hermes.Chorus.tapprobe.\(UUID().uuidString)",
+            kAudioAggregateDeviceUIDKey: "\(CoreAudioTapBackend.aggregateUIDPrefix)probe.\(UUID().uuidString)",
             kAudioAggregateDeviceMainSubDeviceKey: outputUID,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: false,

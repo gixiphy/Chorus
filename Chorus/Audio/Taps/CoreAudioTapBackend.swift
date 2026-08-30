@@ -3,6 +3,34 @@ import CoreAudio
 import Foundation
 import Synchronization
 
+/// 單一 EQ 層的共享狀態（App 層／裝置層各一份，B6-8）。兩層責任不同、
+/// 機制完全相同——機制只寫一份，層次由 `TapRenderContext` 的欄位命名。
+final class EQLayerState: @unchecked Sendable {
+    /// EQ 係數區塊的指標位元（0 ＝ 沒有 EQ）。主執行緒寫、render 讀。
+    /// 見 `EQCoefficientBlock`。
+    let block = Atomic<UInt>(0)
+    /// **只有 render 執行緒碰**：biquad 狀態（channel × band，預先配置）。
+    /// realtime 端不能配置記憶體，所以上限在這裡就吃掉。
+    let states: UnsafeMutableBufferPointer<BiquadState>
+    /// render 端看過的 EQ 版本號。與區塊裡的不同就把狀態歸零。
+    var generation: UInt32 = 0
+
+    init() {
+        states = UnsafeMutableBufferPointer<BiquadState>.allocate(
+            capacity: TapRenderContext.maxChannels * EQSettings.maxBands
+        )
+        states.initialize(repeating: BiquadState())
+    }
+
+    deinit {
+        states.deallocate()
+        let raw = block.load(ordering: .relaxed)
+        if raw != 0, let pointer = UnsafeMutableRawPointer(bitPattern: raw) {
+            EQCoefficientBlock.deallocate(pointer)
+        }
+    }
+}
+
 /// IOProc 與主執行緒之間的共享狀態。**跨執行緒的欄位只有 atomic**——
 /// realtime 紀律（PLAN §8-2）：callback 內禁止 malloc／lock／ObjC 訊息。
 final class TapRenderContext: @unchecked Sendable {
@@ -13,22 +41,14 @@ final class TapRenderContext: @unchecked Sendable {
     let callbacks = Atomic<Int>(0)
     let nonZeroCallbacks = Atomic<Int>(0)
 
-    /// 裝置層 EQ 係數區塊的指標位元（0 ＝ 沒有 EQ）。見 `EQCoefficientBlock`。
-    let eqBlock = Atomic<UInt>(0)
-    /// App 層 EQ（B6-8：兩層是**不同責任的兩次**，App 層先過）。
-    let appEQBlock = Atomic<UInt>(0)
+    /// 兩層 EQ（B6-8：**不同責任的兩次**，App 層先過、裝置層後過）。
+    let appEQ = EQLayerState()
+    let deviceEQ = EQLayerState()
 
     /// **只有 render 執行緒碰**：斜坡目前走到的增益值。
     /// 不是 atomic，因為它不跨執行緒——加 atomic 只會讓 realtime 端
     /// 多付一次同步成本換取沒人需要的可見性。
     var currentGain: Float
-    /// **只有 render 執行緒碰**：biquad 狀態（channel × band，預先配置）。
-    /// realtime 端不能配置記憶體，所以上限在這裡就吃掉。兩層各一份。
-    let eqStates: UnsafeMutableBufferPointer<BiquadState>
-    let appEQStates: UnsafeMutableBufferPointer<BiquadState>
-    /// render 端看過的 EQ 版本號。與區塊裡的不同就把狀態歸零。
-    var eqGeneration: UInt32 = 0
-    var appEQGeneration: UInt32 = 0
 
     static let maxChannels = 8
 
@@ -38,24 +58,6 @@ final class TapRenderContext: @unchecked Sendable {
         self.playthrough = playthrough
         gainBits.store(initialGain.bitPattern, ordering: .relaxed)
         currentGain = initialGain
-        eqStates = UnsafeMutableBufferPointer<BiquadState>.allocate(
-            capacity: Self.maxChannels * EQSettings.maxBands
-        )
-        eqStates.initialize(repeating: BiquadState())
-        appEQStates = UnsafeMutableBufferPointer<BiquadState>.allocate(
-            capacity: Self.maxChannels * EQSettings.maxBands
-        )
-        appEQStates.initialize(repeating: BiquadState())
-    }
-
-    deinit {
-        eqStates.deallocate()
-        appEQStates.deallocate()
-        for raw in [eqBlock.load(ordering: .relaxed), appEQBlock.load(ordering: .relaxed)] {
-            if raw != 0, let block = UnsafeMutableRawPointer(bitPattern: raw) {
-                EQCoefficientBlock.deallocate(block)
-            }
-        }
     }
 }
 
@@ -67,31 +69,32 @@ final class TapRenderContext: @unchecked Sendable {
 /// OrphanedTapCleanup 類啟動掃除（他們的 aggregate 應是非 private）。
 @MainActor
 final class CoreAudioTapBackend: TapBackend {
+    /// 自家 tap aggregate 的 UID 前綴。建立端（這裡、TestHooks 的探測）與
+    /// 過濾端（AudioWorker 把自己的 private aggregate 從裝置清單濾掉）
+    /// 都走這個常數——三處字面值各自為政的話，改 UID 格式會讓過濾
+    /// 靜靜失效，假裝置回來與底下裝置搶同一顆音量。
+    nonisolated static let aggregateUIDPrefix = "com.hermes.Chorus.tap"
+
     func defaultOutputDeviceUID() -> String? {
-        var address = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
-        var deviceID = AudioObjectID(kAudioObjectUnknown)
-        var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
-        ) == noErr else { return nil }
-        return Self.stringProperty(deviceID, kAudioDevicePropertyDeviceUID)
+        guard let deviceID = CoreAudioProperty.get(
+            AudioObjectID(kAudioObjectSystemObject),
+            CoreAudioProperty.address(kAudioHardwarePropertyDefaultOutputDevice),
+            as: AudioObjectID.self
+        ) else { return nil }
+        return CoreAudioProperty.getString(deviceID, CoreAudioProperty.address(kAudioDevicePropertyDeviceUID))
     }
 
     /// 有輸出串流的裝置。輸入裝置（麥克風）與純輸入的 aggregate 不算——
     /// 把它們列進路由選單只會讓使用者選到一個沒有聲音出來的目標。
     func outputDeviceUIDs() -> [String] {
-        var address = Self.address(kAudioHardwarePropertyDevices)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size
-        ) == noErr, size > 0 else { return [] }
-        var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects
-        ) == noErr else { return [] }
+        let objects = CoreAudioProperty.getArray(
+            AudioObjectID(kAudioObjectSystemObject),
+            CoreAudioProperty.address(kAudioHardwarePropertyDevices),
+            of: AudioObjectID.self
+        ) ?? []
         return objects.compactMap { device in
             guard Self.hasOutputStreams(device) else { return nil }
-            return Self.stringProperty(device, kAudioDevicePropertyDeviceUID)
+            return CoreAudioProperty.getString(device, CoreAudioProperty.address(kAudioDevicePropertyDeviceUID))
         }
     }
 
@@ -131,10 +134,7 @@ final class CoreAudioTapBackend: TapBackend {
         outputDeviceUID: String,
         initialGain: Float
     ) throws -> any TapSession {
-        if let own = Bundle.main.bundleIdentifier,
-           bundleID == own || memberBundleIDs.contains(own) {
-            throw TapBackendError.refusedSelfTap
-        }
+        try rejectSelfTap(bundleID: bundleID, memberBundleIDs: memberBundleIDs)
         let description = CATapDescription(stereoMixdownOfProcesses: [])
         description.bundleIDs = memberBundleIDs.isEmpty ? [bundleID] : memberBundleIDs
         // App 退出重啟由系統重綁，我們不用輪詢 process 清單（macOS 26）
@@ -167,7 +167,7 @@ final class CoreAudioTapBackend: TapBackend {
     }
 
     func setDefaultOutputChangedHandler(_ handler: @escaping @MainActor () -> Void) {
-        var address = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
+        var address = CoreAudioProperty.address(kAudioHardwarePropertyDefaultOutputDevice)
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &address, .main
         ) { _, _ in
@@ -187,14 +187,14 @@ final class CoreAudioTapBackend: TapBackend {
         let createStatus = AudioHardwareCreateProcessTap(description, &tapID)
         guard createStatus == noErr else { throw TapBackendError.createTapFailed(createStatus) }
 
-        guard let tapUID = Self.stringProperty(tapID, kAudioTapPropertyUID) else {
+        guard let tapUID = CoreAudioProperty.getString(tapID, CoreAudioProperty.address(kAudioTapPropertyUID)) else {
             AudioHardwareDestroyProcessTap(tapID)
             throw TapBackendError.tapUIDUnavailable
         }
 
         let aggregateDescription: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Chorus Tap",
-            kAudioAggregateDeviceUIDKey: "com.hermes.Chorus.tap.\(UUID().uuidString)",
+            kAudioAggregateDeviceUIDKey: "\(Self.aggregateUIDPrefix).\(UUID().uuidString)",
             kAudioAggregateDeviceMainSubDeviceKey: outputDeviceUID,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: false,
@@ -273,47 +273,18 @@ final class CoreAudioTapBackend: TapBackend {
             context.currentGain = endGain
             // 回呼「之間」由 GainRamp 限速，回呼「之內」由這條插值鋪平
             let gainStep = frames > 0 ? (endGain - startGain) / Float(frames) : 0
-            // EQ 係數：只讀一次指標，之後全是指標運算。兩層（App 先、裝置後，
-            // B6-8）——每層各自的區塊、狀態與版本號
-            var eqCount = 0
-            var preamp: Float = 1
-            var eqCoefficients: UnsafePointer<BiquadCoefficients>?
-            let rawBlock = context.eqBlock.load(ordering: .acquiring)
-            if rawBlock != 0, let base = UnsafeRawPointer(bitPattern: rawBlock) {
-                let header = base.assumingMemoryBound(to: EQCoefficientBlock.Header.self).pointee
-                eqCount = min(Int(header.count), EQSettings.maxBands)
-                preamp = header.preamp
-                eqCoefficients = UnsafePointer((base + EQCoefficientBlock.coefficientOffset)
-                    .assumingMemoryBound(to: BiquadCoefficients.self))
-                // 換了一組係數 → 舊的濾波器狀態要歸零，否則會拖出一聲。
-                // 主執行緒不能安全地碰 render 擁有的狀態，所以由這裡比對版本號
-                if header.generation != context.eqGeneration {
-                    context.eqGeneration = header.generation
-                    for index in context.eqStates.indices { context.eqStates[index].reset() }
-                }
-            }
-            var appEQCount = 0
-            var appPreamp: Float = 1
-            var appEQCoefficients: UnsafePointer<BiquadCoefficients>?
-            let rawAppBlock = context.appEQBlock.load(ordering: .acquiring)
-            if rawAppBlock != 0, let base = UnsafeRawPointer(bitPattern: rawAppBlock) {
-                let header = base.assumingMemoryBound(to: EQCoefficientBlock.Header.self).pointee
-                appEQCount = min(Int(header.count), EQSettings.maxBands)
-                appPreamp = header.preamp
-                appEQCoefficients = UnsafePointer((base + EQCoefficientBlock.coefficientOffset)
-                    .assumingMemoryBound(to: BiquadCoefficients.self))
-                if header.generation != context.appEQGeneration {
-                    context.appEQGeneration = header.generation
-                    for index in context.appEQStates.indices { context.appEQStates[index].reset() }
-                }
-            }
-            let totalPreamp = preamp * appPreamp
+            // EQ 係數：每層只讀一次指標，之後全是指標運算。兩層（App 先、
+            // 裝置後，B6-8）走同一套解碼——機制只寫一份
+            let appEQ = decodeEQ(context.appEQ)
+            let deviceEQ = decodeEQ(context.deviceEQ)
+            let totalPreamp = deviceEQ.preamp * appEQ.preamp
+            let hasEQ = appEQ.count > 0 || deviceEQ.count > 0
 
             // 膝點分兩檔：>1x boost 用 0.7（大幅增益需要提早平緩地收）；
             // 純 EQ 用 0.95 只防真正過頂——0.7 對貼滿刻度的母帶是持續失真
             // （D14 實聽：不定時沙沙）。兩者都不成立就完全不碰樣本。
             let boosted = startGain > 1 || endGain > 1
-            let clipping = boosted || eqCount > 0 || appEQCount > 0
+            let clipping = boosted || hasEQ
             let clipKnee: Float = boosted ? SoftClip.threshold : SoftClip.protectThreshold
             var channelBase = 0
 
@@ -327,30 +298,35 @@ final class CoreAudioTapBackend: TapBackend {
                    let destination = outputList[index].mData?.assumingMemoryBound(to: Float.self) {
                     let writable = min(sampleCount, Int(outputList[index].mDataByteSize) / MemoryLayout<Float>.size)
                     let writableFrames = writable / channels
-                    let states = context.eqStates.baseAddress
-                    let appStates = context.appEQStates.baseAddress
-                    for frame in 0..<writableFrames {
-                        let gain = (startGain + gainStep * Float(frame)) * totalPreamp
-                        for channel in 0..<channels {
-                            let offset = frame * channels + channel
-                            let raw = source[offset]
-                            if raw != 0 { sawNonZero = true }
-                            var value = raw * gain
-                            // 每個聲道有自己的一整條 cascade 狀態；App 層先過
-                            if channelBase + channel < TapRenderContext.maxChannels {
-                                let slot = (channelBase + channel) * EQSettings.maxBands
-                                if let appEQCoefficients, let appStates {
-                                    for band in 0..<appEQCount {
-                                        value = appStates[slot + band].process(value, appEQCoefficients[band])
-                                    }
+                    if hasEQ {
+                        for frame in 0..<writableFrames {
+                            let gain = (startGain + gainStep * Float(frame)) * totalPreamp
+                            for channel in 0..<channels {
+                                let offset = frame * channels + channel
+                                let raw = source[offset]
+                                if raw != 0 { sawNonZero = true }
+                                var value = raw * gain
+                                // 每個聲道有自己的一整條 cascade 狀態；App 層先過
+                                if channelBase + channel < TapRenderContext.maxChannels {
+                                    let slot = (channelBase + channel) * EQSettings.maxBands
+                                    value = applyCascade(value, appEQ, slot: slot)
+                                    value = applyCascade(value, deviceEQ, slot: slot)
                                 }
-                                if let eqCoefficients, let states {
-                                    for band in 0..<eqCount {
-                                        value = states[slot + band].process(value, eqCoefficients[band])
-                                    }
-                                }
+                                destination[offset] = clipping ? SoftClip.apply(value, threshold: clipKnee) : value
                             }
-                            destination[offset] = clipping ? SoftClip.apply(value, threshold: clipKnee) : value
+                        }
+                    } else {
+                        // 常見情形（只調音量、無 EQ）：別為每個樣本付 cascade
+                        // 的邊界檢查與 slot 計算——只剩增益與（>1x 時的）soft-clip
+                        for frame in 0..<writableFrames {
+                            let gain = (startGain + gainStep * Float(frame)) * totalPreamp
+                            for channel in 0..<channels {
+                                let offset = frame * channels + channel
+                                let raw = source[offset]
+                                if raw != 0 { sawNonZero = true }
+                                let value = raw * gain
+                                destination[offset] = clipping ? SoftClip.apply(value, threshold: clipKnee) : value
+                            }
                         }
                     }
                     // 通道數不整除時剩下的尾巴補零，別讓上一輪的內容漏出去
@@ -372,35 +348,43 @@ final class CoreAudioTapBackend: TapBackend {
         }
     }
 
-    // MARK: - property 小工具
+    // MARK: - render 端的 EQ 解碼（每回呼每層一次，之後全是指標運算）
 
-    nonisolated static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(
-            mSelector: selector,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
+    /// 一層 EQ 解碼後的即取值。純 stack struct——realtime 端零配置。
+    private struct DecodedEQ {
+        var count = 0
+        var preamp: Float = 1
+        var coefficients: UnsafePointer<BiquadCoefficients>?
+        var states: UnsafeMutablePointer<BiquadState>?
     }
 
-    nonisolated static func doubleProperty(
-        _ object: AudioObjectID, _ selector: AudioObjectPropertySelector
-    ) -> Double? {
-        var addr = address(selector)
-        var value: Float64 = 0
-        var size = UInt32(MemoryLayout<Float64>.size)
-        guard AudioObjectGetPropertyData(object, &addr, 0, nil, &size, &value) == noErr,
-              value > 0 else { return nil }
+    private nonisolated static func decodeEQ(_ layer: EQLayerState) -> DecodedEQ {
+        var decoded = DecodedEQ()
+        let raw = layer.block.load(ordering: .acquiring)
+        guard raw != 0, let base = UnsafeRawPointer(bitPattern: raw) else { return decoded }
+        let header = base.assumingMemoryBound(to: EQCoefficientBlock.Header.self).pointee
+        decoded.count = min(Int(header.count), EQSettings.maxBands)
+        decoded.preamp = header.preamp
+        decoded.coefficients = UnsafePointer((base + EQCoefficientBlock.coefficientOffset)
+            .assumingMemoryBound(to: BiquadCoefficients.self))
+        decoded.states = layer.states.baseAddress
+        // 換了一組係數 → 舊的濾波器狀態要歸零，否則會拖出一聲。
+        // 主執行緒不能安全地碰 render 擁有的狀態，所以由這裡比對版本號
+        if header.generation != layer.generation {
+            layer.generation = header.generation
+            for index in layer.states.indices { layer.states[index].reset() }
+        }
+        return decoded
+    }
+
+    @inline(__always)
+    private nonisolated static func applyCascade(_ value: Float, _ eq: DecodedEQ, slot: Int) -> Float {
+        guard let coefficients = eq.coefficients, let states = eq.states else { return value }
+        var value = value
+        for band in 0..<eq.count {
+            value = states[slot + band].process(value, coefficients[band])
+        }
         return value
-    }
-
-    nonisolated static func stringProperty(
-        _ object: AudioObjectID, _ selector: AudioObjectPropertySelector
-    ) -> String? {
-        var addr = address(selector)
-        var size = UInt32(MemoryLayout<CFString?>.size)
-        var value: CFString?
-        guard AudioObjectGetPropertyData(object, &addr, 0, nil, &size, &value) == noErr else { return nil }
-        return value as String?
     }
 }
 
@@ -412,13 +396,20 @@ private final class CoreAudioTapSession: TapSession {
     private var aggregateID: AudioObjectID
     private var procID: AudioDeviceIOProcID?
     /// EQ 版本號：每換一組係數 +1，render 端靠它決定要不要歸零濾波器狀態。
+    /// 兩層共用一個遞增序即可——只要「變了」就好。
     private var eqGeneration: UInt32 = 0
     /// 上次真正推進 render 端的 EQ（nil＝旁通）與當時的取樣率。
     /// 相同內容的重複推送在 `pushEQ` 就地擋掉，見該處註解。兩層各一份。
-    private var lastPushedEQ: EQSettings?
-    private var lastPushedSampleRate: Double = 0
-    private var lastPushedAppEQ: EQSettings?
-    private var lastPushedAppSampleRate: Double = 0
+    private struct PushedEQ {
+        var settings: EQSettings?
+        var sampleRate: Double = 0
+    }
+    private var lastPushedDevice = PushedEQ()
+    private var lastPushedApp = PushedEQ()
+    /// 裝置取樣率快取。每次 pushEQ 都打 HAL 讀是浪費——音量滑桿每一格
+    /// 都帶動一輪推送。rate listener 觸發時清掉（該事件同時會讓擁有者
+    /// 收舊建新這條 session，快取只是過渡期的正確性保險）。
+    private var cachedSampleRate: Double?
     var onDeviceReconfigured: (@MainActor () -> Void)?
     private var rateListener: AudioObjectPropertyListenerBlock?
 
@@ -438,9 +429,12 @@ private final class CoreAudioTapSession: TapSession {
     /// 建立時——不重建輕則雜音、重則卡在無聲。這裡只負責通知，
     /// 收舊建新由擁有者（TapEngine）做。
     private func listenForRateChanges() {
-        var address = CoreAudioTapBackend.address(kAudioDevicePropertyNominalSampleRate)
+        var address = CoreAudioProperty.address(kAudioDevicePropertyNominalSampleRate)
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.onDeviceReconfigured?() }
+            MainActor.assumeIsolated {
+                self?.cachedSampleRate = nil
+                self?.onDeviceReconfigured?()
+            }
         }
         rateListener = block
         AudioObjectAddPropertyListenerBlock(aggregateID, &address, .main, block)
@@ -467,36 +461,27 @@ private final class CoreAudioTapSession: TapSession {
     /// 立刻釋放是不行的：可能正好有一個回呼在讀它，而 realtime 端沒有
     /// 任何辦法告訴我們「我讀完了」。詳見 `EQCoefficientBlock`。
     func setEQ(_ settings: EQSettings?) {
-        pushEQ(settings, appLayer: false)
+        pushEQ(settings, into: context.deviceEQ, last: &lastPushedDevice)
     }
 
     func setAppEQ(_ settings: EQSettings?) {
-        pushEQ(settings, appLayer: true)
+        pushEQ(settings, into: context.appEQ, last: &lastPushedApp)
     }
 
-    private func pushEQ(_ settings: EQSettings?, appLayer: Bool) {
+    private func pushEQ(_ settings: EQSettings?, into layer: EQLayerState, last: inout PushedEQ) {
         // 內容沒變就不換區塊：generation 一變 render 端就把濾波器狀態歸零
         // （換 preset 不拖尾音的機制），對帳每次都重推同一份 EQ 的話，
         // 每一次歸零都是一聲短暫雜訊（場次 D14 實聽回報，2026-08-30）
         let effective = (settings?.isActive == true) ? settings : nil
         // 係數必須用裝置的實際取樣率算——AirPods 這類裝置會跑在 24k，
         // 用參考 48k 算出來的 EQ 整條頻率都是錯的
-        let sampleRate = CoreAudioTapBackend.doubleProperty(
-            aggregateID, kAudioDevicePropertyNominalSampleRate
-        ) ?? EQSettings.referenceSampleRate
-        if appLayer {
-            guard effective != lastPushedAppEQ || sampleRate != lastPushedAppSampleRate else { return }
-            lastPushedAppEQ = effective
-            lastPushedAppSampleRate = sampleRate
-        } else {
-            guard effective != lastPushedEQ || sampleRate != lastPushedSampleRate else { return }
-            lastPushedEQ = effective
-            lastPushedSampleRate = sampleRate
-        }
+        let sampleRate = deviceSampleRate()
+        guard effective != last.settings || sampleRate != last.sampleRate else { return }
+        last = PushedEQ(settings: effective, sampleRate: sampleRate)
 
         var newRaw: UInt = 0
         if let settings = effective {
-            eqGeneration &+= 1 // 兩層共用一個遞增序即可——只要「變了」就好
+            eqGeneration &+= 1
             let block = EQCoefficientBlock.allocate(
                 coefficients: settings.coefficients(sampleRate: sampleRate),
                 preamp: settings.preampGain,
@@ -504,15 +489,20 @@ private final class CoreAudioTapSession: TapSession {
             )
             newRaw = UInt(bitPattern: block)
         }
-        let previous: UInt
-        if appLayer {
-            previous = context.appEQBlock.load(ordering: .relaxed)
-            context.appEQBlock.store(newRaw, ordering: .releasing)
-        } else {
-            previous = context.eqBlock.load(ordering: .relaxed)
-            context.eqBlock.store(newRaw, ordering: .releasing)
-        }
+        let previous = layer.block.load(ordering: .relaxed)
+        layer.block.store(newRaw, ordering: .releasing)
         retire(previous)
+    }
+
+    private func deviceSampleRate() -> Double {
+        if let cachedSampleRate { return cachedSampleRate }
+        let rate = CoreAudioProperty.get(
+            aggregateID,
+            CoreAudioProperty.address(kAudioDevicePropertyNominalSampleRate),
+            as: Float64.self
+        ).flatMap { $0 > 0 ? $0 : nil } ?? EQSettings.referenceSampleRate
+        cachedSampleRate = rate
+        return rate
     }
 
     private func retire(_ raw: UInt) {
@@ -526,7 +516,7 @@ private final class CoreAudioTapSession: TapSession {
     func stop() {
         guard let procID else { return }
         if let rateListener {
-            var address = CoreAudioTapBackend.address(kAudioDevicePropertyNominalSampleRate)
+            var address = CoreAudioProperty.address(kAudioDevicePropertyNominalSampleRate)
             AudioObjectRemovePropertyListenerBlock(aggregateID, &address, .main, rateListener)
             self.rateListener = nil
         }

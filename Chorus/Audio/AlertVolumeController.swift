@@ -21,9 +21,12 @@ final class AlertVolumeController {
     private(set) var volume: Double = 0
 
     /// 即時生效的寫入通道（0–100）。可注入：單元測試不動真機音量。
-    @ObservationIgnored var applyLive: (Int) -> Void
+    @ObservationIgnored let applyLive: (Int) -> Void
     /// 即時現值的讀取通道（0–100；讀不到回 nil）。
-    @ObservationIgnored var readLive: () -> Int?
+    @ObservationIgnored let readLive: () -> Int?
+    /// 上次送出的整數值。滑桿拖動每秒幾十個 tick，同一個百分比重跑一次
+    /// AppleScript（每次都重新編譯）是純浪費。
+    @ObservationIgnored private var lastApplied: Int?
 
     init(
         applyLive: @escaping (Int) -> Void = AlertVolumeController.appleScriptSet,
@@ -41,7 +44,10 @@ final class AlertVolumeController {
     func setVolume(_ value: Double) {
         let clamped = min(max(value, 0), 1)
         volume = clamped
-        applyLive(Int((clamped * 100).rounded()))
+        let percent = Int((clamped * 100).rounded())
+        guard percent != lastApplied else { return }
+        lastApplied = percent
+        applyLive(percent)
     }
 
     // MARK: - AppleScript 通道

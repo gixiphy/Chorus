@@ -34,10 +34,7 @@ final class FakeTapBackend: TapBackend {
     func startPlaythroughSession(
         bundleID: String, memberBundleIDs: [String], outputDeviceUID: String, initialGain: Float
     ) throws -> any TapSession {
-        if let own = Bundle.main.bundleIdentifier,
-           bundleID == own || memberBundleIDs.contains(own) {
-            throw TapBackendError.refusedSelfTap
-        }
+        try rejectSelfTap(bundleID: bundleID, memberBundleIDs: memberBundleIDs)
         startedSessions.append((.playthrough, bundleID))
         startedOutputs.append(outputDeviceUID)
         let session = FakeTapSession(kind: .playthrough, backend: self, initialGain: initialGain)

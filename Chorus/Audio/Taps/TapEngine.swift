@@ -183,12 +183,9 @@ final class TapEngine {
         switch state {
         case .failed, .denied:
             guard settings.audioTapsEnabled else { return }
-            rebuildTask?.cancel()
-            rebuildTask = Task { [weak self] in
-                try? await Task.sleep(for: self?.rebuildDelay ?? .seconds(1.5))
-                guard let self, !Task.isCancelled else { return }
-                if case .active = self.state { return } // 期間已經活了就別打斷
-                self.beginProbe()
+            scheduleRebuild(after: rebuildDelay) { engine in
+                if case .active = engine.state { return } // 期間已經活了就別打斷
+                engine.beginProbe()
             }
         default:
             reconcileSessions()
@@ -229,10 +226,18 @@ final class TapEngine {
         guard let session = sessions[bundleID] else { return }
         let entry = settings.appAudio[bundleID]
         let onDeviceChain = sessionOutputUIDs[bundleID] == deviceTarget
-        session.setGain(onDeviceChain ? entry.gain * deviceGain : entry.gain)
+        session.setGain(effectiveGain(entry, onDeviceChain: onDeviceChain))
         session.setMuted(entry.muted || (onDeviceChain && deviceMuted))
         session.setAppEQ(entry.eq) // App 層先過（B6-8）
         session.setEQ(onDeviceChain ? deviceEQ : nil)
+    }
+
+    /// 「App 增益 × 裝置級軟體音量」的組合公式——唯一定義點。
+    /// 即時推送（`pushSessionProcessing`）與建立時的 `initialGain`
+    ///（`reconcileSessions`）都走這裡；兩處各算一份的話，公式一改
+    /// 就會回到「建立瞬間先響一段錯的音量再滑過去」那類 bug。
+    private func effectiveGain(_ entry: AppAudioSetting, onDeviceChain: Bool) -> Float {
+        onDeviceChain ? entry.gain * deviceGain : entry.gain
     }
 
     /// per-app session 換人、裝置換人、權限狀態改變後都要重算。
@@ -241,10 +246,12 @@ final class TapEngine {
     /// 已被 per-app tap 捕獲的行程要從全域 tap 排除，Chorus 自己更要
     /// （否則我們寫回的音訊會被自己抓走＝回授）。
     private func reconcileGlobalSession() {
-        guard state == .active, let target = deviceTarget,
-              backend.outputDeviceUIDs().contains(target)
+        // 裝置清單只列一次——列舉會對每個裝置做 stream 配置的 HAL 讀取，
+        // 下面的 debug log 不該再列第二次
+        let available = backend.outputDeviceUIDs()
+        guard state == .active, let target = deviceTarget, available.contains(target)
         else {
-            log.debug("global session 不成立：state=\(String(describing: self.state), privacy: .public) target=\(self.deviceTarget ?? "nil", privacy: .public) 在清單=\(self.deviceTarget.map { self.backend.outputDeviceUIDs().contains($0) } ?? false, privacy: .public)")
+            log.debug("global session 不成立：state=\(String(describing: self.state), privacy: .public) target=\(self.deviceTarget ?? "nil", privacy: .public) 在清單=\(self.deviceTarget.map(available.contains) ?? false, privacy: .public)")
             stopGlobalSession()
             globalError = nil // 不再需要全域 session，舊錯誤跟著清
             refreshErrorDisplay()
@@ -296,24 +303,33 @@ final class TapEngine {
         lastTapError = sessionNotice ?? globalError
     }
 
-    /// 延遲後重新對帳（per-app ＋ 裝置級一起）。連續事件互相取消，
-    /// 只在最後一次事件的 delay 之後跑一趟——切一輪降噪模式只重建一次。
-    private func scheduleRebuild(after delay: Duration) {
+    /// 延遲工作的唯一排程點（`rebuildTask` 的取消契約在這裡）。連續事件
+    /// 互相取消，只在最後一次事件的 delay 之後跑一趟——切一輪降噪模式
+    /// 只重建一次。預設動作是重新對帳（per-app ＋ 裝置級一起）；
+    /// failed／denied 的重探測走同一條，只換動作。
+    private func scheduleRebuild(
+        after delay: Duration,
+        action: @escaping @MainActor (TapEngine) -> Void = { $0.reconcileSessions() }
+    ) {
         rebuildTask?.cancel()
         rebuildTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard let self, !Task.isCancelled else { return }
-            self.reconcileSessions()
+            action(self)
         }
     }
 
-    /// 建立失敗後的重試。沒有它，切降噪模式的空窗撞掉一次重建，
-    /// EQ 就從此靜靜死掉（anc-log 實測：session 消失且再也沒回來）。
-    /// 上限 5 次——真的壞掉時錯誤留在 lastTapError，等下一個自然事件。
+    /// 建立失敗重試的節奏與上限。沒有重試的話，切降噪模式的空窗撞掉
+    /// 一次重建，EQ 就從此靜靜死掉（anc-log 實測：session 消失且再也
+    /// 沒回來）。超過上限就停手——真的壞掉時錯誤留在 lastTapError，
+    /// 等下一個自然事件。
+    private static let retryDelay: Duration = .seconds(2)
+    private static let maxRetries = 5
+
     private func scheduleRetry() {
-        guard rebuildRetries < 5 else { return }
+        guard rebuildRetries < Self.maxRetries else { return }
         rebuildRetries += 1
-        scheduleRebuild(after: .seconds(2))
+        scheduleRebuild(after: Self.retryDelay)
     }
 
     private func pushDeviceProcessing() {
@@ -387,12 +403,11 @@ final class TapEngine {
                 do {
                     // initialGain 也要是有效值（含裝置級軟體音量）——
                     // 否則建立瞬間會先響一段只套 App 增益的音量再滑下去
-                    let onDeviceChain = outputUID == deviceTarget
                     sessions[bundleID] = try backend.startPlaythroughSession(
                         bundleID: bundleID,
                         memberBundleIDs: Array(members).sorted(),
                         outputDeviceUID: outputUID,
-                        initialGain: onDeviceChain ? entry.gain * deviceGain : entry.gain
+                        initialGain: effectiveGain(entry, onDeviceChain: outputUID == deviceTarget)
                     )
                     sessionOutputUIDs[bundleID] = outputUID
                     sessionMemberBundles[bundleID] = members

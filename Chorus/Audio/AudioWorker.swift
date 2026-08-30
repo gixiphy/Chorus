@@ -131,7 +131,7 @@ final class AudioWorker: @unchecked Sendable {
             else { continue }
             // 自家 tap 的 private aggregate 只有建立者看得到——偏偏那就是
             // 我們自己。列出來會多一條與底下裝置搶同一顆音量的假裝置
-            guard !uid.hasPrefix("com.hermes.Chorus.tap") else { continue }
+            guard !uid.hasPrefix(CoreAudioTapBackend.aggregateUIDPrefix) else { continue }
 
             let transport = CoreAudioProperty.get(
                 id, CoreAudioProperty.address(kAudioDevicePropertyTransportType), as: UInt32.self

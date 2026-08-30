@@ -35,9 +35,15 @@ final class AudioProcessRegistry {
     @ObservationIgnored private var listeningForChanges = false
 
     /// Chorus 自己的 process object（回音紀律：探測的排除清單至少要有它）。
+    /// 查一次就快取——它在每輪對帳（含每一格音量滑桿）都被讀，每次都打
+    /// HAL 翻譯是浪費。coreaudiod 重啟會讓 object 失效，所以 `refresh()`
+    /// （行程清單一變就會跑）順手清掉快取。
     var ownProcessObjectID: AudioObjectID? {
-        translate(pid: ProcessInfo.processInfo.processIdentifier)
+        if let cachedOwnProcessObjectID { return cachedOwnProcessObjectID }
+        cachedOwnProcessObjectID = translate(pid: ProcessInfo.processInfo.processIdentifier)
+        return cachedOwnProcessObjectID
     }
+    @ObservationIgnored private var cachedOwnProcessObjectID: AudioObjectID?
 
     /// 有任何**非自己**的來源正在發聲（健康判讀的 audible 訊號）。
     var anyOtherProcessAudible: Bool {
@@ -57,10 +63,11 @@ final class AudioProcessRegistry {
                     && AudioProcessGrouping.isListable(kind: appKinds[root] ?? .other, bundleID: root)
                     && seen.insert(root).inserted
             }
-            .sorted {
-                displayName(bundleID: $0).localizedStandardCompare(displayName(bundleID: $1))
-                    == .orderedAscending
-            }
+            // 名稱先解一次再排序——比較器裡每比一次就查一次 displayName
+            // 的話，已退出的 App 每次比較都是一趟 LaunchServices
+            .map { (id: $0, name: displayName(bundleID: $0)) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            .map(\.id)
     }
 
     /// 這個 App（含歸它的 helper）有沒有正在發聲。
@@ -128,17 +135,16 @@ final class AudioProcessRegistry {
     func refresh() {
         guard !isFake else { return }
         startListeningIfNeeded()
+        cachedOwnProcessObjectID = nil // coreaudiod 重啟後 object 會換，見宣告處
         // App root 來自執行中的 App 清單，不是音訊行程清單——
         // 主 App 可能根本沒有音訊行程（聲音全在 helper 裡）
         appKinds = NSWorkspace.shared.runningApplications.reduce(into: [:]) { kinds, app in
-            guard let bundleID = app.bundleIdentifier else { return }
-            switch app.activationPolicy {
-            case .regular: kinds[bundleID] = .regularApp
-            case .accessory: kinds[bundleID] = .accessoryApp
-            default: break
-            }
+            guard let bundleID = app.bundleIdentifier,
+                  let kind = AudioProcessGrouping.Kind(policy: app.activationPolicy)
+            else { return }
+            kinds[bundleID] = kind
         }
-        var listAddress = Self.address(kAudioHardwarePropertyProcessObjectList)
+        var listAddress = CoreAudioProperty.address(kAudioHardwarePropertyProcessObjectList)
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(
             AudioObjectID(kAudioObjectSystemObject), &listAddress, 0, nil, &size
@@ -153,20 +159,18 @@ final class AudioProcessRegistry {
 
         processes = objects.compactMap { object in
             guard let pid = Self.pidProperty(object) else { return nil }
-            let bundleID = CoreAudioTapBackend.stringProperty(object, kAudioProcessPropertyBundleID)
-            let kind: AudioProcessGrouping.Kind =
-                switch NSRunningApplication(processIdentifier: pid)?.activationPolicy {
-                case .regular: .regularApp
-                case .accessory: .accessoryApp
-                default: .other // helper、daemon、查不到的行程
-                }
+            let bundleID = CoreAudioProperty.getString(
+                object, CoreAudioProperty.address(kAudioProcessPropertyBundleID)
+            )
+            // Entry.kind 這裡不填（留預設）：正式路徑的歸組與可列性全走
+            // appKinds，per-entry 的 kind 只是 DEBUG injectFake 的注入通道
+            // ——為它每個行程多查一次 NSRunningApplication 是純浪費
             return Entry(
                 objectID: object,
                 pid: pid,
                 bundleID: (bundleID?.isEmpty == true) ? nil : bundleID,
                 name: Self.displayName(pid: pid, bundleID: bundleID),
-                isAudible: Self.boolProperty(object, kAudioProcessPropertyIsRunningOutput),
-                kind: kind
+                isAudible: Self.boolProperty(object, kAudioProcessPropertyIsRunningOutput)
             )
         }
     }
@@ -176,7 +180,7 @@ final class AudioProcessRegistry {
     private func startListeningIfNeeded() {
         guard !listeningForChanges else { return }
         listeningForChanges = true
-        var address = Self.address(kAudioHardwarePropertyProcessObjectList)
+        var address = CoreAudioProperty.address(kAudioHardwarePropertyProcessObjectList)
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &address, .main
         ) { _, _ in
@@ -204,7 +208,7 @@ final class AudioProcessRegistry {
     // MARK: - property 讀取
 
     private func translate(pid: pid_t) -> AudioObjectID? {
-        var address = Self.address(kAudioHardwarePropertyTranslatePIDToProcessObject)
+        var address = CoreAudioProperty.address(kAudioHardwarePropertyTranslatePIDToProcessObject)
         var input = pid
         var object = AudioObjectID(kAudioObjectUnknown)
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
@@ -217,28 +221,12 @@ final class AudioProcessRegistry {
         return status == noErr && object != kAudioObjectUnknown ? object : nil
     }
 
-    private nonisolated static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(
-            mSelector: selector,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-    }
-
     private nonisolated static func pidProperty(_ object: AudioObjectID) -> pid_t? {
-        var addr = address(kAudioProcessPropertyPID)
-        var value: pid_t = 0
-        var size = UInt32(MemoryLayout<pid_t>.size)
-        guard AudioObjectGetPropertyData(object, &addr, 0, nil, &size, &value) == noErr else { return nil }
-        return value
+        CoreAudioProperty.get(object, CoreAudioProperty.address(kAudioProcessPropertyPID), as: pid_t.self)
     }
 
     private nonisolated static func boolProperty(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> Bool {
-        var addr = address(selector)
-        var value: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        guard AudioObjectGetPropertyData(object, &addr, 0, nil, &size, &value) == noErr else { return false }
-        return value != 0
+        CoreAudioProperty.get(object, CoreAudioProperty.address(selector), as: UInt32.self).map { $0 != 0 } ?? false
     }
 
     private nonisolated static func displayName(pid: pid_t, bundleID: String?) -> String {
@@ -249,5 +237,18 @@ final class AudioProcessRegistry {
             return String(tail)
         }
         return "pid \(pid)"
+    }
+}
+
+extension AudioProcessGrouping.Kind {
+    /// `NSRunningApplication.activationPolicy` → 歸組身分的唯一映射點
+    /// （歸組規則本身在 ChorusCore，但它的輸入編碼是 AppKit 的事）。
+    /// `prohibited` 或查不到 → nil，由呼叫端決定略過還是當 `.other`。
+    init?(policy: NSApplication.ActivationPolicy?) {
+        switch policy {
+        case .regular: self = .regularApp
+        case .accessory: self = .accessoryApp
+        default: return nil
+        }
     }
 }

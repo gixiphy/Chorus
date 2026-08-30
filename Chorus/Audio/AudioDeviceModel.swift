@@ -49,6 +49,18 @@ final class AudioDeviceModel: Identifiable {
         canSetVolume || bridgedDisplayID != nil || softwareVolumeActive
     }
 
+    /// 這個裝置作為轉送目標時，音量走哪條路——**唯一判準**，UI 徽章
+    /// （VolumeSliderRow）與 driver 鏡射模式（AudioDeviceManager.
+    /// updateVirtualMirrorMode）都從這裡讀，不各自再判一次：
+    /// DDC 橋接且回應正常 → 硬體鏡射；裝置自己有原生音量 → 音量鏡射；
+    /// 都沒有 → driver 端數位衰減。
+    enum ForwardVolumeMode { case ddc, native, digital }
+    var forwardVolumeMode: ForwardVolumeMode {
+        if bridgedDisplayID != nil, !bridgeUnresponsive { return .ddc }
+        if canSetVolume { return .native }
+        return .digital
+    }
+
     var transportLabel: String? {
         switch transportType {
         case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE: "藍牙"

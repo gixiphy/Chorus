@@ -39,9 +39,19 @@ public enum AudioProcessGrouping {
         for bundleID: String, appKinds: [String: Kind]
     ) -> String? {
         if appKinds[bundleID] == .regularApp { return bundleID }
-        let parent = appKinds.keys
-            .filter { $0 != bundleID && bundleID.hasPrefix($0 + ".") }
-            .max { $0.count < $1.count }
+        // 這裡是「每個行程 × 每個執行中 App」的內圈（選單描繪與每輪對帳
+        // 都會走），不做 `$0 + "."` 串接——那是每個 key 一次字串配置
+        var parent: String?
+        var parentLength = 0
+        for candidate in appKinds.keys {
+            let length = candidate.count
+            guard length < bundleID.count, length > parentLength,
+                  bundleID.hasPrefix(candidate),
+                  bundleID[bundleID.index(bundleID.startIndex, offsetBy: length)] == "."
+            else { continue }
+            parent = candidate
+            parentLength = length
+        }
         if let parent { return parent }
         return appKinds[bundleID] != nil ? bundleID : nil
     }

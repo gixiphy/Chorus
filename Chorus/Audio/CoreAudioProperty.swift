@@ -2,7 +2,8 @@ import CoreAudio
 import Foundation
 
 /// AudioObjectGet/SetPropertyData 的型別化薄封裝。
-/// 只能在 AudioWorker 的 serial queue 上呼叫（CoreAudio 呼叫可能阻塞）。
+/// CoreAudio 呼叫可能阻塞——批次／輪詢類的使用放 AudioWorker 的
+/// serial queue；tap 後端的零星單次讀取在 MainActor 上直接用。
 enum CoreAudioProperty {
     /// kAudioHardwareServiceDeviceProperty_VirtualMainVolume（'vmvc'）。
     /// 常數宣告在已棄用的 AudioHardwareService.h，但 selector 本身由 HAL 直接支援，
