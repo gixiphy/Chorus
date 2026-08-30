@@ -2,6 +2,7 @@ import ChorusCore
 import CoreAudio
 import Foundation
 import Observation
+import os
 
 /// Process tap 引擎（B6-1 基礎設施、B6-2 per-app 調整、B6-3 路由、
 /// B6-4 裝置級軟體音量）。
@@ -32,9 +33,14 @@ final class TapEngine {
         case failed(String)
     }
 
+    /// Release 版唯一的觀測窗口：`log stream --predicate 'subsystem == "com.hermes.Chorus"'`。
+    /// 2026-08-30 的教訓：引擎在使用者機器上靜靜死掉，黑箱查了一小時。
+    @ObservationIgnored private let log = Logger(subsystem: "com.hermes.Chorus", category: "taps")
+
     private(set) var state: State = .off {
         didSet {
             guard state != oldValue else { return }
+            log.notice("state: \(String(describing: oldValue), privacy: .public) → \(String(describing: self.state), privacy: .public)")
             // AudioDeviceManager 要重算三後端矩陣：軟體音量只有在引擎
             // 拿到權限後才成立，狀態一變滑桿的可用性就跟著變
             stateChangedHandler?()
@@ -232,6 +238,8 @@ final class TapEngine {
               backend.outputDeviceUIDs().contains(target)
         else {
             stopGlobalSession()
+            globalError = nil // 不再需要全域 session，舊錯誤跟著清
+            refreshErrorDisplay()
             return
         }
         var excluded = registry.processObjectIDs(bundleIDs: Set(sessions.keys))
@@ -254,16 +262,30 @@ final class TapEngine {
             deviceTapUID = target
             globalSession?.onDeviceReconfigured = { [weak self] in
                 guard let self, self.globalSession != nil else { return }
+                self.log.notice("global session 的裝置重新配置 → \(self.rebuildDelay.components.seconds, privacy: .public)s 後重建")
                 self.stopGlobalSession()
                 self.scheduleRebuild(after: self.rebuildDelay)
             }
             pushDeviceProcessing()
             rebuildRetries = 0
+            globalError = nil
+            log.notice("global session 建立：target=\(target, privacy: .public) 排除 \(excluded.count, privacy: .public) 個行程")
         } catch {
-            lastTapError = "裝置級處理啟動失敗：\(error)"
+            log.error("global session 失敗（第 \(self.rebuildRetries + 1, privacy: .public) 次）：target=\(target, privacy: .public) \(String(describing: error), privacy: .public)")
             stopGlobalSession()
+            globalError = "裝置級處理啟動失敗：\(error)"
             scheduleRetry()
         }
+        refreshErrorDisplay()
+    }
+
+    /// per-app 的 notice 與全域 session 的錯誤分開存——之前共用一個
+    /// `lastTapError`，per-app 對帳每輪把它重設，全域的錯誤活不過一輪，
+    /// 選單上永遠看不到（2026-08-30 實機除錯的教訓）。
+    @ObservationIgnored private var sessionNotice: String?
+    @ObservationIgnored private var globalError: String?
+    private func refreshErrorDisplay() {
+        lastTapError = sessionNotice ?? globalError
     }
 
     /// 延遲後重新對帳（per-app ＋ 裝置級一起）。連續事件互相取消，
@@ -376,16 +398,19 @@ final class TapEngine {
                 } catch {
                     // 單一 App 失敗不拖垮引擎：記錄並繼續，其他 session 與
                     // 裝置音量／亮度／同步完全不受影響（DESIGN §6 降級表）
+                    log.error("per-app session 失敗：\(bundleID, privacy: .public) → \(outputUID, privacy: .public) \(String(describing: error), privacy: .public)")
                     notice = "無法接管 \(bundleID)：\(error)"
+                    scheduleRetry()
                     continue
                 }
             }
             pushSessionProcessing(bundleID)
         }
         tappedBundles = sessions.keys.sorted()
-        lastTapError = notice
+        sessionNotice = notice
         // per-app 的組成變了 → 全域 tap 的排除清單也要跟著變，
-        // 否則同一路音訊會被處理兩次
+        // 否則同一路音訊會被處理兩次（reconcileGlobalSession 末尾會
+        // 一併更新 lastTapError 的顯示）
         reconcileGlobalSession()
     }
 
@@ -491,6 +516,8 @@ final class TapEngine {
         sessionOutputUIDs = [:]
         sessionMemberBundles = [:]
         tappedBundles = []
+        sessionNotice = nil
+        globalError = nil
         lastTapError = nil
     }
 }
