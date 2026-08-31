@@ -1,3 +1,4 @@
+import AppKit
 import ChorusCore
 import SwiftUI
 
@@ -14,6 +15,9 @@ struct AppAudioProcessingView: View {
     private var setting: AppAudioSetting {
         appState.tapEngine.setting(for: bundleID)
     }
+
+    /// 捲動區內容的實際高度，決定視窗要多高（見 `scrollHeight`）。
+    @State private var contentHeight: CGFloat = 0
 
     /// 標頭與引擎狀態釘在上緣、其餘捲動：建議卡的高度不可預期，
     /// 讓它把「這是哪個 App」和「權限有沒有到手」推出視野是最糟的取捨。
@@ -42,12 +46,25 @@ struct AppAudioProcessingView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
             }
+            .frame(height: scrollHeight)
+            .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(
-            minWidth: 400, idealWidth: 440,
-            minHeight: 320, idealHeight: 620, maxHeight: .infinity
-        )
+        .frame(width: 440)
+    }
+
+    /// 捲動區的高度＝內容高度，但夾在上限之內。
+    ///
+    /// 必須自己量：SwiftUI 的 ScrollView 沿捲動軸是貪心的，理想高度不會
+    /// 貼著內容，只給 `.frame(maxHeight:)` 的話短內容也會撐出一大片空白。
+    /// 視窗走 `.contentSize` 跟著這個高度走——內容縮短會收回去，長到超過
+    /// 上限就在這裡打住、改由內部捲動，而不是把視窗撐出螢幕。
+    private var scrollHeight: CGFloat? {
+        guard contentHeight > 0 else { return nil } // 還沒量到：先讓它自然排版
+        // 扣掉標題列與釘住的標頭區，再留一點邊
+        let cap = max(320, (NSScreen.main?.visibleFrame.height ?? 900) * 0.85 - 140)
+        return min(contentHeight, cap)
     }
 
     private var header: some View {
