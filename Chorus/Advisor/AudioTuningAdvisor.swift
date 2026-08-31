@@ -189,6 +189,19 @@ final class AudioTuningAdvisor {
         }
     }
 
+    /// 目標**目前**的各段增益，給結果卡做「現在 → 建議」對照。
+    /// nil＝沒有可對照的現值（沒設過 EQ，或段數與建議的 10 段對不上——
+    /// 例如裝置套了 15 段的 AutoEq 校正；那時逐段比對只會比錯）。
+    func currentEQGains(for target: AudioTuningTarget, bandCount: Int) -> [Double]? {
+        let eq: EQSettings?
+        switch target {
+        case let .app(bundleID): eq = tapEngine?.setting(for: bundleID).eq
+        case let .device(uid): eq = settings.deviceEQ[uid]
+        }
+        guard let eq, eq.bands.count == bandCount else { return nil }
+        return eq.bands.map(\.gainDB)
+    }
+
     private static func describeEQ(_ eq: EQSettings?) -> String {
         guard let eq, eq.isActive else { return "" }
         let source = eq.sourceName ?? "手動"

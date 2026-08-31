@@ -15,24 +15,39 @@ struct AppAudioProcessingView: View {
         appState.tapEngine.setting(for: bundleID)
     }
 
+    /// 標頭與引擎狀態釘在上緣、其餘捲動：建議卡的高度不可預期，
+    /// 讓它把「這是哪個 App」和「權限有沒有到手」推出視野是最糟的取捨。
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
-            eqSection
-            Divider()
-            EffectChainView(target: .app(bundleID))
-            Divider()
-            AudioAdviceSection(target: .app(bundleID: bundleID))
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
             if let reason = engineReason {
                 Text(reason)
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+            }
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    eqSection
+                    Divider()
+                    EffectChainView(target: .app(bundleID))
+                    Divider()
+                    AudioAdviceSection(target: .app(bundleID: bundleID))
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(16)
-        .frame(width: 420)
+        .frame(
+            minWidth: 400, idealWidth: 440,
+            minHeight: 320, idealHeight: 620, maxHeight: .infinity
+        )
     }
 
     private var header: some View {
@@ -55,15 +70,20 @@ struct AppAudioProcessingView: View {
         setting.eq ?? EQSettings()
     }
 
+    /// 標題用 .callout 的 Text＋labelsHidden 的開關，而不是 Toggle 自己的
+    /// label：三個分區（等化器／效果鏈／AI 調音建議）才會是同一階層——
+    /// Toggle label 的字級與 .callout 不同，混用時看起來像三種層級。
     private var eqSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
+                Text("等化器（只套這個 App）").font(.callout)
                 Toggle("等化器（只套這個 App）", isOn: Binding(
                     get: { eq.isEnabled },
                     set: { enable($0) }
                 ))
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .labelsHidden()
                 Spacer()
                 if eq.isEnabled {
                     Menu("風格") {

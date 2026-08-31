@@ -38,13 +38,18 @@ struct ChorusApp: App {
 
         // App 層的等化與效果面板（AU-3）。value＝bundle id；
         // 從選單列 App 列的右鍵開。
+        //
+        // 用 contentMinSize 而不是 contentSize：內容高度會隨建議卡長短
+        // 大幅變動，鎖死等於讓視窗自己撐到螢幕外——高度交給使用者，
+        // 內容自己捲。
         WindowGroup("App 音訊處理", id: "appEffects", for: String.self) { $bundleID in
             if let bundleID {
                 AppAudioProcessingView(bundleID: bundleID)
                     .environment(appState)
             }
         }
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 440, height: 620)
     }
 }
 
