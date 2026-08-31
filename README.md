@@ -10,6 +10,11 @@ macOS 選單列 App：控制所有螢幕與音訊裝置——並且在同一區�
 
 `1.1.0`（build 61）· macOS 26+ · Apple Silicon · Swift 6（strict concurrency）· SwiftUI `MenuBarExtra`
 
+<img src="assets/menubar.png" alt="Chorus 選單列" width="330">
+
+*選單列：本機的螢幕、音訊裝置與各 App 音量，最下面是同一張桌上的另一台 Mac——
+亮度與音量在兩台之間即時同步，也可以直接從這裡拉它的滑桿。*
+
 ---
 
 ## ① 跨設備同步與遙控
@@ -32,8 +37,8 @@ macOS 選單列 App：控制所有螢幕與音訊裝置——並且在同一區�
   跨機讀值尚未支援）。
 
 ```bash
-chorus set --peer 客廳 --all-displays --power off
-chorus set --peer 客廳 --app com.spotify.client --mute on
+chorus set --peer "Mac mini" --all-displays --power off
+chorus set --peer "Mac mini" --app com.spotify.client --mute on
 ```
 
 **收斂紀律**：衝突以 Hybrid Logical Clock last-writer-wins 收斂；防迴圈三層——
@@ -53,6 +58,12 @@ origin 直發不轉發（結構）、`(originID, seq)` 去重、expectedValue ec
    建議關掉這台的自動模式」）。
 4. 本地 schema 驗證與夾值後預覽，**逐項勾選才套用**；套用前 snapshot 舊值，
    一鍵單層還原。保留最近 5 筆分析結果可回看。
+
+<img src="assets/lighting-advice.png" alt="光環境分析建議" width="700">
+
+*建議逐項可勾選：每台顯示器的差異值、曲線參數，加上不能自動套用的警告。
+已配對的 Mac 也是分析對象之一（上圖第三項）。截圖中的建議內容是示範資料，
+不是某次真實模型輸出。*
 
 「家」與「公司」可各存一份**桌面情境**（配置圖＋照片＋曲線＋offset），
 以當時連接的顯示器組合為指紋自動切換。
@@ -82,6 +93,11 @@ origin 直發不轉發（結構）、`(originID, seq)` 去重、expectedValue ec
 - 明確不做：不送音訊樣本或頻譜給模型（那是量測校正，AutoEq 已覆蓋耳機那塊）；
   AU 的參數數值也不交給模型——generic 面板調參數本來就即時可聽。
 
+<img src="assets/audio-advice.png" alt="App 音訊處理：等化器、效果鏈與 AI 調音建議" width="420">
+
+*一個 App 一個視窗：等化器（只套這個 App）、AU 效果鏈，最下面是建議卡——
+逐段列出「現在 → 建議」，按下「套用」才會生效。建議內容同樣是示範資料。*
+
 ### 分析引擎：零金鑰，用你自己的訂閱
 
 兩位顧問共用一組引擎。Chorus **不經手任何 API key**——它 spawn 你本機
@@ -94,6 +110,8 @@ origin 直發不轉發（結構）、`(originID, seq)` 去重、expectedValue ec
 | `grok` | Grok Build |
 | `codex` | Codex CLI |
 | `opencode` | OpenCode |
+
+<img src="assets/advice-engines.png" alt="分析引擎設定" width="460">
 
 分析是**顯式動作**（按鈕觸發，首次有確認對話框），不在背景送任何東西。
 
