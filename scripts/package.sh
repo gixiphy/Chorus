@@ -49,36 +49,76 @@ xcodebuild -project Chorus.xcodeproj -scheme Chorus -configuration Release \
 
 [[ -d dist/Chorus.xcarchive/Products/Applications/Chorus.app ]] || { echo "archive 失敗" >&2; exit 1; }
 
-rm -rf dist/Chorus.app dist/Chorus-*.zip
-ditto dist/Chorus.xcarchive/Products/Applications/Chorus.app dist/Chorus.app
+rm -rf dist/Chorus.app
+rm -f dist/Chorus-*.zip(N)   # (N) = 沒有符合的檔案就當空的（zsh 預設會報錯中止）
+
+# 簽章與打包全部在**同步資料夾之外**進行。這個 repo 在 iCloud Drive 裡，
+# file provider 會在兩秒內把 com.apple.FinderInfo 掛回 bundle 目錄上，
+# codesign 就判「resource fork, Finder information, or similar detritus
+# not allowed」——清掉也沒用，它會再長回來。所以搬到 /tmp 底下處理，
+# 完成後才把成品複製回 dist/。
+WORK=$(mktemp -d /tmp/chorus-pkg.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+APP="$WORK/Chorus.app"
+ditto dist/Chorus.xcarchive/Products/Applications/Chorus.app "$APP"
 # 建置產物的權限可能不是 world-readable；內嵌的 HAL driver 由 _coreaudiod 讀取，
 # 少了 go+r 安裝後就載不進去。在打包前先正規化。
-chmod -R go+rX dist/Chorus.app
-# 建置產物會帶著 com.apple.FinderInfo 等擴充屬性，codesign --strict 會判為
-# 「detritus not allowed」而驗證失敗——之後送 Developer ID 公證會直接被擋。
-xattr -cr dist/Chorus.app
-# xattr -c 清不掉目錄自身的 com.apple.FinderInfo（它在 catalog 裡，不是一般
-# xattr），而 codesign --strict 會判它是 detritus。這個 repo 在同步資料夾裡，
-# 同步用戶端會替 bundle 掛上 FinderInfo——所以不是一次性意外，會再犯。
-xattr -d com.apple.FinderInfo dist/Chorus.app 2>/dev/null || true
+chmod -R go+rX "$APP"
+xattr -cr "$APP"
+
+# Developer ID 重簽：archive 出來的是開發簽章（Apple Development），別台 Mac 打不開。
+# 巢狀先簽、app 本體最後——順序反了外層簽章會被內層改動作廢。
+DEVID="Developer ID Application"
+if security find-identity -v -p codesigning | grep -q "$DEVID"; then
+  codesign --force --options runtime --timestamp --sign "$DEVID" \
+    "$APP/Contents/PlugIns/ChorusAudioDevice.driver"
+  codesign --force --options runtime --timestamp --sign "$DEVID" \
+    "$APP/Contents/SharedSupport/chorus"
+  codesign --force --options runtime --timestamp \
+    --entitlements Chorus/Support/Chorus.entitlements --sign "$DEVID" "$APP"
+  echo "▸ 已用 Developer ID 重簽"
+else
+  echo "⚠︎ 找不到 Developer ID Application 憑證——這包是開發簽章，只能自己機器跑" >&2
+fi
 
 # 硬性驗證：巢狀 code（HAL driver、chorus CLI）都要簽得過才算打包成功。
-if ! codesign --verify --deep --strict dist/Chorus.app; then
+if ! codesign --verify --deep --strict "$APP"; then
   echo "簽章驗證失敗，不產出 zip" >&2
   exit 1
 fi
 echo "▸ 簽章驗證通過（含巢狀 driver 與 CLI）"
 
 ZIP="dist/Chorus-$VERSION-b$NEXT_BUILD.zip"
-ditto -c -k --keepParent dist/Chorus.app "$ZIP"
+WORK_ZIP="$WORK/Chorus-$VERSION-b$NEXT_BUILD.zip"
+ditto -c -k --keepParent "$APP" "$WORK_ZIP"
 echo "▸ 已打包 $ZIP"
+
+# 公證：有 notarytool 憑證才跑（建立方式見 README）。公證過的 ticket 要 staple
+# 進 app，再重新打包一次 zip——不然下載端拿到的還是沒有 ticket 的版本。
+NOTARY_PROFILE="${CHORUS_NOTARY_PROFILE:-chorus}"
+if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" > /dev/null 2>&1; then
+  echo "▸ 送公證（profile: $NOTARY_PROFILE）…"
+  xcrun notarytool submit "$WORK_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$APP"
+  rm -f "$WORK_ZIP"
+  ditto -c -k --keepParent "$APP" "$WORK_ZIP"
+  spctl -a -vvv -t exec "$APP" || true
+  echo "▸ 已公證並重新打包"
+else
+  echo "⚠︎ 沒有 notarytool 憑證（profile: $NOTARY_PROFILE）——這包未公證，別台 Mac 會被 Gatekeeper 擋" >&2
+fi
+
+# 成品搬回 dist/（同步資料夾會在 bundle 上掛 FinderInfo，但簽章已經完成，
+# 只有「簽的當下」會被擋，所以這一步是安全的）
+cp "$WORK_ZIP" "$ZIP"
+ditto "$APP" dist/Chorus.app
 
 if [[ $INSTALL -eq 1 ]]; then
   osascript -e 'quit app "Chorus"' 2>/dev/null || true
   sleep 2
   pkill -x Chorus 2>/dev/null || true
   rm -rf /Applications/Chorus.app
-  ditto dist/Chorus.app /Applications/Chorus.app
+  ditto "$APP" /Applications/Chorus.app
   open /Applications/Chorus.app
   echo "▸ 已安裝並啟動 /Applications/Chorus.app"
 fi
