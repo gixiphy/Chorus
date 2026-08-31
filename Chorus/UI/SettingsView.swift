@@ -504,7 +504,9 @@ private struct AdvisorSettingsTab: View {
                 statusText(engine: engine, detected: detected)
             }
             if let detected {
-                Text(detected.url.path + (detected.version.map { "（\($0)）" } ?? ""))
+                // 家目錄縮成 ~：路徑短一截，截圖／分享畫面時也不會露出使用者名稱
+                Text((detected.url.path as NSString).abbreviatingWithTildeInPath
+                    + (detected.version.map { "（\($0)）" } ?? ""))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
