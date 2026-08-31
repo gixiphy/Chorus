@@ -452,7 +452,8 @@ private struct AmbientDisplayControls: View {
     }
 }
 
-/// 光環境顧問的分析引擎：已知 CLI 目錄掃描結果、單選、自訂路徑與重新掃描。
+/// 兩位顧問（光環境、調音）共用的分析引擎：已知 CLI 目錄掃描結果、單選、
+/// 自訂路徑與重新掃描。
 /// 零金鑰／零憑證經手——認證與計費都在使用者已登入的 CLI。
 private struct AdvisorSettingsTab: View {
     @Environment(AppState.self) private var appState
@@ -464,7 +465,7 @@ private struct AdvisorSettingsTab: View {
                     engineRow(engine)
                 }
             } header: {
-                Text("光環境顧問使用的本機 LLM CLI（偵測到什麼列什麼；不經手任何金鑰）")
+                Text("光環境顧問與調音顧問共用的本機 LLM CLI（偵測到什麼列什麼；不經手任何金鑰）")
             }
             Section {
                 Button("重新掃描") { appState.advisor.registry.rescanIncludingModels() }
