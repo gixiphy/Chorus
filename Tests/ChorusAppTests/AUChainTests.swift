@@ -56,6 +56,19 @@ struct AUChainTests {
         #expect(peak > 0.01)
     }
 
+    @Test("目錄掃描：Apple 內建效果要在清單裡（旗標過濾的回歸）")
+    func catalogListsAppleBuiltins() {
+        // build 57 實機截圖的教訓：IsV3AudioUnit 是 0x4，手寫成 0x2
+        //（SandboxSafe）等於濾掉幾乎所有內建效果，選單只剩 AUNetSend。
+        // Apple 的 v2 效果每台 macOS 都在，數量斷言抓得住這一類反轉。
+        let catalog = AUEffectCatalog()
+        catalog.refresh()
+        #expect(catalog.items.count >= 10, "實得 \(catalog.items.count) 個")
+        let subtypes = Set(catalog.items.map(\.component.subtype))
+        #expect(subtypes.contains(kAudioUnitSubType_Delay))
+        #expect(subtypes.contains(kAudioUnitSubType_MatrixReverb))
+    }
+
     @Test("找不到的元件：整格誠實列入 failures、不建鏈")
     func missingComponentFailsHonestly() {
         let ghost = AUEffectEntry(

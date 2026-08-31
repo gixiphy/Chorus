@@ -30,9 +30,13 @@ final class AUEffectCatalog {
         items = AVAudioUnitComponentManager.shared()
             .components(matching: description)
             .filter { component in
-                // AUv3（AudioComponentFlags.isV3AudioUnit）第一版跳過：
-                // 載入模型完全不同（XPC／async），與同步建鏈流程不相容
-                !component.audioComponentDescription.componentFlags.isV3
+                // AUv3 第一版跳過：載入模型完全不同（XPC／async），與同步
+                // 建鏈流程不相容。**用型別化旗標**——手寫位元在這裡踩過雷：
+                // 0x2 是 SandboxSafe 不是 IsV3AudioUnit（0x4），寫錯等於把
+                // 幾乎所有 Apple 內建效果都濾掉、選單只剩一個 AUNetSend
+                //（build 57 實機截圖）。
+                !AudioComponentFlags(rawValue: component.audioComponentDescription.componentFlags)
+                    .contains(.isV3AudioUnit)
             }
             .map { component in
                 Item(
@@ -58,10 +62,4 @@ final class AUEffectCatalog {
             manufacturerName: item.manufacturerName
         )
     }
-}
-
-private extension UInt32 {
-    /// `AudioComponentFlags.isV3AudioUnit`（0x2）。用位元而不是 enum：
-    /// 這裡拿到的是 raw componentFlags。
-    var isV3: Bool { self & 0x2 != 0 }
 }
