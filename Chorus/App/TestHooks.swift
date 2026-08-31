@@ -26,14 +26,33 @@ final class TestHooks {
     private var pendingDeviceGain: Float = 1
     private var pendingDeviceMuted = false
     private var pendingDeviceEQ: EQSettings?
+    private var pendingDeviceEffects: [AUEffectEntry] = []
 
     private func pushDeviceProcessing(_ appState: AppState) {
         appState.tapEngine.updateDeviceProcessing(
             deviceUID: pendingDeviceUID,
             gain: pendingDeviceGain,
             muted: pendingDeviceMuted,
-            eq: pendingDeviceEQ
+            eq: pendingDeviceEQ,
+            effects: pendingDeviceEffects
         )
+    }
+
+    /// E2E 的假效果條目："name:1,name2:0"（enabled 旗標，預設 1）。
+    /// component 由名稱決定（subtype＝unicode scalar 總和）——python 端
+    /// 可以重算出同一個隔離 key，不用在協定裡多傳一欄。
+    private static func parseEffects(_ raw: String) -> [AUEffectEntry] {
+        raw.split(separator: ",").compactMap { part in
+            let fields = part.split(separator: ":")
+            guard let name = fields.first, !name.isEmpty else { return nil }
+            let subtype = name.unicodeScalars.reduce(UInt32(0)) { $0 &+ UInt32($1.value) }
+            return AUEffectEntry(
+                component: AUEffectComponent(type: 0x6175_6678, subtype: subtype, manufacturer: 0x7465_7374),
+                name: String(name),
+                manufacturerName: "TestFX",
+                enabled: fields.count < 2 || fields[1] == "1"
+            )
+        }
     }
 
     init(appState: AppState) {
@@ -270,6 +289,32 @@ final class TestHooks {
             if let raw = info["value"] {
                 pendingDeviceEQ = raw.isEmpty ? nil : AutoEqParser.parse(raw, sourceName: "TestHooks")
                 pushDeviceProcessing(appState)
+            }
+        case "appEffects":
+            // value = "bundle.id|name:1,name2:0"（效果清單留空＝拆掉）。
+            // 走與 UI 完全相同的設定路徑（AU-4）
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|", omittingEmptySubsequences: false)
+                if fields.count == 2 {
+                    appState.tapEngine.setAppEffects(
+                        Self.parseEffects(String(fields[1])), bundleID: String(fields[0])
+                    )
+                }
+            }
+        case "deviceEffects":
+            // value = "name:1,name2:0"（留空＝拆掉）。與軟體音量／EQ 共用
+            // 同一條全域 session，所以照樣走 pending 三合一推送
+            if let raw = info["value"] {
+                pendingDeviceEffects = Self.parseEffects(raw)
+                pushDeviceProcessing(appState)
+            }
+        case "effectQuarantine":
+            // value = "componentKey|1"（隔離）/ "componentKey|0"（解除）
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|")
+                if fields.count == 2 {
+                    appState.tapEngine.setQuarantined(fields[1] == "1", key: String(fields[0]))
+                }
             }
         case "appReset":
             if let bundle = info["value"] { appState.tapEngine.reset(bundleID: bundle) }
@@ -571,8 +616,21 @@ final class TestHooks {
                             "output": entry.outputDeviceUID as Any? ?? NSNull(),
                             "activeOutput": appState.tapEngine
                                 .activeOutputUID(bundleID: bundleID) as Any? ?? NSNull(),
+                            "effects": entry.effects.map { "\($0.name):\($0.enabled ? 1 : 0)" },
                         ] as [String: Any])
                     }),
+                "quarantine": Array(appState.settings.effectQuarantine).sorted(),
+                // fake backend 的 session 側視角（AU-4 E2E）：效果鏈真的
+                // 送到哪一層。--fake-taps 之外是空字典
+                "sessionEffects": Dictionary(uniqueKeysWithValues:
+                    (TestSupport.fakeTapBackend?.liveSessions ?? [:]).map { bundleID, session in
+                        (bundleID, [
+                            "app": session.lastAppEffects.map(\.name),
+                            "device": session.lastDeviceEffects.map(\.name),
+                        ] as [String: Any])
+                    }),
+                "globalEffects": TestSupport.fakeTapBackend?.globalSession?
+                    .lastDeviceEffects.map(\.name) ?? [],
                 "processes": appState.tapEngine.registry.processes.map { entry in
                     ["name": entry.name, "bundle": entry.bundleID ?? "", "audible": entry.isAudible] as [String: Any]
                 },

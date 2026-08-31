@@ -106,6 +106,16 @@ def app_gain_is(data, bundle, expected):
     return value is not None and abs(value - expected) < 1e-6
 
 
+
+def component_key(name):
+    """與 TestHooks.parseEffects 同一個推導：subtype＝unicode scalar 總和。"""
+    subtype = sum(ord(c) for c in name) & 0xFFFFFFFF
+    return f"{0x61756678:08x}-{subtype:08x}-{0x74657374:08x}"
+
+
+def session_effects(data, bundle):
+    return ((data or {}).get("tapEngine", {}).get("sessionEffects", {}).get(bundle) or {})
+
 def cleanup():
     if proc:
         proc.terminate()
@@ -385,6 +395,49 @@ def main():
     notify("tapTick")
     ok, _ = wait_for(lambda d: tap_state(d) == "active" and tapped(d) == ["com.apple.Music"], 10)
     record("重新啟用 → 依設定自動恢復（App 重啟走同一條路）", ok)
+
+
+    print("\n[12] AU-4：效果鏈（fake 路徑）", flush=True)
+    notify("tapEngine", "1")
+    notify("tapTick")
+    ok, _ = wait_for(lambda d: tap_state(d) == "active", 10)
+    record("引擎重啟（AU 場景前置）", ok)
+    notify("appReset", "com.apple.Music")  # 清掉 [11] 留下的 gain，效果場景要乾淨起步
+    ok, _ = wait_for(lambda d: tapped(d) == [], 10)
+    record("前置歸零（沒有殘留調整）", ok)
+
+    # App 層：只掛效果也建 tap；enabled 的格才送達 realtime 端
+    notify("appEffects", "com.apple.Music|rev:1,comp:0")
+    ok, _ = wait_for(lambda d: tapped(d) == ["com.apple.Music"], 10)
+    ok2, state = wait_for(lambda d: session_effects(d, "com.apple.Music").get("app") == ["rev"], 10)
+    record("App 層效果：只掛效果就建 tap、關著的格不送", ok and ok2)
+    stored = ((state or {}).get("tapEngine", {}).get("appSettings", {})
+              .get("com.apple.Music", {}).get("effects"))
+    record("存檔保留關著的格（rev:1、comp:0 都在）", stored == ["rev:1", "comp:0"])
+
+    # 隔離閂（DESIGN §1.1）：隔離的格不自動載入；解除（再試一次）就回來
+    key = component_key("rev")
+    notify("effectQuarantine", f"{key}|1")
+    ok, _ = wait_for(lambda d: session_effects(d, "com.apple.Music").get("app") == [], 10)
+    record("隔離的格不自動載入（設定保留、只是不進鏈）", ok)
+    notify("effectQuarantine", f"{key}|0")
+    ok, _ = wait_for(lambda d: session_effects(d, "com.apple.Music").get("app") == ["rev"], 10)
+    record("解除隔離 → 效果自動回鏈", ok)
+
+    # 裝置層：與軟體音量共用同一條全域 session；裝置鏈上的 per-app 也套
+    notify("softwareVolume", "fake-output-uid|0.5|0")
+    notify("deviceEffects", "spat:1")
+    ok, _ = wait_for(lambda d: (d or {}).get("tapEngine", {}).get("globalEffects") == ["spat"], 10)
+    record("裝置層效果送到全域 session", ok)
+    ok, _ = wait_for(lambda d: session_effects(d, "com.apple.Music").get("device") == ["spat"], 10)
+    record("被接管的 App 在裝置鏈上也套裝置效果（單次處理紀律）", ok)
+
+    # 拆鏈：效果清掉 → 沒有其他調整的 App session 收掉
+    notify("deviceEffects", "")
+    notify("softwareVolume", "|1|0")
+    notify("appEffects", "com.apple.Music|")
+    ok, _ = wait_for(lambda d: tapped(d) == [], 10)
+    record("拆掉效果 → session 收掉（設定歸 neutral 即消失）", ok)
 
     notify("appReset", "com.apple.Music")
     notify("tapEngine", "0")
