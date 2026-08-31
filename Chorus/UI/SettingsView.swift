@@ -791,6 +791,8 @@ private struct AudioSettingsTab: View {
                                 EQPanelView(device: device)
                                 Divider()
                                 EffectChainView(target: .device(device))
+                                Divider()
+                                AudioAdviceSection(target: .device(uid: device.uid))
                             } else {
                                 // 權限沒到手就隱藏功能本體，只留一句為什麼（DESIGN §6）
                                 Text("等化需要先開啟上方的「App 音訊接管」——與 per-app 音量走同一套系統音訊擷取權限。")

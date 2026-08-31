@@ -161,51 +161,72 @@ struct CLIAdviceProvider: LightingAdviceProvider {
         // schema 檔寫進沙箱：與縮圖同一個授權範圍，也隨沙箱一起清掉
         let run = KnownCLIEngine.RunContext(
             sandbox: sandbox,
-            schemaFile: writeSchema(into: sandbox),
+            schemaFile: CLIAdviceExecution.writeSchema(
+                AdvicePrompt.toolInputSchemaJSON, into: sandbox
+            ),
             model: engine.supportsModelSelection ? model : nil,
             photoPaths: photos.map(\.path),
             timeout: timeout
         )
+        return try await CLIAdviceExecution.perform(
+            engine: engine, executable: executable,
+            basePrompt: basePrompt, run: run, as: LightingAdvice.self
+        )
+    }
+}
+
+/// CLI 顧問呼叫的共同執行器：單發 → 解析 → decode 失敗重試一次 →
+/// 型別化錯誤映射。光環境與音訊調音兩個顧問共用（機制只寫一份）；
+/// 輸出型別由呼叫端指定（AdviceCodec 泛型 decode）。
+enum CLIAdviceExecution {
+    typealias Output = CLIProcessRunner.Output
+
+    static func perform<T: Decodable>(
+        engine: KnownCLIEngine,
+        executable: URL,
+        basePrompt: String,
+        run: KnownCLIEngine.RunContext,
+        as type: T.Type
+    ) async throws -> T {
         do {
-            return try await attempt(prompt: basePrompt, run: run)
+            return try await attempt(prompt: basePrompt, engine: engine, executable: executable, run: run, as: type)
         } catch let error as AdviceDecodeError {
             // CLI 自報的執行錯誤（如未認證）重試也不會好，直接映射
             if case let .cliReportedError(message) = error {
-                throw Self.mapReportedError(engineID: engine.id, message: message)
+                throw mapReportedError(engineID: engine.id, message: message)
             }
             // 其餘 decode 失敗自動重試一次，prompt 附上修正指示
             do {
                 return try await attempt(
                     prompt: basePrompt + "\n\n" + AdvicePrompt.retryInstruction,
-                    run: run
+                    engine: engine, executable: executable, run: run, as: type
                 )
             } catch let retryError as AdviceDecodeError {
-                throw AdviceError.decodeFailed(raw: Self.rawText(from: retryError))
+                throw AdviceError.decodeFailed(raw: rawText(from: retryError))
             }
         }
     }
 
     /// schema 檔一律寫進沙箱。寫不出來（沒有沙箱、磁碟問題）就回 nil——
     /// 少了 `--json-schema` 只是退回文字解析路徑，不該讓整次分析失敗。
-    private func writeSchema(into sandbox: URL?) -> URL? {
+    static func writeSchema(_ schemaJSON: String, into sandbox: URL?) -> URL? {
         guard let sandbox else { return nil }
         let url = sandbox.appendingPathComponent("advice-schema.json")
         do {
-            try Data(AdvicePrompt.toolInputSchemaJSON.utf8).write(to: url, options: [.atomic])
+            try Data(schemaJSON.utf8).write(to: url, options: [.atomic])
             return url
         } catch {
             return nil
         }
     }
 
-    private static func mapReportedError(engineID: String, message: String) -> AdviceError {
-        if authMarkers.contains(where: message.lowercased().contains) {
-            return .notLoggedIn(engineID: engineID)
-        }
-        return .processFailed(status: 0, stderr: sanitizedStderr(message))
-    }
-
-    private func attempt(prompt: String, run: KnownCLIEngine.RunContext) async throws -> LightingAdvice {
+    private static func attempt<T: Decodable>(
+        prompt: String,
+        engine: KnownCLIEngine,
+        executable: URL,
+        run: KnownCLIEngine.RunContext,
+        as type: T.Type
+    ) async throws -> T {
         let invocation = engine.invocation(prompt: prompt, run: run)
         let output: CLIProcessRunner.Output
         do {
@@ -213,7 +234,7 @@ struct CLIAdviceProvider: LightingAdviceProvider {
                 executable: executable,
                 arguments: invocation.arguments,
                 stdin: invocation.stdin,
-                timeout: timeout
+                timeout: run.timeout
             )
         } catch let error as AdviceError {
             throw error
@@ -224,21 +245,28 @@ struct CLIAdviceProvider: LightingAdviceProvider {
         }
 
         guard output.status == 0 else {
-            throw Self.mapNonZeroExit(engineID: engine.id, output: output)
+            throw mapNonZeroExit(engineID: engine.id, output: output)
         }
         do {
-            return try AdviceCodec.decode(stdout: output.stdout, codec: engine.codec)
+            return try AdviceCodec.decode(stdout: output.stdout, codec: engine.codec, as: type)
         } catch AdviceDecodeError.emptyOutput {
             // 退出碼 0 但沒有回應：agy headless 權限被拒就長這樣
             // （status 仍是 SUCCESS）。原因只在 stderr，接過來給使用者看，
             // 否則畫面上只會是一句無從下手的「沒有回應」。
             throw AdviceError.emptyResponse(
                 engineID: engine.id,
-                detail: Self.sanitizedStderr(
+                detail: sanitizedStderr(
                     output.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
             )
         }
+    }
+
+    private static func mapReportedError(engineID: String, message: String) -> AdviceError {
+        if authMarkers.contains(where: message.lowercased().contains) {
+            return .notLoggedIn(engineID: engineID)
+        }
+        return .processFailed(status: 0, stderr: sanitizedStderr(message))
     }
 
     private static let authMarkers = [
@@ -286,6 +314,4 @@ struct CLIAdviceProvider: LightingAdviceProvider {
         case let .adviceParseFailed(raw): raw
         }
     }
-
-    typealias Output = CLIProcessRunner.Output
 }

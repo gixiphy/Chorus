@@ -316,6 +316,20 @@ final class TestHooks {
                     appState.tapEngine.setQuarantined(fields[1] == "1", key: String(fields[0]))
                 }
             }
+        case "injectAudioAdvice":
+            // value = "app|bundle.id|<json>" 或 "device|uid|<json>"——
+            // 以 FakeAudioAdviceProvider 走完整管線（context → sanitize → result）
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false)
+                if fields.count == 3 {
+                    let target: AudioTuningTarget = fields[0] == "device"
+                        ? .device(uid: String(fields[1]))
+                        : .app(bundleID: String(fields[1]))
+                    appState.audioTuner.debugInject(target: target, adviceJSON: String(fields[2]))
+                }
+            }
+        case "applyAudioAdvice":
+            appState.audioTuner.debugApply()
         case "appReset":
             if let bundle = info["value"] { appState.tapEngine.reset(bundleID: bundle) }
         case "tapProbe":
@@ -634,6 +648,15 @@ final class TestHooks {
                 "processes": appState.tapEngine.registry.processes.map { entry in
                     ["name": entry.name, "bundle": entry.bundleID ?? "", "audible": entry.isAudible] as [String: Any]
                 },
+            ] as [String: Any],
+            "audioTuner": [
+                "isAnalyzing": appState.audioTuner.isAnalyzing,
+                "hasResult": appState.audioTuner.result != nil,
+                "summary": appState.audioTuner.result?.advice.summary as Any? ?? NSNull(),
+                "effectCount": appState.audioTuner.result?.advice.effects.count ?? 0,
+                "hasEQ": appState.audioTuner.result?.advice.eq != nil,
+                "canUndo": appState.audioTuner.canUndo,
+                "lastError": appState.audioTuner.lastErrorMessage.map { $0 as Any } ?? NSNull(),
             ] as [String: Any],
             "tapProbe": tapProbeResult as Any? ?? NSNull(),
             "lastControl": lastControlResponse

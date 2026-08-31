@@ -22,6 +22,8 @@ struct AppAudioProcessingView: View {
             eqSection
             Divider()
             EffectChainView(target: .app(bundleID))
+            Divider()
+            AudioAdviceSection(target: .app(bundleID: bundleID))
             if let reason = engineReason {
                 Text(reason)
                     .font(.caption)

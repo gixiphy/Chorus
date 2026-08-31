@@ -31,7 +31,16 @@ public enum AdviceDecodeError: Error, Equatable, Sendable {
 
 public enum AdviceCodec {
     /// 依 codec 從 CLI stdout 解出 `LightingAdvice`（未 sanitized）。
+    /// 既有呼叫端的相容包裝——泛型版在下面。
     public static func decode(stdout: String, codec: AdviceOutputCodec) throws -> LightingAdvice {
+        try decode(stdout: stdout, codec: codec, as: LightingAdvice.self)
+    }
+
+    /// 泛型版：同一條「取回應文字 → 剝 fence → decode → 撈嵌入 JSON」尾巴，
+    /// 光環境與音訊調音兩個顧問共用（機制只寫一份）。
+    public static func decode<T: Decodable>(
+        stdout: String, codec: AdviceOutputCodec, as type: T.Type
+    ) throws -> T {
         let trimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw AdviceDecodeError.emptyOutput }
 
@@ -40,7 +49,7 @@ public enum AdviceCodec {
         case .jsonEnvelope:
             responseText = try envelopeResult(from: trimmed)
         case .responseEnvelope:
-            if let advice = try structuredOutput(from: trimmed) { return advice }
+            if let advice: T = try structuredOutput(from: trimmed) { return advice }
             responseText = try responseField(from: trimmed)
         case .textEnvelope:
             responseText = try stringField("text", from: trimmed)
@@ -49,19 +58,19 @@ public enum AdviceCodec {
         }
 
         let body = strippingCodeFence(responseText)
-        if let advice = decodeAdvice(body) { return advice }
+        if let advice: T = decodeAdvice(body) { return advice }
         // 模型常在 JSON 前面加一段旁白（實測 grok 會先講「我要先讀取照片…」
         // 再接 JSON）。整段 decode 必然失敗，但那段 JSON 本身是好的——
         // 撈出第一個成對的大括號區塊再試一次，比叫模型重來便宜得多。
-        if let embedded = firstJSONObject(in: body), let advice = decodeAdvice(embedded) {
+        if let embedded = firstJSONObject(in: body), let advice: T = decodeAdvice(embedded) {
             return advice
         }
         throw AdviceDecodeError.adviceParseFailed(raw: responseText)
     }
 
-    private static func decodeAdvice(_ text: String) -> LightingAdvice? {
+    private static func decodeAdvice<T: Decodable>(_ text: String) -> T? {
         guard let data = text.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(LightingAdvice.self, from: data)
+        return try? JSONDecoder().decode(T.self, from: data)
     }
 
     /// 取出文字中第一個成對的 `{…}` 區塊。以括號深度掃描，
@@ -113,13 +122,13 @@ public enum AdviceCodec {
 
     /// agy envelope 的 `structured_output`：CLI 已依 `--json-schema` 驗過的物件。
     /// 沒有這個欄位（未帶 schema 或舊版 CLI）回 nil，交給 `response` 文字路徑。
-    private static func structuredOutput(from text: String) throws -> LightingAdvice? {
+    private static func structuredOutput<T: Decodable>(from text: String) throws -> T? {
         guard let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let structured = object["structured_output"]
         else { return nil }
         guard let encoded = try? JSONSerialization.data(withJSONObject: structured),
-              let advice = try? JSONDecoder().decode(LightingAdvice.self, from: encoded)
+              let advice = try? JSONDecoder().decode(T.self, from: encoded)
         else {
             throw AdviceDecodeError.adviceParseFailed(raw: text)
         }

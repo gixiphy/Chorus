@@ -27,6 +27,8 @@ final class AppState {
     let autoEq: AutoEqCatalog
     /// 可用的 AU effect 清單（AU-3；只掃描不實例化，永遠安全）。
     let auCatalog = AUEffectCatalog()
+    /// 音訊調音顧問（EQ＋AU 推薦；沿用光環境顧問的引擎層）。
+    let audioTuner: AudioTuningAdvisor
     let alertVolume: AlertVolumeController
     let automationEvents: AutomationEventHub
     let automationServer: ControlHTTPServer
@@ -124,6 +126,14 @@ final class AppState {
             audioManager?.refreshBridges()
         }
         coordinator.tapEngine = tapEngine
+        // 與光環境顧問共用同一份引擎 registry（設定頁只有一組引擎選擇）
+        audioTuner = AudioTuningAdvisor(
+            settings: settings,
+            registry: advisor.registry,
+            tapEngine: tapEngine,
+            audioManager: audioManager,
+            catalog: auCatalog
+        )
 
         sceneStore = SceneStore(defaults: instance.defaults)
         automation = AutomationExecutor(
