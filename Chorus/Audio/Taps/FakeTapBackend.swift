@@ -1,4 +1,5 @@
 #if DEBUG
+import AudioToolbox
 import ChorusCore
 import CoreAudio
 import Foundation
@@ -115,6 +116,8 @@ final class FakeTapSession: TapSession {
     func setBalance(_ balance: Float) { lastBalance = balance }
     func setEQ(_ settings: EQSettings?) { lastEQ = settings }
     func setAppEQ(_ settings: EQSettings?) { lastAppEQ = settings }
+
+    func effectUnit(layer: AUEffectLayer, id: UUID) -> AudioUnit? { nil }
 
     func setDeviceEffects(_ entries: [AUEffectEntry]) {
         // 與真實 backend 同語意：只留 enabled 的格；latch 走一輪

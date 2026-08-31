@@ -1,3 +1,4 @@
+import AudioToolbox
 import ChorusCore
 import CoreAudio
 import Foundation
@@ -297,6 +298,50 @@ final class TapEngine {
         entries.filter {
             $0.enabled && EffectQuarantine.mayLoad($0.component, quarantined: settings.effectQuarantine)
         }
+    }
+
+    // MARK: - 效果鏈的 UI 表面（AU-3）
+
+    /// 裝置層某格目前的活實例（generic 參數面板編輯它）。優先全域
+    /// session；沒有就找在裝置鏈上的 per-app session——同一格在多條
+    /// session 各有一個實例（DESIGN §1.3），編輯其一、存檔後由 ClassInfo
+    /// 就地同步到其餘。
+    func liveDeviceEffectUnit(id: UUID) -> AudioUnit? {
+        if let unit = globalSession?.effectUnit(layer: .device, id: id) { return unit }
+        for (bundleID, session) in sessions where sessionOutputUIDs[bundleID] == deviceTarget {
+            if let unit = session.effectUnit(layer: .device, id: id) { return unit }
+        }
+        return nil
+    }
+
+    /// App 層某格目前的活實例。
+    func liveAppEffectUnit(bundleID: String, id: UUID) -> AudioUnit? {
+        sessions[bundleID]?.effectUnit(layer: .app, id: id)
+    }
+
+    /// 建鏈失敗的誠實說明（外掛不在、實例化失敗）。裝置層取全域 session
+    /// 的；App 層取該 App session 的。
+    func deviceEffectFailures() -> [String] {
+        globalSession?.effectFailures ?? []
+    }
+
+    func appEffectFailures(bundleID: String) -> [String] {
+        sessions[bundleID]?.effectFailures ?? []
+    }
+
+    /// 隔離名單開關（「再試一次」＝解除隔離）。隔離名單不在 session 推送
+    /// 的 dedupe 輸入裡，改完要整輪重推才會生效。
+    func setQuarantined(_ quarantined: Bool, key: String) {
+        var set = settings.effectQuarantine
+        if quarantined { set.insert(key) } else { set.remove(key) }
+        guard set != settings.effectQuarantine else { return }
+        settings.effectQuarantine = set
+        for bundleID in sessions.keys { pushSessionProcessing(bundleID) }
+        pushDeviceProcessing()
+    }
+
+    func isQuarantined(_ component: AUEffectComponent) -> Bool {
+        settings.effectQuarantine.contains(component.key)
     }
 
     /// 隔離閂接線：session 實例化外掛前後回呼，寫進 SettingsStore 的

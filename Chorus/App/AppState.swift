@@ -25,6 +25,8 @@ final class AppState {
     let sceneStore: SceneStore
     let tapEngine: TapEngine
     let autoEq: AutoEqCatalog
+    /// 可用的 AU effect 清單（AU-3；只掃描不實例化，永遠安全）。
+    let auCatalog = AUEffectCatalog()
     let alertVolume: AlertVolumeController
     let automationEvents: AutomationEventHub
     let automationServer: ControlHTTPServer

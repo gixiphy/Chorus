@@ -35,6 +35,16 @@ struct ChorusApp: App {
             DeviceDiagramView()
                 .environment(appState)
         }
+
+        // App 層的等化與效果面板（AU-3）。value＝bundle id；
+        // 從選單列 App 列的右鍵開。
+        WindowGroup("App 音訊處理", id: "appEffects", for: String.self) { $bundleID in
+            if let bundleID {
+                AppAudioProcessingView(bundleID: bundleID)
+                    .environment(appState)
+            }
+        }
+        .windowResizability(.contentSize)
     }
 }
 

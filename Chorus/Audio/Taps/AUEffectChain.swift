@@ -203,6 +203,32 @@ enum AUChainBuilder {
         var block: UnsafeMutableRawPointer?
         /// 建不起來的格（外掛不在、實例化失敗）——UI 誠實說明用。
         var failures: [String] = []
+        /// 成功建進鏈的條目 id，**與鏈上實例同序**——部分失敗時
+        /// entries 與 units 的索引會錯位，用 id 對應才不會編輯到別格。
+        var builtIDs: [UUID] = []
+    }
+
+    /// 活實例目前的參數（標準 aupreset 內容）。generic 面板編輯後
+    /// 存檔走這裡讀回。
+    static func classInfoData(of unit: AudioUnit) -> Data? {
+        var classInfo: CFPropertyList?
+        var size = UInt32(MemoryLayout<CFPropertyList?>.size)
+        guard AudioUnitGetProperty(
+            unit, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &classInfo, &size
+        ) == noErr, let info = classInfo else { return nil }
+        return try? PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0)
+    }
+
+    /// 把存檔的參數就地套進活實例（換 preset／跨 session 同步用）。
+    static func applyClassInfo(_ data: Data, to unit: AudioUnit) {
+        guard let restored = try? PropertyListSerialization.propertyList(
+            from: data, options: [], format: nil
+        ) else { return }
+        var classInfo = restored as CFPropertyList?
+        AudioUnitSetProperty(
+            unit, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0,
+            &classInfo, UInt32(MemoryLayout<CFPropertyList?>.size)
+        )
     }
 
     /// `latch`：實例化**前**以元件 key 呼叫、成功後以 nil 呼叫（隔離閂，
@@ -300,6 +326,7 @@ enum AUChainBuilder {
             }
             latch(nil)
             units.append(unit)
+            result.builtIDs.append(entry.id)
         }
 
         guard !units.isEmpty else {

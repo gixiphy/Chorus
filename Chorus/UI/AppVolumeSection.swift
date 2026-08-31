@@ -93,6 +93,7 @@ struct AppVolumeSection: View {
 /// 一個 App 的圖示＋滑桿＋靜音。
 private struct AppVolumeRow: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.openWindow) private var openWindow
     let bundleID: String
 
     private var setting: AppAudioSetting {
@@ -200,6 +201,8 @@ private struct AppVolumeRow: View {
                         }
                     }
                 }
+                Button("等化與效果…") { openWindow(id: "appEffects", value: bundleID) }
+                    .help("App 層的 EQ 與 AU 效果鏈——只套這個 App，與裝置層是不同責任的兩次")
                 Button("回到 100%") { appState.tapEngine.setGain(1, bundleID: bundleID) }
                 Button("完全不處理這個 App") { appState.tapEngine.reset(bundleID: bundleID) }
                     .help("清掉所有調整——這個 App 會回到完全原生的音訊路徑，不再建立 tap")

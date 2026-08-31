@@ -181,30 +181,8 @@ struct EQPanelView: View {
     // MARK: - 各段
 
     private var bandSliders: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(settings.bands.enumerated()), id: \.element.id) { index, band in
-                HStack(spacing: 6) {
-                    Text(Self.frequencyLabel(band.frequency))
-                        .font(.caption2)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .frame(width: 46, alignment: .trailing)
-                    Slider(
-                        value: Binding(
-                            get: { band.gainDB },
-                            set: { setGain($0, at: index) }
-                        ),
-                        in: EQBand.gainRange
-                    )
-                    .controlSize(.mini)
-                    .disabled(!band.isEnabled)
-                    Text(String(format: "%+.1f", band.gainDB))
-                        .font(.caption2)
-                        .monospacedDigit()
-                        .foregroundStyle(band.isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
-                        .frame(width: 36, alignment: .trailing)
-                }
-            }
+        EQBandSliders(settings: settings) { value, index in
+            setGain(value, at: index)
         }
     }
 
@@ -272,6 +250,47 @@ struct EQPanelView: View {
     }
 
     private static func frequencyLabel(_ frequency: Double) -> String {
+        frequency >= 1000
+            ? String(format: "%.4g k", frequency / 1000)
+            : String(format: "%.0f", frequency)
+    }
+}
+
+/// 10 段滑桿（裝置面板與 App 層面板共用——機制只寫一份）。
+/// 呼叫端負責「改了增益之後要做什麼」（preamp 政策、sourceName 標註）。
+struct EQBandSliders: View {
+    let settings: EQSettings
+    let onGainChange: (Double, Int) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(settings.bands.enumerated()), id: \.element.id) { index, band in
+                HStack(spacing: 6) {
+                    Text(Self.frequencyLabel(band.frequency))
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 46, alignment: .trailing)
+                    Slider(
+                        value: Binding(
+                            get: { band.gainDB },
+                            set: { onGainChange($0, index) }
+                        ),
+                        in: EQBand.gainRange
+                    )
+                    .controlSize(.mini)
+                    .disabled(!band.isEnabled)
+                    Text(String(format: "%+.1f", band.gainDB))
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .foregroundStyle(band.isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                        .frame(width: 36, alignment: .trailing)
+                }
+            }
+        }
+    }
+
+    static func frequencyLabel(_ frequency: Double) -> String {
         frequency >= 1000
             ? String(format: "%.4g k", frequency / 1000)
             : String(format: "%.0f", frequency)

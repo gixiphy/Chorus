@@ -1,3 +1,4 @@
+import AudioToolbox
 import ChorusCore
 import CoreAudio
 import Foundation
@@ -659,6 +660,9 @@ private final class CoreAudioTapSession: TapSession {
     private struct PushedEffects {
         var entries: [AUEffectEntry]
         var sampleRate: Double
+        /// 成功建進鏈的條目 id（與鏈上實例同序）。部分失敗時 entries 與
+        /// 實例的索引會錯位——編輯／就地更新一律走 id 對應。
+        var builtIDs: [UUID]
     }
 
     func setDeviceEffects(_ entries: [AUEffectEntry]) {
@@ -669,27 +673,63 @@ private final class CoreAudioTapSession: TapSession {
         pushEffects(entries, into: context.appEffects, last: &lastPushedAppEffects)
     }
 
+    func effectUnit(layer: AUEffectLayer, id: UUID) -> AudioUnit? {
+        let (chainLayer, last) = layer == .app
+            ? (context.appEffects, lastPushedAppEffects)
+            : (context.deviceEffects, lastPushedDeviceEffects)
+        guard let index = last?.builtIDs.firstIndex(of: id) else { return nil }
+        let raw = chainLayer.chain.load(ordering: .relaxed)
+        guard raw != 0, let block = UnsafeMutableRawPointer(bitPattern: raw) else { return nil }
+        let units = AUChainBlock.units(block)
+        guard index < units.count else { return nil }
+        return units[index]
+    }
+
     private func pushEffects(
         _ entries: [AUEffectEntry], into layer: AUChainLayer, last: inout PushedEffects?
     ) {
         let active = entries.filter(\.enabled)
         let sampleRate = deviceSampleRate()
-        if let last, last.entries == active, last.sampleRate == sampleRate { return }
-        last = PushedEffects(entries: active, sampleRate: sampleRate)
+        if let current = last, current.entries == active, current.sampleRate == sampleRate { return }
+
+        // 只有參數（classInfo）變、組成與順序沒變：就地套用不重建——
+        // 重建會把外掛內部狀態歸零（reverb 尾音、壓縮器 envelope），
+        // generic 面板的參數編輯不該付這個代價。
+        if let current = last, current.sampleRate == sampleRate,
+           current.entries.count == active.count,
+           zip(current.entries, active).allSatisfy({ old, new in
+               old.id == new.id && old.component == new.component && old.enabled == new.enabled
+           }) {
+            let raw = layer.chain.load(ordering: .relaxed)
+            if raw != 0, let block = UnsafeMutableRawPointer(bitPattern: raw) {
+                let units = AUChainBlock.units(block)
+                for (old, new) in zip(current.entries, active) where old.classInfo != new.classInfo {
+                    if let data = new.classInfo,
+                       let index = current.builtIDs.firstIndex(of: new.id), index < units.count {
+                        AUChainBuilder.applyClassInfo(data, to: units[index])
+                    }
+                }
+            }
+            last = PushedEffects(entries: active, sampleRate: sampleRate, builtIDs: current.builtIDs)
+            return
+        }
 
         var newRaw: UInt = 0
+        var builtIDs: [UUID] = []
         if !active.isEmpty {
             let built = AUChainBuilder.build(
                 entries: active, sampleRate: sampleRate,
                 latch: { [weak self] key in self?.effectLatch?(key) }
             )
             effectFailures = built.failures
+            builtIDs = built.builtIDs
             if let block = built.block {
                 newRaw = UInt(bitPattern: block)
             }
         } else {
             effectFailures = []
         }
+        last = PushedEffects(entries: active, sampleRate: sampleRate, builtIDs: builtIDs)
         let previous = layer.chain.load(ordering: .relaxed)
         layer.chain.store(newRaw, ordering: .releasing)
         if previous != 0, let block = UnsafeMutableRawPointer(bitPattern: previous) {

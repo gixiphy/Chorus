@@ -1,6 +1,13 @@
+import AudioToolbox
 import ChorusCore
 import CoreAudio
 import Foundation
+
+/// AU 效果鏈的兩層（與 EQ 的 app／device 兩層同構，AU-2b）。
+enum AUEffectLayer: Sendable {
+    case app
+    case device
+}
 
 /// tap session 的種類。**混淆兩者會出事**：
 /// - 探測（權限確認）必須 `captureOnly`＋unmuted——來源照常播放，我們只讀不寫。
@@ -55,6 +62,11 @@ protocol TapSession: AnyObject {
     var effectLatch: ((String?) -> Void)? { get set }
     /// 最近一次建鏈失敗的格（外掛不在、實例化失敗）——UI 誠實說明用。
     var effectFailures: [String] { get }
+    /// 鏈上某格（以條目 id 定位）目前的活 AU 實例——generic 參數面板
+    /// 直接編輯它（AU-3）。沒建鏈、該格建failed、或 fake 都回 nil。
+    /// **實例屬於 render 鏈**：換鏈後舊指標一秒內失效，取用端要在
+    /// 鏈內容變動時關掉面板、重新取用。
+    func effectUnit(layer: AUEffectLayer, id: UUID) -> AudioUnit?
     func stop()
 }
 
