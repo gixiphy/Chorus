@@ -8,12 +8,18 @@ macOS 選單列 App：控制所有螢幕與音訊裝置——並且在同一區�
 > [SoundSource](https://rogueamoeba.com/soundsource/) 那一類。Chorus 把兩邊收進
 > 同一個選單列，再疊上跨機與 AI 這兩層——那才是它真正的差異點。
 
-`1.1.0`（build 61）· macOS 26+ · Apple Silicon · Swift 6（strict concurrency）· SwiftUI `MenuBarExtra`
+`1.1.0`（build 62）· macOS 26+ · Apple Silicon · Swift 6（strict concurrency）· SwiftUI `MenuBarExtra`
 
 <img src="assets/menubar.png" alt="Chorus 選單列" width="330">
 
 *選單列：本機的螢幕、音訊裝置與各 App 音量，最下面是同一張桌上的另一台 Mac——
 亮度與音量在兩台之間即時同步，也可以直接從這裡拉它的滑桿。*
+
+<img src="assets/menubar-icon.png" alt="選單列狀態圖示" width="68">
+
+**圖示本身就是狀態**：外環（開口朝下的 270° 量表）是主顯示器亮度、中心三根聲波柱
+是預設輸出音量（靜音時塌成一條橫線）、右側文字是螢幕長亮的倒數（無限期與
+「接著這台螢幕時」顯示 ∞）。沒在防睡眠時不顯示倒數，圖示也就窄一格。
 
 ---
 
