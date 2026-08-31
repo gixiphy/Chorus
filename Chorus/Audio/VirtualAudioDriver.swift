@@ -18,6 +18,11 @@ final class VirtualAudioDriverController {
     static let driverPath = "/Library/Audio/Plug-Ins/HAL/ChorusAudioDevice.driver"
 
     /// driver 的 ConfigType 序號（見 ProxyAudioDevice.h；讀值以負數 identify 選擇）。
+    ///
+    /// P4 現況（driver v7 盤點）：七種設定 App 端接了三種——outputDevice、
+    /// applyVolume、deviceActiveCondition。其餘三種是刻意不接：
+    /// deviceName／deviceHideWhenUnavailable 的預設值就是產品要的行為、
+    /// outputDeviceBufferFrameSize 沒有調整的需求（512 即預設）。
     private enum ConfigType: Int32 {
         case outputDevice = 1
         case outputDeviceBufferFrameSize = 2
@@ -25,6 +30,21 @@ final class VirtualAudioDriverController {
         case deviceActiveCondition = 4
         case deviceHideWhenUnavailable = 5
         case applyVolume = 6
+    }
+
+    /// 實體輸出裝置的運轉條件（driver 端 ActiveCondition，序號一致）。
+    ///
+    /// driver 預設 `.userActive`：使用者閒置滿 30 秒**且**沒有播放中的 IO，
+    /// 就停掉實體裝置的 IOProc（省電、讓系統能睡）；使用者回來或有聲音要播
+    /// 會再啟動——代價是 HDMI 這類喚醒慢的裝置可能吃掉開頭一小段聲音。
+    /// `.always` 會讓 coreaudiod 一直持有裝置、可能擋系統睡眠，勿輕用。
+    enum ActiveCondition: Int32 {
+        /// 只在有聲音經過 proxy 裝置時運轉實體裝置。
+        case proxiedDeviceActive = 0
+        /// 使用者活動中或有播放中 IO 就運轉（driver 預設）。
+        case userActive = 1
+        /// 永遠運轉。會讓 coreaudiod 一直持有實體裝置，可能擋系統睡眠。
+        case always = 2
     }
 
     enum Status: Equatable {
@@ -41,6 +61,8 @@ final class VirtualAudioDriverController {
     private(set) var targetUID: String?
     /// 目前是否為 DDC 鏡射模式（applyVolume=0）。nil = 尚未讀到。
     private(set) var mirrorMode: Bool?
+    /// 實體裝置的運轉條件。nil = 尚未讀到。
+    private(set) var activeCondition: ActiveCondition?
     /// 已安裝的 driver 版本落後 App 內嵌版本（Info.plist CFBundleVersion 比對）。
     private(set) var updateAvailable = false
 
@@ -77,6 +99,7 @@ final class VirtualAudioDriverController {
                 status = installed ? .installedNotLoaded : .notInstalled
                 targetUID = nil
                 mirrorMode = nil
+                activeCondition = nil
             }
         }
     }
@@ -90,7 +113,18 @@ final class VirtualAudioDriverController {
 
     private func refreshConfig(box: AudioObjectID) async {
         targetUID = await readConfig(box: box, type: .outputDevice)
-        mirrorMode = await readConfig(box: box, type: .applyVolume).map { $0 == "0" }
+        // driver v6 以前讀值有跨程序競態（P3），可能拿回 box 名稱之類的
+        // 非設定值——布林／enum 型設定一律驗證再收，解析不了就當沒讀到。
+        mirrorMode = await readConfig(box: box, type: .applyVolume).flatMap {
+            switch $0 {
+            case "0": true
+            case "1": false
+            default: nil
+            }
+        }
+        activeCondition = await readConfig(box: box, type: .deviceActiveCondition)
+            .flatMap { Int32($0) }
+            .flatMap { ActiveCondition(rawValue: $0) }
     }
 
     // MARK: - 設定
@@ -107,6 +141,15 @@ final class VirtualAudioDriverController {
         guard mirrorMode != mirror else { return }
         mirrorMode = mirror
         writeConfig("applyVolume=\(mirror ? 0 : 1)")
+    }
+
+    /// 實體裝置運轉條件。目前沒有 UI，維持 driver 預設 `.userActive`；
+    /// 這條通道是為了讓政策成為明確的 API 而不是 driver 裡的隱藏行為
+    /// （P4）。只在值真的改變時打設定通道。
+    func setActiveCondition(_ condition: ActiveCondition) {
+        guard activeCondition != condition else { return }
+        activeCondition = condition
+        writeConfig("outputDeviceActiveCondition=\(condition.rawValue)")
     }
 
     private func writeConfig(_ keyValue: String) {

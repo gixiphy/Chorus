@@ -4,6 +4,7 @@
 #include <CoreAudio/AudioServerPlugIn.h>
 #include <CoreAudio/CoreAudio.h>
 #include <vector>
+#include <map>
 #include <atomic>
 
 #include "AudioDevice.h"
@@ -503,13 +504,13 @@ class ProxyAudioDevice {
                                     UInt32 *outNumberPropertiesChanged,
                                     AudioObjectPropertyAddress outChangedAddresses[2]);
     void monitorUserActivity();
+    void reportRealtimeDiagnostics();
     dispatch_queue_t AudioOutputDispatchQueue();
     void ExecuteInAudioOutputThread(void (^block)());
     
     CAMutex stateMutex = CAMutex("ProxyAudioStateMutex");
     CAMutex IOMutex = CAMutex("ProxyAudioIOMutex");
     CAMutex outputDeviceMutex = CAMutex("ProxyAudioOutputDeviceMutex");
-    CAMutex getZeroTimestampMutex = CAMutex("ProxyAudioGetZeroTimestampMutex");
     dispatch_queue_t audioOutputQueue = NULL;
     dispatch_source_t inputMonitoringTimer = NULL;
     AudioRingBuffer *inputBuffer = NULL;
@@ -522,27 +523,53 @@ class ProxyAudioDevice {
     Float64 inputOutputSampleDelta = -1;
     Float64 inputFinalFrameTime = -1;
     int inputCycleCount = 0;
-    ConfigType nextConfigurationToRead = ConfigType::none;
-    pid_t configuratorPid = 0;
+    // P3（v7）：configurator 從單一全域槽改成 per-pid 槽。舊版只有一個
+    // configuratorPid ＋一個 nextConfigurationToRead，兩個程序（App 與 CLI）
+    // 同時走讀值協定就互相踩——後註冊的搶走 pid 槽，先前那個讀 name 拿回
+    // 的是 box 名稱而不是設定值（實測踩過）。key 是 HAL 提供的 client pid
+    // （不能偽造），value 是該 pid 下一次讀 box name 要回的設定。
+    // stateMutex 保護；條目數實務上只有個位數（App＋CLI），註冊時設上限防呆。
+    std::map<pid_t, ConfigType> configurators;
     CFStringRef deviceName = NULL;
     CFStringRef boxName = NULL;
     CFStringRef outputDeviceUID = NULL;
     UInt32 outputDeviceBufferFrameSize = kOutputDeviceDefaultBufferFrameSize;
-    SInt64 smallestFramesToBufferEnd = -1;
     // Chorus 擴充：位置回授。上游只校時鐘「速率」（outputAccumulatedRateRatio），
     // 從不校讀寫頭的「位置」——掉一個 output cycle 造成的位置誤差是永久的，
     // 而且只會累加。到不了自癒，因為 inputOutputSampleDelta 算過一次之後
-    // 再也不會等於 -1。這兩個欄位是門檻硬重同步用的。見 outputDeviceIOProc。
+    // 再也不會等於 -1。這些欄位是門檻硬重同步用的。見 outputDeviceIOProc。
     UInt64 lastResyncHostTime = 0;
-    UInt64 resyncCount = 0;
-    // P2：這兩個原本由 getZeroTimestampMutex 保護，而那把鎖是 IOProc 取的
-    // 第三把。改成 atomic 之後 IOProc 一把鎖都不用取。
-    // mRateScalar ≈ 1.0，定點放大 2^30 後每筆約 1.07e9，上限 10000 筆
-    // ≈ 1.07e13，離 UInt64 的天花板還有六個數量級；量化誤差 9.3e-10，
-    // 比我們在意的速率偏差（約 1e-5）細四個數量級。
-    static constexpr Float64 kRateRatioScale = 1073741824.0; // 2^30
-    std::atomic<UInt64> outputAccumulatedRateRatioFixed{0};
-    std::atomic<UInt64> outputAccumulatedRateRatioSamples{0};
+    // v7：resync／overrun 在 IOProc 裡只記 atomic，不再呼叫 time()/syslog()
+    // ——syslog 打 syslogd 的 socket、可能阻塞，而這兩件事正好都在系統最忙
+    // 的時候發生。inputMonitoringTimer（500ms）觀察計數變化後補記 log；
+    // 寫入端先寫細節（relaxed）再加計數（release），觀察端 acquire 讀計數
+    // 後再讀細節，保證讀到同一筆。
+    std::atomic<UInt64> resyncCount{0};
+    std::atomic<SInt64> lastResyncMargin{0};
+    std::atomic<UInt64> overrunCount{0};
+    std::atomic<Float64> lastOverrunStartFrame{0.0};
+    std::atomic<SInt64> lastOverrunBufferStart{0};
+    std::atomic<SInt64> lastOverrunBufferEnd{0};
+    // 觀察端狀態：只在 audioOutputQueue（serial）上讀寫，不需要保護。
+    UInt64 loggedResyncCount = 0;
+    UInt64 loggedOverrunCount = 0;
+    time_t lastOverrunLogTime = 0;
+    // P2（v6→v7）：累加器原本由 getZeroTimestampMutex 保護（IOProc 的第三把
+    // 鎖）。v6 拆成兩個 atomic（sum／count）各自 exchange——但兩個 exchange
+    // 不是同一個原子步驟：IOProc 的兩個 fetch_add 若剛好插在中間，sum 與
+    // count 就錯配，重置後第一筆錯配時 count=1、sum=0 ⇒ rateRatio=0，時鐘
+    // 一格跳零（還可能反過來觸發 drift resync）。v7 併成單一 64-bit atomic
+    // 一次 exchange，錯配從此不可能發生。
+    // 打包格式：低 14 bit = count（上限 10000 < 2^14），高 50 bit =
+    // Σ(mRateScalar · 2^32)。mRateScalar ≈ 1.0 ⇒ 每筆 ≈ 2^32，一萬筆
+    // ≈ 2^45.3，離 50 bit 的天花板還有 4 個 bit（rateScalar 到 ~16 都不會
+    // 溢位）。量化誤差 2^-32 ≈ 2.3e-10，比在意的速率偏差（約 1e-5）細
+    // 五個數量級。count 只由 IOProc 加、且加之前檢查上限，不會進位污染 sum。
+    static constexpr Float64 kRateRatioScale = 4294967296.0; // 2^32
+    static constexpr UInt64 kRateRatioCountBits = 14;
+    static constexpr UInt64 kRateRatioCountMask = (1ull << kRateRatioCountBits) - 1;
+    static constexpr UInt64 kRateRatioMaxSamples = 10000;
+    std::atomic<UInt64> outputAccumulatedRateRatio{0};
     ActiveCondition outputDeviceActiveCondition = ActiveCondition::userActive;
     bool outputDeviceHideWhenUnavailable = kOutputDeviceDefaultHideWhenUnavailable;
     // Chorus 擴充：false = DDC 鏡射模式——IOProc 不做數位衰減（樣本原樣通過、
@@ -556,7 +583,10 @@ class ProxyAudioDevice {
     std::vector<Float64> gDevice_SampleRates = {22050, 44100, 48000, 88200, 96000, 176400, 192000};
     UInt64 gDevice_IOIsRunning = 0;
     const UInt32 kDevice_RingBufferSize = 16384;
-    Float64 gDevice_HostTicksPerFrame = 0.0;
+    // v7：IOProc 的 resync 節流 lock-free 讀它，而取樣率切換時
+    // PerformDeviceConfigurationChange 在 stateMutex 下重寫——C++ data race，
+    // torn read 可讓 1 秒節流失效。比照 gDevice_SampleRate 改 atomic。
+    std::atomic<Float64> gDevice_HostTicksPerFrame{0.0};
     UInt64 gDevice_NumberTimeStamps = 0;
     Float64 gDevice_AnchorSampleTime = 0.0;
     Float64 gDevice_ElapsedTicks = 0.0;

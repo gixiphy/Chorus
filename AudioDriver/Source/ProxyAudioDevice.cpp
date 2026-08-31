@@ -1954,13 +1954,27 @@ OSStatus ProxyAudioDevice::GetBoxPropertyData(AudioServerPlugInDriverRef inDrive
             // See the comment in the switch case for 'kAudioObjectPropertyIdentify' in SetBoxPropertyData to get a
             // description of the crazy hackery that is going on here.
 
-            if (inClientProcessID == configuratorPid && nextConfigurationToRead != ConfigType::none) {
-                DebugMsg("ProxyAudio: returning config data type %d instead of box name", nextConfigurationToRead);
-                *((CFStringRef *)outData) = copyConfigurationValue(nextConfigurationToRead);
-                
-            } else {
-                CAMutex::Locker locker(stateMutex);
-                *((CFStringRef *)outData) = CFStringCreateCopy(NULL, boxName);
+            // P3（v7）：查的是呼叫者自己的 per-pid 槽——別的程序註冊或選讀
+            // 不會影響這裡回什麼。copyConfigurationValue 自己會取 stateMutex，
+            // 查表的鎖要先放掉。
+            {
+                ConfigType pendingRead = ConfigType::none;
+                {
+                    CAMutex::Locker locker(stateMutex);
+                    auto it = configurators.find(inClientProcessID);
+                    if (it != configurators.end()) {
+                        pendingRead = it->second;
+                    }
+                }
+
+                if (pendingRead != ConfigType::none) {
+                    DebugMsg("ProxyAudio: returning config data type %d instead of box name", pendingRead);
+                    *((CFStringRef *)outData) = copyConfigurationValue(pendingRead);
+
+                } else {
+                    CAMutex::Locker locker(stateMutex);
+                    *((CFStringRef *)outData) = CFStringCreateCopy(NULL, boxName);
+                }
             }
 
             *outDataSize = sizeof(CFStringRef);
@@ -2205,7 +2219,15 @@ OSStatus ProxyAudioDevice::SetBoxPropertyData(AudioServerPlugInDriverRef inDrive
                 // See the comment in the switch case for 'kAudioObjectPropertyIdentify' to get a description of the
                 // crazy hackery that is going on here.
                 
-                if (inClientProcessID == configuratorPid) {
+                // P3（v7）：configurator 身分查 per-pid 表。setConfigurationValue
+                // 內部會取 stateMutex，查表的鎖要先放掉。
+                bool isConfigurator = false;
+                {
+                    CAMutex::Locker locker(stateMutex);
+                    isConfigurator = (configurators.find(inClientProcessID) != configurators.end());
+                }
+
+                if (isConfigurator) {
                     DebugMsg("ProxyAudio: setting box name from configurator process, performing configuration action "
                              "instead!");
                     CFStringSmartRef value = nullptr;
@@ -2248,15 +2270,18 @@ OSStatus ProxyAudioDevice::SetBoxPropertyData(AudioServerPlugInDriverRef inDrive
                 // So here's the alternative method: we use a few of the properties of the box device in ways they
                 // weren't intended to be used:
 
-                // First, if a process sets the "identify" property of the box device to its pid, then that pid will
-                // become the designated 'configurator' pid. The driver will then respond differently to read and write
-                // actions taken by the process for certain key properties on the box device.
+                // First, if a process sets the "identify" property of the box device to a positive value (its pid,
+                // by convention), then that process registers itself as a 'configurator'. The driver will then
+                // respond differently to read and write actions taken by the process for certain key properties on
+                // the box device. (P3/v7: registration is keyed on the HAL-supplied client pid, and each
+                // configurator gets its own read-selection slot — two processes reading concurrently no longer
+                // stomp on each other's state, which used to hand one of them the box name instead of the value.)
 
-                // If the configurator process writes a negative value to the box device's identify property, then that
-                // sets the current setting (with the absolute value of what was written to the identify property
-                // corresponding to the ConfigType enum). The current setting is what will be returned if that same
-                // process reads the box device's name property. In the case of integer settings (such as the output
-                // device's buffer frame length) then it is converted to a string before being returned.
+                // If a configurator process writes a negative value to the box device's identify property, then that
+                // selects that process's current setting (with the absolute value of what was written to the identify
+                // property corresponding to the ConfigType enum). The current setting is what will be returned if
+                // that same process reads the box device's name property. In the case of integer settings (such as
+                // the output device's buffer frame length) then it is converted to a string before being returned.
 
                 // Lastly, the configurator process can write out new values to the driver's settings again using the
                 // box's name property. When it sets it to a value in the form "settingName=value" then it will parse
@@ -2267,16 +2292,35 @@ OSStatus ProxyAudioDevice::SetBoxPropertyData(AudioServerPlugInDriverRef inDrive
                 // driver.
 
                 if (signedValue != 0 && signedValue != 1) {
+                    CAMutex::Locker locker(stateMutex);
+
                     if (signedValue < 0) {
-                        nextConfigurationToRead = ConfigType(-signedValue);
-                        DebugMsg("ProxyAudio: received signal, will return data on next call to box name: %d",
-                                 nextConfigurationToRead);
+                        // 讀值選擇寫進**呼叫者自己**的槽；序號超出範圍就忽略
+                        // （舊版會把垃圾 enum 一路帶進 copyConfigurationValue）。
+                        // 只有已註冊的 configurator 有槽可寫。
+                        SInt32 requested = -signedValue;
+                        if (requested >= SInt32(ConfigType::outputDevice)
+                            && requested <= SInt32(ConfigType::applyVolume)) {
+                            auto it = configurators.find(inClientProcessID);
+                            if (it != configurators.end()) {
+                                it->second = ConfigType(requested);
+                                DebugMsg("ProxyAudio: received signal, will return data on next call to box name: %d",
+                                         requested);
+                            }
+                        }
                     } else {
-                        configuratorPid = signedValue;
+                        // 註冊 configurator。以 HAL 提供的 client pid 為準（無法
+                        // 偽造）；寫進來的正值只當「我要註冊」的訊號，維持與舊
+                        // 版 App／CLI 的線上相容。pid 會重用、條目又只有 8 byte，
+                        // 上限純粹防呆。
+                        if (configurators.size() >= 16
+                            && configurators.find(inClientProcessID) == configurators.end()) {
+                            configurators.clear();
+                        }
+                        configurators.emplace(inClientProcessID, ConfigType::none);
                         DebugMsg("ProxyAudio: received signal, configurator pid is: %d",
-                                 configuratorPid);
+                                 inClientProcessID);
                     }
-                    
                 }
             }
 
@@ -5018,8 +5062,7 @@ OSStatus ProxyAudioDevice::StartIO(AudioServerPlugInDriverRef inDriver,
         gDevice_AnchorSampleTime = 0;
         gDevice_AnchorHostTime = mach_absolute_time();
         gDevice_ElapsedTicks = 0;
-        outputAccumulatedRateRatioFixed.store(0, std::memory_order_relaxed);
-        outputAccumulatedRateRatioSamples.store(0, std::memory_order_relaxed);
+        outputAccumulatedRateRatio.store(0, std::memory_order_relaxed);
     } else {
         //    IO is already running, so just bump the counter
         ++gDevice_IOIsRunning;
@@ -5115,8 +5158,11 @@ OSStatus ProxyAudioDevice::GetZeroTimeStamp(AudioServerPlugInDriverRef inDriver,
                    "GetZeroTimeStamp: bad device ID");
 
     {
-        CAMutex::Locker locker(&getZeroTimestampMutex);
-        
+        // v7：這裡原本有 getZeroTimestampMutex，但累加器改 atomic 之後它只剩
+        // 這一個取用點——HAL 對同一個裝置只有一條 timing 執行緒在呼叫這裡，
+        // 單一取用點的鎖保護不了任何東西（anchor 狀態與 StartIO 之間本來就
+        // 靠 HAL 的「IO 啟動前不查時戳」約定，不靠這把鎖），刪掉。
+
         //    get the current host time
         theCurrentHostTime = mach_absolute_time();
 
@@ -5125,22 +5171,22 @@ OSStatus ProxyAudioDevice::GetZeroTimeStamp(AudioServerPlugInDriverRef inDriver,
         // Then each time we calculate the next zero timestamp we slightly adjust
         // the tick count for our ring buffer by however much the output IO proc
         // deviated from its sample rate.
-        
+
         Float64 rateRatio = 1.0;
-        
-        // exchange 一次取值並歸零：與 IOProc 的 fetch_add 之間沒有鎖。
-        // 兩個 exchange 不是同一個原子步驟，最壞情況是某一筆樣本被算進
-        // 下一個視窗——對一個滑動平均無害，而換來 IOProc 不必等鎖。
-        UInt64 accumulatedFixed = outputAccumulatedRateRatioFixed.exchange(0, std::memory_order_relaxed);
-        UInt64 accumulatedSamples = outputAccumulatedRateRatioSamples.exchange(0, std::memory_order_relaxed);
+
+        // 單一 exchange 取值並歸零：sum 與 count 打包在同一個 64-bit 原子值
+        // 裡（格式見標頭），與 IOProc 的單一 fetch_add 之間不可能錯配。
+        UInt64 ratioPacked = outputAccumulatedRateRatio.exchange(0, std::memory_order_relaxed);
+        UInt64 accumulatedSamples = ratioPacked & kRateRatioCountMask;
 
         if (accumulatedSamples > 0) {
-            rateRatio = ((Float64)accumulatedFixed / kRateRatioScale) / (Float64)accumulatedSamples;
+            Float64 accumulated = (Float64)(ratioPacked >> kRateRatioCountBits);
+            rateRatio = (accumulated / kRateRatioScale) / (Float64)accumulatedSamples;
         }
-        
+
         //    calculate the next host time
         theHostTicksPerRingBuffer =
-            gDevice_HostTicksPerFrame * ((Float64)kDevice_RingBufferSize) * rateRatio;
+            gDevice_HostTicksPerFrame.load(std::memory_order_relaxed) * ((Float64)kDevice_RingBufferSize) * rateRatio;
         theHostTickOffset = gDevice_ElapsedTicks + theHostTicksPerRingBuffer;
         theNextHostTime = gDevice_AnchorHostTime + ((UInt64)theHostTickOffset);
 
@@ -5330,7 +5376,9 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
     //
     // 作法：stateMutex 讀的六個純量改成 atomic（gDevice_ChannelsPerFrame
     // 本來就是 const），getZeroTimestampMutex 保護的累加器改成定點 atomic。
-    // 三把鎖去掉兩把。
+    // 三把鎖去掉兩把。（v7 再補三件：累加器併成單一 64-bit atomic 杜絕
+    // sum/count 錯配、gDevice_HostTicksPerFrame 改 atomic、resync/overrun
+    // 的 syslog 移出 realtime 執行緒——見各處註解。）
     //
     // **IOMutex 維持阻塞式**，這是刻意的。它保護 ring buffer 本身，而它
     // 只有三個取用點：這裡、WriteMix（4 KB memcpy ≈ 1 µs）、resetInputData
@@ -5359,10 +5407,14 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
 
     // We don't need to keep taking samples of the device's ratio past
     // 10000 samples. If we get that far then the device is idling.
-    if (outputAccumulatedRateRatioSamples.load(std::memory_order_relaxed) < 10000) {
-        outputAccumulatedRateRatioFixed.fetch_add(
-            (UInt64)(inOutputTime->mRateScalar * kRateRatioScale), std::memory_order_relaxed);
-        outputAccumulatedRateRatioSamples.fetch_add(1, std::memory_order_relaxed);
+    // sum 與 count 打包成一個 64-bit 值、一次 fetch_add：與 GetZeroTimeStamp
+    // 的單一 exchange 之間不可能錯配（v6 的兩個 atomic 會，見標頭註解）。
+    // count 只有這裡在加、加之前檢查上限，不會進位污染 sum。
+    UInt64 ratioPacked = outputAccumulatedRateRatio.load(std::memory_order_relaxed);
+    if ((ratioPacked & kRateRatioCountMask) < kRateRatioMaxSamples) {
+        UInt64 ratioIncrement =
+            (((UInt64)(inOutputTime->mRateScalar * kRateRatioScale)) << kRateRatioCountBits) | 1ull;
+        outputAccumulatedRateRatio.fetch_add(ratioIncrement, std::memory_order_relaxed);
     }
     
     inputCycleCount = 0;
@@ -5381,7 +5433,6 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
         Float64 targetFrameTime = (lastInputFrameTime - lastInputBufferFrameSize - currentOutputDeviceBufferFrameSize
                                    - currentOutputDeviceSafetyOffset);
         inputOutputSampleDelta = targetFrameTime - inOutputTime->mSampleTime;
-        smallestFramesToBufferEnd = -1;
     }
 
     Float64 startFrame = inOutputTime->mSampleTime + inputOutputSampleDelta;
@@ -5397,11 +5448,6 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
     // 算它——漂移一路吃掉邊際也沒有任何人在看。
     SInt64 framesToBufferEnd =
         inputBuffer->mEndFrame - (SInt64(startFrame) + SInt64(currentOutputDeviceBufferFrameSize));
-
-    if (smallestFramesToBufferEnd == -1
-        || (framesToBufferEnd < smallestFramesToBufferEnd && smallestFramesToBufferEnd >= 0)) {
-        smallestFramesToBufferEnd = framesToBufferEnd;
-    }
 
     // ── 門檻硬重同步（Chorus 擴充）──────────────────────────────────
     //
@@ -5421,47 +5467,29 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
     // 每秒最多一次，避免重算不出健康邊際時反覆抖動。
     if (inputFinalFrameTime == -1 && framesToBufferEnd < SInt64(currentOutputDeviceBufferFrameSize)) {
         UInt64 nowHostTime = mach_absolute_time();
-        Float64 hostTicksPerSecond = gDevice_HostTicksPerFrame * currentInputDeviceSampleRate;
+        Float64 hostTicksPerSecond =
+            gDevice_HostTicksPerFrame.load(std::memory_order_relaxed) * currentInputDeviceSampleRate;
 
         if (lastResyncHostTime == 0 || (nowHostTime - lastResyncHostTime) > (UInt64)hostTicksPerSecond) {
             lastResyncHostTime = nowHostTime;
-            resyncCount += 1;
             inputOutputSampleDelta = -1;
-            smallestFramesToBufferEnd = -1;
 
-            // 與下面的 overrun 警告同一個節流間隔——重同步應該罕見，
-            // 一旦頻繁出現就是漂移速率本身有問題（例如 P2 的 priority
-            // inversion 在掉 cycle），那才是要查的東西。
-            static time_t lastResyncWarning = 0;
-            time_t seconds;
-            time(&seconds);
-
-            if ((seconds - lastResyncWarning) > 5) {
-                lastResyncWarning = seconds;
-                syslog(LOG_WARNING,
-                       "ProxyAudio: drift resync #%llu, margin was %lld frames",
-                       resyncCount,
-                       framesToBufferEnd);
-            }
+            // v7：不在 realtime 執行緒上 syslog——resync 正好在系統最忙時
+            // 觸發，而 syslog 打 syslogd 的 socket、可能阻塞。這裡只記
+            // atomic，log 由 inputMonitoringTimer 的觀察端補（見
+            // reportRealtimeDiagnostics）。margin 先寫、計數後加（release）。
+            lastResyncMargin.store(framesToBufferEnd, std::memory_order_relaxed);
+            resyncCount.fetch_add(1, std::memory_order_release);
         }
     }
 
     if (overrun && inputFinalFrameTime == -1 && startFrame >= inputBuffer->mStartFrame) {
-        // Since this warning could conceivably happen every cycle, explicitly make it
-        // only appear once every five seconds at most
-        static time_t lastBufferOverrunWarning = 0;
-        time_t seconds;
-        time(&seconds);
-        
-        if ((seconds - lastBufferOverrunWarning) > 5) {
-            lastBufferOverrunWarning = seconds;
-            syslog(LOG_WARNING, "ProxyAudio: output unexpected overrun");
-            syslog(LOG_WARNING, "ProxyAudio: output frame: %lf", startFrame);
-            syslog(LOG_WARNING,
-                   "ProxyAudio: output buffer start: %llu    end: %llu",
-                   inputBuffer->mStartFrame,
-                   inputBuffer->mEndFrame);
-        }
+        // 同上：realtime 執行緒只記 atomic，log 由觀察端補（含原本的
+        // 5 秒節流——overrun 可能每個 cycle 都發生）。
+        lastOverrunStartFrame.store(startFrame, std::memory_order_relaxed);
+        lastOverrunBufferStart.store(inputBuffer->mStartFrame, std::memory_order_relaxed);
+        lastOverrunBufferEnd.store(inputBuffer->mEndFrame, std::memory_order_relaxed);
+        overrunCount.fetch_add(1, std::memory_order_release);
     }
     
     Float32 volumeFactorL = 1.0, volumeFactorR = 1.0;
@@ -5477,14 +5505,18 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
     for (UInt32 bufferIndex = 0; bufferIndex < outOutputData->mNumberBuffers; bufferIndex++) {
         UInt32 outputChannelCount = outOutputData->mBuffers[bufferIndex].mNumberChannels;
         UInt32 numChannelsToProcess = std::min(outputChannelCount, currentInputDeviceChannelCount);
+        // v7：迴圈次數與增益選擇搬出內圈——原本每個 frame 都在算 byte 步進
+        // 與 volumeFactor 的三元選擇，內圈只剩乘加，編譯器也更容易向量化。
+        UInt32 frameCount = outOutputData->mBuffers[bufferIndex].mDataByteSize
+            / (outputChannelCount * (UInt32)sizeof(Float32));
 
         for (UInt32 channelIndex = 0; channelIndex < numChannelsToProcess; channelIndex++) {
-            Float32 *in = (Float32 *)workBuffer + channelIndex;
+            Float32 gain = (channelIndex == 0) ? volumeFactorL : volumeFactorR;
+            const Float32 *in = (const Float32 *)workBuffer + channelIndex;
             Float32 *out = (Float32 *)outOutputData->mBuffers[bufferIndex].mData + channelIndex;
-            long framesize = outputChannelCount * sizeof(Float32);
 
-            for (UInt32 frame = 0; frame < outOutputData->mBuffers[bufferIndex].mDataByteSize; frame += framesize) {
-                *out += (*in * ((channelIndex == 0) ? volumeFactorL : volumeFactorR));
+            for (UInt32 frame = 0; frame < frameCount; frame++) {
+                *out += *in * gain;
                 in += currentInputDeviceChannelCount;
                 out += outputChannelCount;
             }
@@ -5867,12 +5899,28 @@ ProxyAudioDevice::ActiveCondition ProxyAudioDevice::retrieveOutputDeviceActiveCo
     SInt32 value;
     CFNumberGetValue(CFNumberRef(CFPropertyListRef(data)), kCFNumberSInt32Type, &value);
 
+    // P4（v7）：範圍驗證。storage 裡的垃圾值經 ActiveCondition(value) 轉出
+    // enum 之外的數，updateOutputDeviceStartedState 會落進 else 分支＝
+    // 「always」語意——實體裝置永遠不停，還會擋系統睡眠。
+    if (value < SInt32(ActiveCondition::proxiedDeviceActive) || value > SInt32(ActiveCondition::always)) {
+        DebugMsg("ProxyAudio: stored active condition out of range, returning default");
+        return kOutputDeviceDefaultActiveCondition;
+    }
+
     DebugMsg("ProxyAudio: retrieveOutputDeviceActiveConditionFromStorage finished returning stored active condition");
 
     return ActiveCondition(value);
 }
 
 void ProxyAudioDevice::setOutputDeviceActiveCondition(ActiveCondition newActiveCondition) {
+    // P4（v7）：同上——設定通道進來的字串經 CFStringGetIntValue 轉整數，
+    // 垃圾值要在這裡擋掉，不能寫進 storage。
+    if (newActiveCondition < ActiveCondition::proxiedDeviceActive
+        || newActiveCondition > ActiveCondition::always) {
+        DebugMsg("ProxyAudio: setOutputDeviceActiveCondition rejecting out-of-range value");
+        return;
+    }
+
     {
         CAMutex::Locker locker(&stateMutex);
         outputDeviceActiveCondition = newActiveCondition;
@@ -5957,9 +6005,47 @@ void ProxyAudioDevice::notifyHiddenPropertyChanged() {
 #pragma mark Other stuff!
 
 void ProxyAudioDevice::monitorUserActivity() {
+    reportRealtimeDiagnostics();
     {
         CAMutex::Locker outputMutexLocker(outputDeviceMutex);
         updateOutputDeviceStartedState();
+    }
+}
+
+/// v7：IOProc 只把 resync／overrun 記進 atomic，這裡（audioOutputQueue 上的
+/// 500ms timer）觀察計數變化後補記 syslog——訊息格式與 v6 完全相同，
+/// 既有的 log 判讀指令（HANDOFF §8 的 predicate）不受影響。
+/// resync 被 IOProc 節流在每秒最多一次、觀察間隔 500ms，正常不會漏；
+/// 萬一 timer 被延遲而漏了一筆，訊息裡的連號計數會顯示跳號。
+void ProxyAudioDevice::reportRealtimeDiagnostics() {
+    UInt64 currentResyncs = resyncCount.load(std::memory_order_acquire);
+    if (currentResyncs != loggedResyncCount) {
+        loggedResyncCount = currentResyncs;
+        syslog(LOG_WARNING,
+               "ProxyAudio: drift resync #%llu, margin was %lld frames",
+               currentResyncs,
+               lastResyncMargin.load(std::memory_order_relaxed));
+    }
+
+    UInt64 currentOverruns = overrunCount.load(std::memory_order_acquire);
+    if (currentOverruns != loggedOverrunCount) {
+        loggedOverrunCount = currentOverruns;
+
+        // 沿用 v6 的節流：overrun 可能每個 cycle 都發生，最多 5 秒記一次。
+        time_t seconds;
+        time(&seconds);
+
+        if ((seconds - lastOverrunLogTime) > 5) {
+            lastOverrunLogTime = seconds;
+            syslog(LOG_WARNING, "ProxyAudio: output unexpected overrun");
+            syslog(LOG_WARNING,
+                   "ProxyAudio: output frame: %lf",
+                   lastOverrunStartFrame.load(std::memory_order_relaxed));
+            syslog(LOG_WARNING,
+                   "ProxyAudio: output buffer start: %llu    end: %llu",
+                   lastOverrunBufferStart.load(std::memory_order_relaxed),
+                   lastOverrunBufferEnd.load(std::memory_order_relaxed));
+        }
     }
 }
 
