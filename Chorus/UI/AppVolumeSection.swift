@@ -60,13 +60,15 @@ struct AppVolumeSection: View {
         }
     }
 
-    /// 現在正在發聲、或已經被調整過的 App——這兩類永遠列出來。
-    /// 「已調整但已退出」也要在：不然使用者找不到地方把它調回來。
+    /// 現在正在發聲、已調整過、或被排除的 App——這三類永遠列出來。
+    /// 「已調整但已退出」要在：不然使用者找不到地方把它調回來；
+    /// 「已排除」同理——取消排除的入口就在這一列的右鍵選單。
     private var activeApps: [String] {
         let registry = appState.tapEngine.registry
         let audible = registry.listableApps.filter { registry.isGroupAudible(bundleID: $0) }
         let adjusted = appState.settings.appAudio.adjustedBundleIDs
-        return orderedUnique(audible + adjusted)
+        let excluded = appState.settings.excludedApps.sorted()
+        return orderedUnique(audible + adjusted + excluded)
     }
 
     /// 有音訊行程但沒在發聲、也沒調整過的。
@@ -120,6 +122,15 @@ private struct AppVolumeRow: View {
                         .foregroundStyle(.secondary)
                         .help("正在發聲")
                 }
+                if isExcluded {
+                    Text("已排除")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.quaternary, in: Capsule())
+                        .help("Chorus 完全不碰這個 App 的音訊——per-app 調整與裝置等化／軟體音量都略過它")
+                }
                 if setting.gain > 1 {
                     Text("boost")
                         .font(.caption2)
@@ -155,33 +166,49 @@ private struct AppVolumeRow: View {
                 SliderRow.trailingIcon("speaker.wave.3")
                 SliderRow.value(Double(setting.gain))
             }
+            // 排除中：控制項留在原位但不可動——列還在（取消排除的入口），
+            // 消失的是「可以調」這件事，不是 App 本身
+            .disabled(isExcluded)
+            .opacity(isExcluded ? 0.4 : 1)
             routeCaption
                 .padding(.leading, 24)
         }
         .contextMenu {
-            Menu("輸出到") {
-                Button {
-                    appState.tapEngine.setOutputDevice(nil, bundleID: bundleID)
-                } label: {
-                    Label("跟隨系統預設", systemImage: setting.outputDeviceUID == nil ? "checkmark" : "")
+            if isExcluded {
+                Button("重新納入音訊處理") {
+                    appState.tapEngine.setExcluded(false, bundleID: bundleID)
                 }
-                Divider()
-                // 轉送目標併在虛擬裝置那一列（選單列一致）——同一個目的地
-                // 列兩次只會讓人選到沒有音量控制的那個
-                ForEach(appState.audioManager.listableDevices) { device in
+                .help("恢復 Chorus 對這個 App 的處理——先前的調整原樣回來")
+            } else {
+                Menu("輸出到") {
                     Button {
-                        appState.tapEngine.setOutputDevice(device.uid, bundleID: bundleID)
+                        appState.tapEngine.setOutputDevice(nil, bundleID: bundleID)
                     } label: {
-                        Label(
-                            appState.audioManager.displayName(for: device),
-                            systemImage: setting.outputDeviceUID == device.uid ? "checkmark" : ""
-                        )
+                        Label("跟隨系統預設", systemImage: setting.outputDeviceUID == nil ? "checkmark" : "")
+                    }
+                    Divider()
+                    // 轉送目標併在虛擬裝置那一列（選單列一致）——同一個目的地
+                    // 列兩次只會讓人選到沒有音量控制的那個
+                    ForEach(appState.audioManager.listableDevices) { device in
+                        Button {
+                            appState.tapEngine.setOutputDevice(device.uid, bundleID: bundleID)
+                        } label: {
+                            Label(
+                                appState.audioManager.displayName(for: device),
+                                systemImage: setting.outputDeviceUID == device.uid ? "checkmark" : ""
+                            )
+                        }
                     }
                 }
+                Button("回到 100%") { appState.tapEngine.setGain(1, bundleID: bundleID) }
+                Button("完全不處理這個 App") { appState.tapEngine.reset(bundleID: bundleID) }
+                    .help("清掉所有調整——這個 App 會回到完全原生的音訊路徑，不再建立 tap")
+                Divider()
+                Button("排除於音訊處理之外") {
+                    appState.tapEngine.setExcluded(true, bundleID: bundleID)
+                }
+                .help("Chorus 完全不碰這個 App：不建 per-app tap，裝置等化與軟體音量也略過它（調整保留，適合 DAW、遊戲、視訊會議）")
             }
-            Button("回到 100%") { appState.tapEngine.setGain(1, bundleID: bundleID) }
-            Button("完全不處理這個 App") { appState.tapEngine.reset(bundleID: bundleID) }
-                .help("清掉所有調整——這個 App 會回到完全原生的音訊路徑，不再建立 tap")
         }
     }
 
@@ -189,11 +216,16 @@ private struct AppVolumeRow: View {
         appState.tapEngine.registry.isGroupAudible(bundleID: bundleID)
     }
 
+    private var isExcluded: Bool {
+        appState.tapEngine.isExcluded(bundleID: bundleID)
+    }
+
     /// 路由狀態（B6-3）。只在使用者明確指定過裝置時才佔一行——
     /// 「跟隨系統預設」是預設行為，不需要每一列都重複講一次。
+    /// 排除中不顯示：session 本來就不在，「裝置不在」的橘字是誤導。
     @ViewBuilder
     private var routeCaption: some View {
-        if let routed = setting.outputDeviceUID {
+        if let routed = setting.outputDeviceUID, !isExcluded {
             let name = appState.audioManager.devices.first { $0.uid == routed }
                 .map { appState.audioManager.displayName(for: $0) }
             let active = appState.tapEngine.activeOutputUID(bundleID: bundleID)

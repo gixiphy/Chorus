@@ -65,6 +65,21 @@ public enum SoftClip: Sendable {
     }
 }
 
+/// 左右平衡的聲道因子（裝置級，B6 缺口批）。
+///
+/// macOS 慣例的「只衰減」平衡：偏右＝衰減左聲道、右聲道維持 1，反之亦然。
+/// 不做「另一側增益」——那會改變總響度，還要多一層防削波。
+/// 與 GainRamp／SoftClip 同一條紀律：realtime 走的就是被測到的這份。
+public enum BalanceLaw: Sendable {
+    /// balance ∈ −1…+1（−1 全左、0 置中、+1 全右）→（左, 右）增益因子。
+    @inlinable
+    @inline(__always)
+    public static func factors(_ balance: Float) -> (left: Float, right: Float) {
+        let clamped = min(max(balance, -1), 1)
+        return (min(1, 1 - clamped), min(1, 1 + clamped))
+    }
+}
+
 /// 增益的線性斜坡（B6-2）。
 ///
 /// 存在的理由：增益突變＝樣本波形上的階躍＝**爆音**。使用者拖滑桿時

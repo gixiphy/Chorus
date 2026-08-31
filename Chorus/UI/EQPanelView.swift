@@ -95,6 +95,16 @@ struct EQPanelView: View {
                 TextField("搜尋耳機型號（AutoEq）", text: $query)
                     .textFieldStyle(.roundedBorder)
                     .font(.caption)
+                // 風格 preset：口味，不是校正——與 AutoEq 是不同責任。
+                // 套用後照樣可以逐段微調（會走同一條手動編輯路徑）
+                Menu("風格") {
+                    ForEach(EQGenrePreset.all) { preset in
+                        Button(preset.name) { apply(preset.settings()) }
+                    }
+                }
+                .controlSize(.small)
+                .fixedSize()
+                .help("約兩打常見風格曲線，一鍵套用；套用後仍可逐段微調")
                 Button("手動 10 段") {
                     apply(EQSettings.tenBandDefault())
                 }
@@ -265,5 +275,69 @@ struct EQPanelView: View {
         frequency >= 1000
             ? String(format: "%.4g k", frequency / 1000)
             : String(format: "%.0f", frequency)
+    }
+}
+
+/// 每輸出裝置的左右平衡列（B6 缺口批）。
+///
+/// 兩後端：裝置有原生平衡（HAL 的 vmbc 或 stereo pan——內建喇叭、藍牙
+/// 耳機、虛擬裝置都有）就直接寫 HAL，隨時生效、不需要任何權限；
+/// 沒有的（DP/HDMI 直接輸出）走裝置級 tap 鏈，與等化同一組成立條件。
+struct DeviceBalanceRow: View {
+    @Environment(AppState.self) private var appState
+    let device: AudioDeviceModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("左右平衡").font(.callout)
+                Spacer()
+                if device.balance != 0 {
+                    Button("置中") { appState.audioManager.setBalance(0, for: device) }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+            }
+            HStack(spacing: 8) {
+                Text("左").font(.caption2).foregroundStyle(.secondary)
+                Slider(
+                    value: Binding(
+                        get: { device.balance },
+                        set: { appState.audioManager.setBalance($0, for: device) }
+                    ),
+                    in: -1...1
+                )
+                Text("右").font(.caption2).foregroundStyle(.secondary)
+                Text(balanceLabel)
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 52, alignment: .trailing)
+            }
+            if let reason = appState.audioManager.balanceUnavailableReason(for: device) {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if isMirrorModeVirtual, device.balance != 0 {
+                // driver 在 DDC 鏡射模式下樣本原樣通過（不做數位處理），
+                // L/R 因子會被略過——誠實說明而不是裝作有效
+                Text("DDC 鏡射模式下音訊原樣通過，平衡暫不生效")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var balanceLabel: String {
+        if device.balance == 0 { return "置中" }
+        let percent = Int((abs(device.balance) * 100).rounded())
+        return device.balance < 0 ? "左 \(percent)%" : "右 \(percent)%"
+    }
+
+    private var isMirrorModeVirtual: Bool {
+        device.uid == VirtualAudioDriverController.deviceUID
+            && appState.virtualDriver.mirrorMode == true
     }
 }

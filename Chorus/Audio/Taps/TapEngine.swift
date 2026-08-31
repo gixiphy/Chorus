@@ -77,6 +77,8 @@ final class TapEngine {
     @ObservationIgnored private var deviceGain: Float = 1
     @ObservationIgnored private var deviceMuted = false
     @ObservationIgnored private var deviceEQ: EQSettings?
+    /// 裝置級軟體平衡（−1…+1）。只有沒有原生平衡的裝置會送非零值進來。
+    @ObservationIgnored private var deviceBalance: Float = 0
     @ObservationIgnored private var monitor = TapHealthMonitor()
     @ObservationIgnored private var lastProbeStats = TapSessionStats()
     @ObservationIgnored private var tickTask: Task<Void, Never>?
@@ -163,6 +165,26 @@ final class TapEngine {
         reconcileSessions()
     }
 
+    // MARK: - 排除清單（Excluded Applications）
+
+    /// 這個 App 是否被排除於所有音訊處理之外。
+    func isExcluded(bundleID: String) -> Bool {
+        settings.excludedApps.contains(bundleID)
+    }
+
+    /// 排除／重新納入。排除＝「Chorus 完全不碰這個 App 的音訊」：
+    /// per-app tap 不建（既有調整**保留**、只是不生效——與「EQ 存著但
+    /// 關掉」同一態度），裝置級全域 tap 也把它的行程排除。這是 DAW、
+    /// 遊戲、視訊會議在裝置 EQ／軟體音量開著時退出處理鏈的唯一出口。
+    func setExcluded(_ excluded: Bool, bundleID: String) {
+        var apps = settings.excludedApps
+        if excluded { apps.insert(bundleID) } else { apps.remove(bundleID) }
+        guard apps != settings.excludedApps else { return }
+        settings.excludedApps = apps
+        log.notice("排除清單\(excluded ? "加入" : "移除", privacy: .public)：\(bundleID, privacy: .public)")
+        reconcileSessions()
+    }
+
     private func update(bundleID: String, _ mutate: (inout AppAudioSetting) -> Void) {
         var all = settings.appAudio
         let before = all[bundleID]
@@ -218,18 +240,20 @@ final class TapEngine {
     /// 增益不存在這裡——裝置音量的持久化本來就在 `SettingsStore.lastVolume`、
     /// EQ 在 `SettingsStore.deviceEQ`，再存一份只會多一個會不同步的來源。
     func updateDeviceProcessing(
-        deviceUID: String?, gain: Float, muted: Bool, eq: EQSettings?
+        deviceUID: String?, gain: Float, muted: Bool, eq: EQSettings?, balance: Float = 0
     ) {
         let gain = AppAudioSetting.clampGain(gain)
+        let balance = min(max(balance, -1), 1)
         // 每個 AudioWorker snapshot（音量拖動時最多每秒 20 個）都會走到
         // 這裡；內容沒變就別對帳——裝置清單或引擎狀態變動各有自己的
         // 對帳入口（audioDevicesChanged、reconcileSessions）
         guard deviceUID != deviceTarget || gain != deviceGain
-            || muted != deviceMuted || eq != deviceEQ else { return }
+            || muted != deviceMuted || eq != deviceEQ || balance != deviceBalance else { return }
         deviceTarget = deviceUID
         deviceGain = gain
         deviceMuted = muted
         deviceEQ = eq
+        deviceBalance = balance
         reconcileGlobalSession()
         // per-app session 的音訊已從全域 tap 排除——裝置級處理不在這裡
         // 一併推，被接管的 App 就永遠套不到裝置 EQ／軟體音量
@@ -249,6 +273,8 @@ final class TapEngine {
         session.setMuted(entry.muted || (onDeviceChain && deviceMuted))
         session.setAppEQ(entry.eq) // App 層先過（B6-8）
         session.setEQ(onDeviceChain ? deviceEQ : nil)
+        // 平衡與裝置 EQ 同層：被接管的 App 不該因為繞過全域 tap 就繞過平衡
+        session.setBalance(onDeviceChain ? deviceBalance : 0)
     }
 
     /// 「App 增益 × 裝置級軟體音量」的組合公式——唯一定義點。
@@ -285,7 +311,12 @@ final class TapEngine {
             refreshErrorDisplay()
             return
         }
-        var excluded = registry.processObjectIDs(bundleIDs: Set(sessions.keys))
+        // 排除兩類：已被 per-app tap 捕獲的（單次處理），以及使用者的
+        // 排除清單（完全不碰）。後者的 App 沒在跑就查不到行程——沒關係，
+        // 它一啟動 onProcessesChanged 就會帶著新行程走回這裡重建。
+        var excluded = registry.processObjectIDs(
+            bundleIDs: Set(sessions.keys).union(settings.excludedApps)
+        )
         if let own = registry.ownProcessObjectID { excluded.append(own) }
 
         // 排除清單綁在 tap 建立時，改不了——內容變了只能收舊建新
@@ -364,6 +395,7 @@ final class TapEngine {
         globalSession?.setGain(deviceGain)
         globalSession?.setMuted(deviceMuted)
         globalSession?.setEQ(deviceEQ)
+        globalSession?.setBalance(deviceBalance)
     }
 
     private func stopGlobalSession() {
@@ -387,8 +419,11 @@ final class TapEngine {
             return
         }
         // needsTap 而不是 adjustedBundleIDs：存了關著的 per-app EQ
-        // 不代表要接管那個 App 的音訊（B6-8 起兩者分開）
+        // 不代表要接管那個 App 的音訊（B6-8 起兩者分開）。
+        // 排除清單再減一層：被排除的 App 即使有調整也不建 tap
+        //（調整保留，取消排除即恢復）。
         let desired = Set(settings.appAudio.bundleIDsNeedingTap)
+            .subtracting(settings.excludedApps)
         // Array(...)：下面會改 sessions，不要邊走邊改字典的鍵視圖
         for bundleID in Array(sessions.keys) where !desired.contains(bundleID) {
             stopSession(bundleID)

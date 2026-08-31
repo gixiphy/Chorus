@@ -562,6 +562,143 @@ struct TapEngineTests {
         #expect(engine.deviceTapUID == "fake-headphones") // 軟體音量還在，tap 留著
     }
 
+    // MARK: - 裝置級左右平衡（軟體平衡，缺口批）
+
+    @Test("平衡送到全域 session；只有平衡（無軟體音量、無 EQ）也建鏈")
+    func balanceReachesTheGlobalSession() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.updateDeviceProcessing(
+            deviceUID: "fake-headphones", gain: 1, muted: false, eq: nil, balance: 0.4
+        )
+        #expect(engine.deviceTapUID == "fake-headphones")
+        #expect(backend.globalSession?.lastBalance == 0.4)
+        #expect(backend.globalSession?.lastGain == 1)
+    }
+
+    @Test("調平衡不重建 session——只推 atomic")
+    func balanceChangesDoNotRebuild() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.updateDeviceProcessing(deviceUID: "fake-headphones", gain: 0.5, muted: false, eq: nil, balance: 0.2)
+        let after = backend.globalStartCount
+        engine.updateDeviceProcessing(deviceUID: "fake-headphones", gain: 0.5, muted: false, eq: nil, balance: -0.6)
+        #expect(backend.globalStartCount == after)
+        #expect(backend.globalSession?.lastBalance == -0.6)
+    }
+
+    @Test("被接管的 App 也套裝置平衡（在裝置鏈上）；路由到別台的不套")
+    func perAppSessionsCarryDeviceBalanceOnlyOnTheChain() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        engine.setGain(0.5, bundleID: "com.apple.Safari")
+        engine.setOutputDevice("fake-headphones", bundleID: "com.apple.Safari")
+
+        // 裝置級處理目標＝預設輸出（Music 在鏈上、Safari 不在）
+        engine.updateDeviceProcessing(
+            deviceUID: "fake-output-uid", gain: 1, muted: false, eq: nil, balance: 0.3
+        )
+        #expect(backend.liveSessions["com.apple.Music"]?.lastBalance == 0.3)
+        #expect(backend.liveSessions["com.apple.Safari"]?.lastBalance == 0)
+
+        // 收掉裝置級處理 → 平衡跟著歸零
+        engine.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil, balance: 0)
+        #expect(backend.liveSessions["com.apple.Music"]?.lastBalance == 0)
+    }
+
+    // MARK: - 排除清單（Excluded Applications）
+
+    @Test("排除的 App 不建 tap——調整保留但不生效，取消排除原樣恢復")
+    func excludedAppGetsNoTap() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles == ["com.apple.Music"])
+
+        engine.setExcluded(true, bundleID: "com.apple.Music")
+        #expect(engine.isExcluded(bundleID: "com.apple.Music"))
+        #expect(engine.tappedBundles.isEmpty)
+        #expect(backend.liveSessions["com.apple.Music"]?.stopped == true)
+        #expect(engine.setting(for: "com.apple.Music").gain == 0.5) // 設定留著
+
+        engine.setExcluded(false, bundleID: "com.apple.Music")
+        #expect(engine.tappedBundles == ["com.apple.Music"])
+        #expect(backend.liveSessions["com.apple.Music"]?.lastGain == 0.5)
+    }
+
+    @Test("排除的 App 也從裝置級全域 tap 排除——沒有 per-app 調整也一樣")
+    func excludedAppLeavesTheGlobalTap() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        registry.injectFake([
+            .init(objectID: 1001, pid: 2001, bundleID: "com.apple.Music", name: "Music", isAudible: true),
+            .init(objectID: 1002, pid: 2002, bundleID: "com.apple.Safari", name: "Safari", isAudible: false),
+        ])
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.updateDeviceProcessing(deviceUID: "fake-headphones", gain: 0.5, muted: false, eq: nil)
+        #expect(!backend.globalExclusions.contains(1001))
+
+        engine.setExcluded(true, bundleID: "com.apple.Music")
+        #expect(backend.globalExclusions.contains(1001))
+        #expect(!backend.globalExclusions.contains(1002))
+
+        engine.setExcluded(false, bundleID: "com.apple.Music")
+        #expect(!backend.globalExclusions.contains(1001))
+    }
+
+    @Test("先排除、App 後啟動：行程一出現就補進全域 tap 的排除清單")
+    func excludedAppLaunchingLaterIsPickedUp() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setExcluded(true, bundleID: "com.apple.Safari") // 還沒在跑
+        engine.updateDeviceProcessing(deviceUID: "fake-headphones", gain: 0.5, muted: false, eq: nil)
+        #expect(!backend.globalExclusions.contains(1002)) // 查不到行程，先排除不了
+
+        // Safari 啟動——injectFake 會觸發 onProcessesChanged（與真實
+        // process 清單 listener 同一條路），排除清單要跟著長
+        registry.injectFake([
+            .init(objectID: 1001, pid: 2001, bundleID: "com.apple.Music", name: "Music", isAudible: true),
+            .init(objectID: 1002, pid: 2002, bundleID: "com.apple.Safari", name: "Safari", isAudible: true),
+        ])
+        #expect(backend.globalExclusions.contains(1002))
+        #expect(!backend.globalExclusions.contains(1001))
+    }
+
+    @Test("排除清單跨重啟保留（與 per-app 設定同一份 SettingsStore）")
+    func exclusionSurvivesRestart() {
+        let backend = FakeTapBackend()
+        let registry = AudioProcessRegistry()
+        injectAudibleApp(registry)
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "tap-excl-\(UUID().uuidString)")!)
+
+        let first = TapEngine(backend: backend, registry: registry, settings: settings)
+        first.setEnabled(true)
+        first.healthTick()
+        first.setGain(0.5, bundleID: "com.apple.Music")
+        first.setExcluded(true, bundleID: "com.apple.Music")
+        first.setEnabled(false)
+
+        settings.audioTapsEnabled = true
+        let second = TapEngine(backend: backend, registry: registry, settings: settings)
+        second.start()
+        second.healthTick()
+        #expect(second.state == .active)
+        #expect(second.isExcluded(bundleID: "com.apple.Music"))
+        #expect(second.tappedBundles.isEmpty) // 調整還在，但排除優先
+        #expect(second.setting(for: "com.apple.Music").gain == 0.5)
+    }
+
     @Test("設定跨重啟保留：新引擎接上同一份設定，取得權限後自動恢復")
     func settingsSurviveRestart() {
         let backend = FakeTapBackend()

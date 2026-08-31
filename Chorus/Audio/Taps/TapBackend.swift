@@ -37,6 +37,10 @@ protocol TapSession: AnyObject {
     var onDeviceReconfigured: (@MainActor () -> Void)? { get set }
     func setGain(_ gain: Float)
     func setMuted(_ muted: Bool)
+    /// 裝置級左右平衡（−1…+1，0＝置中）。只衰減不增益（BalanceLaw）。
+    /// 與裝置 EQ 同一個責任層——per-app session 只在它的輸出裝置正是
+    /// 裝置級處理目標時才套。
+    func setBalance(_ balance: Float)
     /// 裝置級等化（B6-5）。`nil` 或未生效的設定＝拆掉 EQ，樣本原樣通過。
     func setEQ(_ settings: EQSettings?)
     /// App 層等化（B6-8）——與裝置層是不同責任的兩次，App 層先過。

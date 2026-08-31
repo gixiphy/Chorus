@@ -347,6 +347,13 @@ final class AutomationExecutor {
                 results.append(contentsOf: describeApp(bundleID: bundleID))
                 continue
             }
+            // 排除清單裡的 App：讀可以（誠實回存檔值＋excluded 旗標），
+            // 寫要擋——設定會被收下卻永遠聽不到效果，那是陷阱不是功能
+            if request.verb != .get, tapEngine.isExcluded(bundleID: bundleID) {
+                throw ControlError.unsupported(
+                    "「\(name)」已被排除於音訊處理之外——先在選單列的 App 列上取消排除"
+                )
+            }
             switch property {
             case .volume:
                 if request.verb == .get {
@@ -393,6 +400,9 @@ final class AutomationExecutor {
         if let route = setting.outputDeviceUID {
             results.append(ControlResult(target: name, property: "outputDevice", value: .string(route)))
         }
+        if tapEngine.isExcluded(bundleID: bundleID) {
+            results.append(ControlResult(target: name, property: "excluded", value: .bool(true)))
+        }
         return results
     }
 
@@ -407,7 +417,9 @@ final class AutomationExecutor {
 
         let matches: [String] = switch target {
         case .allApps:
-            all
+            // 批次操作略過排除清單——「所有 App 靜音」不該因為一個被排除的
+            // App 整批失敗；點名操作（.app／.appLike）仍會誠實報 excluded
+            all.filter { !tapEngine.isExcluded(bundleID: $0) }
         case let .app(bundleID):
             // 精確定位不要求 App 正在跑：先設定好、App 一開就生效
             [bundleID]

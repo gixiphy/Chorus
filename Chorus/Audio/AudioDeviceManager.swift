@@ -126,6 +126,49 @@ final class AudioDeviceManager {
         }
     }
 
+    // MARK: - 左右平衡（兩後端：原生 HAL／裝置級 tap 鏈）
+
+    /// 設定左右平衡（−1…+1）。原生（vmbc／stereo pan）直接寫 HAL、
+    /// 隨時生效；沒有原生平衡的裝置走裝置級 tap 鏈（軟體平衡），
+    /// 與 EQ 同一組成立條件（預設輸出＋taps active）。
+    func setBalance(_ value: Double, for device: AudioDeviceModel) {
+        let clamped = min(max(value, -1), 1)
+        // 置中頓點：滑桿在選單寬度下碰不到正好 0（per-app 增益 unity
+        // 頓點的同一課）。±0.05 遠低於可察覺的偏移，寬過一個 pixel。
+        let snapped = abs(clamped) < 0.05 ? 0 : clamped
+        device.balance = snapped
+        if device.canSetBalance {
+            recentLocalSets["balance:" + device.uid] = (snapped, ContinuousClock.now)
+            worker.setBalance(device.id, to: snapped)
+        } else {
+            if snapped == 0 {
+                settings.deviceBalance.removeValue(forKey: device.uid)
+            } else {
+                settings.deviceBalance[device.uid] = snapped
+            }
+            refreshSoftwareVolume()
+        }
+    }
+
+    /// 軟體平衡為什麼沒生效（原生平衡恆生效、回 nil）。
+    /// 與 EQ 的誠實提示同一套條件與語氣。
+    func balanceUnavailableReason(for device: AudioDeviceModel) -> String? {
+        guard !device.canSetBalance else { return nil }
+        guard (settings.deviceBalance[device.uid] ?? 0) != 0 else { return nil }
+        if !device.isDefault { return "左右平衡只在此裝置是預設輸出時生效" }
+        switch tapEngine?.state {
+        case .active: return nil
+        case .denied: return "系統音訊錄製權限被拒——軟體平衡無法運作"
+        case .off, nil: return "需要先在設定 → 音訊開啟「App 音訊接管」"
+        default: return "正在確認權限…"
+        }
+    }
+
+    /// 送進 tap 鏈的平衡值：原生裝置恆 0（HAL 已處理，再套一次＝雙重衰減）。
+    private func softwareBalance(for device: AudioDeviceModel) -> Float {
+        device.canSetBalance ? 0 : Float(settings.deviceBalance[device.uid] ?? 0)
+    }
+
     init(settings: SettingsStore, displayManager: DisplayManager) {
         self.settings = settings
         self.displayManager = displayManager
@@ -294,6 +337,14 @@ final class AudioDeviceManager {
                         coordinator?.localMuteChanged(info.muted)
                     }
                 }
+                // 原生平衡跟音量同一套：外部改動（系統設定的平衡滑桿）要
+                // 跟上，自己剛寫的值不要被硬體量化蓋回去（echo guard 共用，
+                // key 加前綴與音量的分開）。軟體平衡裝置以 settings 為準。
+                if info.canSetBalance,
+                   !shouldPreserveLocalValue(uid: "balance:" + info.uid, reported: info.balance),
+                   abs(existing.balance - info.balance) > 0.005 {
+                    existing.balance = info.balance
+                }
                 updated.append(existing)
             } else {
                 let model = AudioDeviceModel(info: info, isDefault: isDefault)
@@ -301,6 +352,10 @@ final class AudioDeviceManager {
                     // HDMI/DP 裝置沒有軟體音量：試著橋接到 DDC 顯示器
                     model.bridgedDisplayID = bridgeTarget(forDeviceNamed: info.name)?.id
                     model.volume = settings.lastVolume(for: info.uid) ?? 0.3
+                }
+                if !info.canSetBalance {
+                    // 軟體平衡：持久化的值就是真相（HAL 讀不到）
+                    model.balance = settings.deviceBalance[info.uid] ?? 0
                 }
                 if info.uid == VirtualAudioDriverController.deviceUID {
                     // 虛擬裝置剛出現（安裝完／coreaudiod 重啟）→ 讀 driver 設定
@@ -378,13 +433,14 @@ final class AudioDeviceManager {
             return
         }
         let eq = effectiveEQ(for: defaultDevice.uid)
-        guard volumeTarget != nil || eq != nil else {
-            // 兩個都不需要 → 一個 tap 都不建（DESIGN §2.3 規則 2）
+        let balance = softwareBalance(for: defaultDevice)
+        guard volumeTarget != nil || eq != nil || balance != 0 else {
+            // 三個都不需要 → 一個 tap 都不建（DESIGN §2.3 規則 2）
             log.debug("deviceProcessing 不需要：default=\(defaultDevice.uid, privacy: .public) 存的EQ鍵=\(Array(self.settings.deviceEQ.keys).joined(separator: ","), privacy: .public)")
             tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
             return
         }
-        log.debug("deviceProcessing 推送：default=\(defaultDevice.uid, privacy: .public) eq=\(eq != nil, privacy: .public) 軟體音量=\(volumeTarget != nil, privacy: .public)")
+        log.debug("deviceProcessing 推送：default=\(defaultDevice.uid, privacy: .public) eq=\(eq != nil, privacy: .public) 軟體音量=\(volumeTarget != nil, privacy: .public) 平衡=\(balance, privacy: .public)")
         pushDeviceProcessing(defaultDevice)
     }
 
@@ -398,7 +454,8 @@ final class AudioDeviceManager {
             deviceUID: device.uid,
             gain: usesSoftwareVolume ? Float(device.volume) : 1,
             muted: usesSoftwareVolume ? device.muted : false,
-            eq: effectiveEQ(for: device.uid)
+            eq: effectiveEQ(for: device.uid),
+            balance: softwareBalance(for: device)
         )
     }
 

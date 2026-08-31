@@ -37,6 +37,8 @@ final class TapRenderContext: @unchecked Sendable {
     let playthrough: Bool
     /// 主執行緒寫、render 讀：使用者要的增益（0–4x）。
     let gainBits = Atomic<UInt32>(Float(1).bitPattern)
+    /// 裝置級左右平衡（−1…+1，0＝置中）。走與增益同一條斜坡機制。
+    let balanceBits = Atomic<UInt32>(Float(0).bitPattern)
     let muted = Atomic<Bool>(false)
     let callbacks = Atomic<Int>(0)
     let nonZeroCallbacks = Atomic<Int>(0)
@@ -49,6 +51,8 @@ final class TapRenderContext: @unchecked Sendable {
     /// 不是 atomic，因為它不跨執行緒——加 atomic 只會讓 realtime 端
     /// 多付一次同步成本換取沒人需要的可見性。
     var currentGain: Float
+    /// **只有 render 執行緒碰**：斜坡目前走到的平衡值（同上）。
+    var currentBalance: Float = 0
 
     static let maxChannels = 8
 
@@ -273,6 +277,14 @@ final class CoreAudioTapBackend: TapBackend {
             context.currentGain = endGain
             // 回呼「之間」由 GainRamp 限速，回呼「之內」由這條插值鋪平
             let gainStep = frames > 0 ? (endGain - startGain) / Float(frames) : 0
+            // 左右平衡走同一套斜坡（advance 對負值目標本來就成立）——
+            // 平衡突變與增益突變一樣是波形上的階躍
+            let requestedBalance = Float(bitPattern: context.balanceBits.load(ordering: .relaxed))
+            let startBalance = context.currentBalance
+            let endBalance = GainRamp.advance(current: startBalance, target: requestedBalance, frames: frames)
+            context.currentBalance = endBalance
+            let balanceStep = frames > 0 ? (endBalance - startBalance) / Float(frames) : 0
+            let hasBalance = startBalance != 0 || endBalance != 0
             // EQ 係數：每層只讀一次指標，之後全是指標運算。兩層（App 先、
             // 裝置後，B6-8）走同一套解碼——機制只寫一份
             let appEQ = decodeEQ(context.appEQ)
@@ -298,17 +310,25 @@ final class CoreAudioTapBackend: TapBackend {
                    let destination = outputList[index].mData?.assumingMemoryBound(to: Float.self) {
                     let writable = min(sampleCount, Int(outputList[index].mDataByteSize) / MemoryLayout<Float>.size)
                     let writableFrames = writable / channels
-                    if hasEQ {
+                    if hasEQ || hasBalance {
                         for frame in 0..<writableFrames {
                             let gain = (startGain + gainStep * Float(frame)) * totalPreamp
+                            // 平衡因子（只衰減不增益）；置中時兩者皆 1
+                            let balanceFactors = BalanceLaw.factors(startBalance + balanceStep * Float(frame))
                             for channel in 0..<channels {
                                 let offset = frame * channels + channel
                                 let raw = source[offset]
                                 if raw != 0 { sawNonZero = true }
-                                var value = raw * gain
+                                // 聲道編號要用全域的（channelBase）——分離佈局
+                                // （2 buffer × 1 ch）時第二個 buffer 才是右聲道
+                                let globalChannel = channelBase + channel
+                                let balanceFactor: Float = globalChannel == 0
+                                    ? balanceFactors.left
+                                    : (globalChannel == 1 ? balanceFactors.right : 1)
+                                var value = raw * gain * balanceFactor
                                 // 每個聲道有自己的一整條 cascade 狀態；App 層先過
-                                if channelBase + channel < TapRenderContext.maxChannels {
-                                    let slot = (channelBase + channel) * EQSettings.maxBands
+                                if globalChannel < TapRenderContext.maxChannels {
+                                    let slot = globalChannel * EQSettings.maxBands
                                     value = applyCascade(value, appEQ, slot: slot)
                                     value = applyCascade(value, deviceEQ, slot: slot)
                                 }
@@ -453,6 +473,10 @@ private final class CoreAudioTapSession: TapSession {
 
     func setMuted(_ muted: Bool) {
         context.muted.store(muted, ordering: .relaxed)
+    }
+
+    func setBalance(_ balance: Float) {
+        context.balanceBits.store(min(max(balance, -1), 1).bitPattern, ordering: .relaxed)
     }
 
     /// 換一組 EQ 係數（裝置層／App 層各自的區塊，B6-8 起兩層）。

@@ -48,6 +48,8 @@ final class SettingsStore {
         static let advisorModelCache = "chorus.advisor.modelCache"
         static let audioTaps = "chorus.audio.tapsEnabled"
         static let appAudio = "chorus.audio.appSettings"
+        static let excludedApps = "chorus.audio.excludedApps"
+        static let deviceBalance = "chorus.audio.deviceBalance"
         static let softwareVolume = "chorus.audio.softwareVolumeDevices"
         static let deviceEQ = "chorus.audio.deviceEQ"
         static let deviceEffects = "chorus.audio.deviceEffects"
@@ -213,12 +215,27 @@ final class SettingsStore {
         }
     }
 
+    /// 排除清單（Excluded Applications）：Chorus 完全不碰這些 App 的音訊
+    /// （bundle id）。per-app tap 不建（既有調整保留、只是不生效），
+    /// 裝置級全域 tap 也把它們的行程排除——DAW、遊戲、視訊會議可以
+    /// 完全退出處理鏈，即使裝置 EQ／軟體音量開著。
+    var excludedApps: Set<String> {
+        didSet { defaults.set(Array(excludedApps).sorted(), forKey: Key.excludedApps) }
+    }
+
     /// 使用者為哪些裝置開啟了「軟體音量」（三後端矩陣第三條，B6-4）。
     /// **預設不啟用**：它會讓該裝置的所有音訊繞道 Chorus，多一個 buffer
     /// 的延遲（實測 ~10.7 ms）——這個代價要由使用者明確決定，
     /// 不是我們替沒有硬體音量的裝置自動打開。
     var softwareVolumeDevices: Set<String> {
         didSet { defaults.set(Array(softwareVolumeDevices), forKey: Key.softwareVolume) }
+    }
+
+    /// **軟體平衡**的持久化（device UID → −1…+1；置中就從表裡消失）。
+    /// 只存「沒有原生平衡」的裝置——native 裝置（vmbc／stereo pan）
+    /// 以 HAL 為唯一真相，存第二份只會出現不同步的來源。
+    var deviceBalance: [String: Double] {
+        didSet { defaults.set(deviceBalance, forKey: Key.deviceBalance) }
     }
 
     /// 每輸出裝置的等化設定（device UID → EQ，B6-5）。**預設關閉**：
@@ -331,6 +348,8 @@ final class SettingsStore {
         } else {
             appAudio = AppAudioSettings()
         }
+        excludedApps = Set(defaults.stringArray(forKey: Key.excludedApps) ?? [])
+        deviceBalance = (defaults.dictionary(forKey: Key.deviceBalance) as? [String: Double]) ?? [:]
         softwareVolumeDevices = Set(defaults.stringArray(forKey: Key.softwareVolume) ?? [])
         if let data = defaults.data(forKey: Key.deviceEQ),
            let decoded = try? JSONDecoder().decode([String: EQSettings].self, from: data) {

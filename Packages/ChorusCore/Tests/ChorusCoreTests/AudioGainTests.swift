@@ -216,3 +216,41 @@ struct AppAudioSettingTests {
         #expect(decoded == settings)
     }
 }
+
+@Suite("BalanceLaw")
+struct BalanceLawTests {
+    @Test("置中：兩聲道都是 1（不衰減）")
+    func centeredIsUnity() {
+        let factors = BalanceLaw.factors(0)
+        #expect(factors.left == 1)
+        #expect(factors.right == 1)
+    }
+
+    @Test("偏右只衰減左聲道，右聲道維持 1（只衰減不增益）")
+    func rightBiasAttenuatesLeftOnly() {
+        let factors = BalanceLaw.factors(0.3)
+        #expect(abs(factors.left - 0.7) < 1e-6)
+        #expect(factors.right == 1)
+    }
+
+    @Test("偏左只衰減右聲道")
+    func leftBiasAttenuatesRightOnly() {
+        let factors = BalanceLaw.factors(-0.3)
+        #expect(factors.left == 1)
+        #expect(abs(factors.right - 0.7) < 1e-6)
+    }
+
+    @Test("全偏：另一側完全靜音")
+    func fullTiltSilencesTheOtherSide() {
+        #expect(BalanceLaw.factors(1).left == 0)
+        #expect(BalanceLaw.factors(1).right == 1)
+        #expect(BalanceLaw.factors(-1).right == 0)
+    }
+
+    @Test("超出範圍夾在 −1…+1")
+    func outOfRangeIsClamped() {
+        #expect(BalanceLaw.factors(5).left == 0)
+        #expect(BalanceLaw.factors(-5).right == 0)
+        #expect(BalanceLaw.factors(5).right == 1)
+    }
+}

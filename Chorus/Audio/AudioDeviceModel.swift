@@ -33,6 +33,14 @@ final class AudioDeviceModel: Identifiable {
     var muted: Bool
     var isDefault: Bool
 
+    /// 裝置有原生左右平衡（HAL 合成的 vmbc 或 stereo pan control）。
+    /// 沒有的話平衡走裝置級 tap 鏈（軟體平衡）——兩後端互斥，
+    /// 由 `AudioDeviceManager.setBalance` 分流。
+    let canSetBalance: Bool
+    /// 左右平衡（−1…+1，0＝置中）。native 裝置以 HAL 現值為準；
+    /// 軟體平衡以 `SettingsStore.deviceBalance` 為準。
+    var balance: Double
+
     init(info: AudioWorker.DeviceInfo, isDefault: Bool) {
         id = info.id
         uid = info.uid
@@ -42,6 +50,8 @@ final class AudioDeviceModel: Identifiable {
         hasMute = info.hasMute
         volume = info.volume
         muted = info.muted
+        canSetBalance = info.canSetBalance
+        balance = info.balance
         self.isDefault = isDefault
     }
 

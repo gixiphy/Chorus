@@ -10,6 +10,13 @@ enum CoreAudioProperty {
     /// 會自動處理「main element 無音量但 channel 有」的情況。
     static let virtualMainVolume = AudioObjectPropertySelector(0x766D_7663)
 
+    /// kAudioHardwareServiceDeviceProperty_VirtualMainBalance（'vmbc'）。
+    /// 同上是 HAL 直接支援的合成屬性：裝置有逐聲道音量（L/R 各一顆 vlme，
+    /// 例如我們的虛擬裝置）時 HAL 會合成出這顆 balance。0＝全左、
+    /// 0.5＝置中、1＝全右。沒有逐聲道音量的裝置（內建喇叭）要退而找
+    /// kAudioDevicePropertyStereoPan（'span'）——兩者值域相同。
+    static let virtualMainBalance = AudioObjectPropertySelector(0x766D_6263)
+
     static func address(
         _ selector: AudioObjectPropertySelector,
         scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal,

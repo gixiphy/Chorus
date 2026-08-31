@@ -303,3 +303,47 @@ struct AutoEqParserTests {
         #expect(settings.bands[0].frequency == 1000)
     }
 }
+
+@Suite("EQ genre presets")
+struct EQGenrePresetTests {
+    @Test("目錄約兩打，名稱不重複")
+    func catalogShapeIsSane() {
+        #expect(EQGenrePreset.all.count >= 20)
+        #expect(Set(EQGenrePreset.all.map(\.name)).count == EQGenrePreset.all.count)
+    }
+
+    @Test("每個 preset 都是 10 段、增益在合法範圍")
+    func everyPresetFitsTheTenBandLayout() {
+        for preset in EQGenrePreset.all {
+            #expect(preset.gains.count == 10, "\(preset.name)")
+            for gain in preset.gains {
+                #expect(EQBand.gainRange.contains(gain), "\(preset.name)")
+            }
+        }
+    }
+
+    @Test("展開後：開關開著、自動 preamp 抵銷最大正增益（防削波）")
+    func presetsExpandWithAutomaticPreamp() throws {
+        let rock = try #require(EQGenrePreset.all.first { $0.name == "搖滾" })
+        let settings = rock.settings()
+        #expect(settings.isEnabled)
+        #expect(settings.usesAutomaticPreamp)
+        #expect(settings.sourceName == "Preset · 搖滾")
+        let peak = settings.bands.map(\.gainDB).max() ?? 0
+        #expect(settings.effectivePreampDB == -peak)
+    }
+
+    @Test("平坦 preset 不算生效——不該為它建 tap")
+    func flatPresetIsInactive() throws {
+        let flat = try #require(EQGenrePreset.all.first { $0.name == "平坦" })
+        #expect(!flat.settings().isActive)
+    }
+
+    @Test("頻段沿用手動 10 段的佈局（兩端 shelf、中間 peaking）")
+    func presetBandsMatchTheManualLayout() throws {
+        let preset = try #require(EQGenrePreset.all.first).settings()
+        let manual = EQSettings.tenBandDefault()
+        #expect(preset.bands.map(\.frequency) == manual.bands.map(\.frequency))
+        #expect(preset.bands.map(\.kind) == manual.bands.map(\.kind))
+    }
+}

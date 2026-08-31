@@ -14,6 +14,11 @@ final class AudioWorker: @unchecked Sendable {
         let hasMute: Bool
         let volume: Double
         let muted: Bool
+        /// 裝置有原生左右平衡：HAL 合成的 vmbc（逐聲道音量的裝置）或
+        /// stereo pan control（內建喇叭）。兩者之一可寫就算。
+        let canSetBalance: Bool
+        /// 目前的平衡，正規化成 −1…+1（0＝置中）。不支援時恆為 0。
+        let balance: Double
     }
 
     struct Snapshot: Sendable, Equatable {
@@ -87,6 +92,27 @@ final class AudioWorker: @unchecked Sendable {
         }
     }
 
+    /// 原生左右平衡（−1…+1）。vmbc 優先（逐聲道音量的裝置），
+    /// 退而寫 stereo pan（內建喇叭）。呼叫端已確認 `canSetBalance`。
+    func setBalance(_ deviceID: AudioObjectID, to balance: Double) {
+        queue.async {
+            let halValue = Float32((min(max(balance, -1), 1) + 1) / 2) // −1…+1 → 0…1
+            let vmbc = CoreAudioProperty.address(
+                CoreAudioProperty.virtualMainBalance, scope: kAudioObjectPropertyScopeOutput
+            )
+            if CoreAudioProperty.isSettable(deviceID, vmbc) {
+                CoreAudioProperty.set(deviceID, vmbc, to: halValue)
+                return
+            }
+            let pan = CoreAudioProperty.address(
+                kAudioDevicePropertyStereoPan, scope: kAudioObjectPropertyScopeOutput
+            )
+            if CoreAudioProperty.isSettable(deviceID, pan) {
+                CoreAudioProperty.set(deviceID, pan, to: halValue)
+            }
+        }
+    }
+
     func setMute(_ deviceID: AudioObjectID, muted: Bool) {
         queue.async {
             let address = CoreAudioProperty.address(
@@ -154,6 +180,18 @@ final class AudioWorker: @unchecked Sendable {
             let hasMute = CoreAudioProperty.isSettable(id, muteAddress)
             let muted = (CoreAudioProperty.get(id, muteAddress, as: UInt32.self) ?? 0) != 0
 
+            let balanceAddress = CoreAudioProperty.address(
+                CoreAudioProperty.virtualMainBalance, scope: kAudioObjectPropertyScopeOutput
+            )
+            let panAddress = CoreAudioProperty.address(
+                kAudioDevicePropertyStereoPan, scope: kAudioObjectPropertyScopeOutput
+            )
+            let canSetBalance = CoreAudioProperty.isSettable(id, balanceAddress)
+                || CoreAudioProperty.isSettable(id, panAddress)
+            let rawBalance = CoreAudioProperty.get(id, balanceAddress, as: Float32.self)
+                ?? CoreAudioProperty.get(id, panAddress, as: Float32.self)
+            let balance = canSetBalance ? Double(rawBalance ?? 0.5) * 2 - 1 : 0 // 0…1 → −1…+1
+
             devices.append(DeviceInfo(
                 id: id,
                 uid: uid,
@@ -162,7 +200,9 @@ final class AudioWorker: @unchecked Sendable {
                 canSetVolume: canSetVolume,
                 hasMute: hasMute,
                 volume: Double(volume),
-                muted: muted
+                muted: muted,
+                canSetBalance: canSetBalance,
+                balance: balance
             ))
             currentIDs.insert(id)
         }
@@ -183,6 +223,9 @@ final class AudioWorker: @unchecked Sendable {
             CoreAudioProperty.address(CoreAudioProperty.virtualMainVolume, scope: kAudioObjectPropertyScopeOutput),
             CoreAudioProperty.address(kAudioDevicePropertyVolumeScalar, scope: kAudioObjectPropertyScopeOutput, element: 1),
             CoreAudioProperty.address(kAudioDevicePropertyMute, scope: kAudioObjectPropertyScopeOutput),
+            // 平衡的兩種原生形態（系統設定的平衡滑桿動了也要跟上）
+            CoreAudioProperty.address(CoreAudioProperty.virtualMainBalance, scope: kAudioObjectPropertyScopeOutput),
+            CoreAudioProperty.address(kAudioDevicePropertyStereoPan, scope: kAudioObjectPropertyScopeOutput),
         ]
         for id in currentIDs.subtracting(listenedDevices) {
             for address in watchedAddresses where CoreAudioProperty.has(id, address) {
