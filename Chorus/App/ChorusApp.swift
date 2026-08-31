@@ -14,8 +14,11 @@ struct ChorusApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Chorus", systemImage: "rays") {
+        MenuBarExtra {
             MenuBarView()
+                .environment(appState)
+        } label: {
+            MenuBarLabel()
                 .environment(appState)
         }
         .menuBarExtraStyle(.window)
