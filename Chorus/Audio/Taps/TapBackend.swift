@@ -45,6 +45,16 @@ protocol TapSession: AnyObject {
     func setEQ(_ settings: EQSettings?)
     /// App 層等化（B6-8）——與裝置層是不同責任的兩次，App 層先過。
     func setAppEQ(_ settings: EQSettings?)
+    /// 裝置級 AU 效果鏈（B6-8 AU-2b）。呼叫端只送「應該載」的格
+    ///（enabled 且不在隔離名單）；空陣列＝拆鏈。內容沒變不重建。
+    func setDeviceEffects(_ entries: [AUEffectEntry])
+    /// App 層 AU 效果鏈——render 順序：appEQ → appAU → deviceEQ → deviceAU。
+    func setAppEffects(_ entries: [AUEffectEntry])
+    /// 隔離閂（DESIGN §1.1）：實例化前以元件 key 呼叫、成功後以 nil 呼叫。
+    /// 擁有者（TapEngine）接到後寫 SettingsStore 的 pendingLoad。
+    var effectLatch: ((String?) -> Void)? { get set }
+    /// 最近一次建鏈失敗的格（外掛不在、實例化失敗）——UI 誠實說明用。
+    var effectFailures: [String] { get }
     func stop()
 }
 

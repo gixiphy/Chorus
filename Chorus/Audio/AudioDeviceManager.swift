@@ -434,13 +434,14 @@ final class AudioDeviceManager {
         }
         let eq = effectiveEQ(for: defaultDevice.uid)
         let balance = softwareBalance(for: defaultDevice)
-        guard volumeTarget != nil || eq != nil || balance != 0 else {
-            // 三個都不需要 → 一個 tap 都不建（DESIGN §2.3 規則 2）
+        let effects = effectiveDeviceEffects(for: defaultDevice.uid)
+        guard volumeTarget != nil || eq != nil || balance != 0 || !effects.isEmpty else {
+            // 全都不需要 → 一個 tap 都不建（DESIGN §2.3 規則 2）
             log.debug("deviceProcessing 不需要：default=\(defaultDevice.uid, privacy: .public) 存的EQ鍵=\(Array(self.settings.deviceEQ.keys).joined(separator: ","), privacy: .public)")
             tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
             return
         }
-        log.debug("deviceProcessing 推送：default=\(defaultDevice.uid, privacy: .public) eq=\(eq != nil, privacy: .public) 軟體音量=\(volumeTarget != nil, privacy: .public) 平衡=\(balance, privacy: .public)")
+        log.debug("deviceProcessing 推送：default=\(defaultDevice.uid, privacy: .public) eq=\(eq != nil, privacy: .public) 軟體音量=\(volumeTarget != nil, privacy: .public) 平衡=\(balance, privacy: .public) 效果=\(effects.count, privacy: .public)")
         pushDeviceProcessing(defaultDevice)
     }
 
@@ -455,8 +456,30 @@ final class AudioDeviceManager {
             gain: usesSoftwareVolume ? Float(device.volume) : 1,
             muted: usesSoftwareVolume ? device.muted : false,
             eq: effectiveEQ(for: device.uid),
-            balance: softwareBalance(for: device)
+            balance: softwareBalance(for: device),
+            effects: effectiveDeviceEffects(for: device.uid)
         )
+    }
+
+    /// 每裝置的 AU 效果鏈（AU-2b；UI 在 AU-3 接）。
+    func deviceEffects(for device: AudioDeviceModel) -> [AUEffectEntry] {
+        settings.deviceEffects[device.uid] ?? []
+    }
+
+    func setDeviceEffects(_ entries: [AUEffectEntry], for device: AudioDeviceModel) {
+        if entries.isEmpty {
+            settings.deviceEffects.removeValue(forKey: device.uid)
+        } else {
+            settings.deviceEffects[device.uid] = entries
+        }
+        refreshSoftwareVolume()
+    }
+
+    /// 送進 tap 鏈的裝置效果鏈。A/B 試聽切「原聲」時整條裝置鏈一起不送
+    /// （DESIGN §1.6：旁通＝EQ＋AU 一起；eqOverrides 有值＝正處於旁通）。
+    private func effectiveDeviceEffects(for uid: String) -> [AUEffectEntry] {
+        guard eqOverrides[uid] == nil else { return [] }
+        return (settings.deviceEffects[uid] ?? []).filter(\.enabled)
     }
 
     // MARK: - 裝置優先順序（B6-7）

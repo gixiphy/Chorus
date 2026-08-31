@@ -270,7 +270,15 @@ final class SettingsStore {
     /// 隔離閂：目前正在載入的元件 key。實例化前寫、成功後清；
     /// 啟動時發現殘留＝上次載它時崩潰 → 收養進 effectQuarantine。
     var effectPendingLoad: String? {
-        didSet { defaults.set(effectPendingLoad, forKey: Key.effectPendingLoad) }
+        didSet {
+            defaults.set(effectPendingLoad, forKey: Key.effectPendingLoad)
+            // 上閂時強制落盤：閂的意義是「實例化把 App 帶走時還讀得到」，
+            // 而 defaults 平常是先送 cfprefsd 再非同步寫檔——AU 崩得夠快
+            // 的話閂就白上了。只在武裝（非 nil）時付這個代價。
+            if effectPendingLoad != nil {
+                defaults.synchronize()
+            }
+        }
     }
 
     /// 輸出裝置的偏好順位（device UID，前面優先，B6-7）。**空陣列＝功能關閉**。

@@ -613,6 +613,131 @@ struct TapEngineTests {
         #expect(backend.liveSessions["com.apple.Music"]?.lastBalance == 0)
     }
 
+    // MARK: - AU 效果鏈（B6-8 AU-2b）
+
+    private func sampleEffect(
+        subtype: UInt32 = 0x64656C79, enabled: Bool = true
+    ) -> AUEffectEntry {
+        AUEffectEntry(
+            component: AUEffectComponent(type: 0x61756678, subtype: subtype, manufacturer: 0x74657374),
+            name: "TestFX-\(subtype)", manufacturerName: "Fake", enabled: enabled
+        )
+    }
+
+    @Test("App 層效果鏈：只掛效果也建 tap，鏈送到 session 的 App 層")
+    func appEffectsCreateAndReachTheSession() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+
+        let effect = sampleEffect()
+        engine.setAppEffects([effect], bundleID: "com.apple.Music")
+        let session = backend.liveSessions["com.apple.Music"]
+        #expect(session != nil)
+        #expect(session?.lastAppEffects == [effect])
+        #expect(session?.lastDeviceEffects == [])
+
+        // 拆掉效果鏈 → 沒有其他調整了，session 收掉
+        engine.setAppEffects([], bundleID: "com.apple.Music")
+        #expect(backend.liveSessions["com.apple.Music"]?.stopped == true)
+    }
+
+    @Test("關掉的格不送進 session——enabled 才算數")
+    func disabledEffectSlotsAreNotPushed() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        let on = sampleEffect(subtype: 1)
+        let off = sampleEffect(subtype: 2, enabled: false)
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        engine.setAppEffects([on, off], bundleID: "com.apple.Music")
+        #expect(backend.liveSessions["com.apple.Music"]?.lastAppEffects == [on])
+    }
+
+    @Test("隔離名單的格不自動載入（DESIGN §1.1）")
+    func quarantinedEffectsAreFiltered() {
+        let backend = FakeTapBackend()
+        let registry = AudioProcessRegistry()
+        injectAudibleApp(registry)
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "tap-au-\(UUID().uuidString)")!)
+        let engine = TapEngine(backend: backend, registry: registry, settings: settings)
+        engine.setEnabled(true)
+        engine.healthTick()
+
+        let bad = sampleEffect(subtype: 0xBAD)
+        let good = sampleEffect(subtype: 0x600D)
+        settings.effectQuarantine = [bad.component.key]
+        engine.setAppEffects([bad, good], bundleID: "com.apple.Music")
+        #expect(backend.liveSessions["com.apple.Music"]?.lastAppEffects == [good])
+    }
+
+    @Test("裝置級效果鏈：只有效果也建全域 session，鏈送到裝置層")
+    func deviceEffectsAloneCreateTheGlobalSession() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        let effect = sampleEffect()
+        engine.updateDeviceProcessing(
+            deviceUID: "fake-headphones", gain: 1, muted: false, eq: nil, effects: [effect]
+        )
+        #expect(engine.deviceTapUID == "fake-headphones")
+        #expect(backend.globalSession?.lastDeviceEffects == [effect])
+    }
+
+    @Test("被接管的 App 在裝置鏈上也套裝置效果鏈；路由到別台的不套")
+    func perAppSessionsCarryDeviceEffectsOnlyOnTheChain() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        engine.setGain(0.5, bundleID: "com.apple.Safari")
+        engine.setOutputDevice("fake-headphones", bundleID: "com.apple.Safari")
+
+        let effect = sampleEffect()
+        engine.updateDeviceProcessing(
+            deviceUID: "fake-output-uid", gain: 1, muted: false, eq: nil, effects: [effect]
+        )
+        #expect(backend.liveSessions["com.apple.Music"]?.lastDeviceEffects == [effect])
+        #expect(backend.liveSessions["com.apple.Safari"]?.lastDeviceEffects == [])
+    }
+
+    @Test("改效果鏈走得到 session——快路徑不能吞掉 effects 變更")
+    func effectChangesGetThroughTheFastPath() {
+        let (engine, backend, registry) = makeEngine(mode: .audio)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        engine.setGain(0.5, bundleID: "com.apple.Music")
+        let first = sampleEffect(subtype: 1)
+        engine.setAppEffects([first], bundleID: "com.apple.Music")
+        #expect(backend.liveSessions["com.apple.Music"]?.lastAppEffects == [first])
+
+        // gain 沒變、只換效果——這正是快路徑判準漏掉 effects 時會吞掉的形狀
+        let second = sampleEffect(subtype: 2)
+        engine.setAppEffects([first, second], bundleID: "com.apple.Music")
+        #expect(backend.liveSessions["com.apple.Music"]?.lastAppEffects == [first, second])
+    }
+
+    @Test("隔離閂接線：實例化期間武裝、成功後清空（pendingLoad 收尾必為 nil）")
+    func effectLatchIsWiredAndCleared() {
+        let backend = FakeTapBackend()
+        let registry = AudioProcessRegistry()
+        injectAudibleApp(registry)
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "tap-latch-\(UUID().uuidString)")!)
+        let engine = TapEngine(backend: backend, registry: registry, settings: settings)
+        engine.setEnabled(true)
+        engine.healthTick()
+
+        engine.setAppEffects([sampleEffect()], bundleID: "com.apple.Music")
+        // fake 的建鏈流程會走 latch(key) → latch(nil)——收尾必須是清空的
+        #expect(settings.effectPendingLoad == nil)
+        #expect(backend.liveSessions["com.apple.Music"]?.effectLatch != nil)
+    }
+
     // MARK: - 排除清單（Excluded Applications）
 
     @Test("排除的 App 不建 tap——調整保留但不生效，取消排除原樣恢復")

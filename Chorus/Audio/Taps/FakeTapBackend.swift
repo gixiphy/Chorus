@@ -105,12 +105,36 @@ final class FakeTapSession: TapSession {
     func simulateDeviceReconfigured() { onDeviceReconfigured?() }
 
     private(set) var lastBalance: Float = 0
+    private(set) var lastDeviceEffects: [AUEffectEntry] = []
+    private(set) var lastAppEffects: [AUEffectEntry] = []
+    var effectLatch: ((String?) -> Void)?
+    private(set) var effectFailures: [String] = []
 
     func setGain(_ gain: Float) { lastGain = gain }
     func setMuted(_ muted: Bool) { lastMuted = muted }
     func setBalance(_ balance: Float) { lastBalance = balance }
     func setEQ(_ settings: EQSettings?) { lastEQ = settings }
     func setAppEQ(_ settings: EQSettings?) { lastAppEQ = settings }
+
+    func setDeviceEffects(_ entries: [AUEffectEntry]) {
+        // 與真實 backend 同語意：只留 enabled 的格；latch 走一輪
+        // （fake 不會真的實例化，但引擎端的閂流程要能被測到）
+        lastDeviceEffects = simulateChainBuild(entries)
+    }
+
+    func setAppEffects(_ entries: [AUEffectEntry]) {
+        lastAppEffects = simulateChainBuild(entries)
+    }
+
+    private func simulateChainBuild(_ entries: [AUEffectEntry]) -> [AUEffectEntry] {
+        let active = entries.filter(\.enabled)
+        for entry in active {
+            effectLatch?(entry.component.key)
+            effectLatch?(nil)
+        }
+        return active
+    }
+
     func stop() { stopped = true }
 }
 #endif

@@ -79,6 +79,9 @@ final class TapEngine {
     @ObservationIgnored private var deviceEQ: EQSettings?
     /// 裝置級軟體平衡（−1…+1）。只有沒有原生平衡的裝置會送非零值進來。
     @ObservationIgnored private var deviceBalance: Float = 0
+    /// 裝置級 AU 效果鏈（AU-2b）。存的是完整清單；推給 session 前
+    /// 過 `loadableEffects`（enabled ＋ 不在隔離名單）。
+    @ObservationIgnored private var deviceEffects: [AUEffectEntry] = []
     @ObservationIgnored private var monitor = TapHealthMonitor()
     @ObservationIgnored private var lastProbeStats = TapSessionStats()
     @ObservationIgnored private var tickTask: Task<Void, Never>?
@@ -153,6 +156,11 @@ final class TapEngine {
         update(bundleID: bundleID) { $0.eq = eq }
     }
 
+    /// App 層 AU 效果鏈（B6-8 AU-2b）。與 EQ 同一條設定驅動的路。
+    func setAppEffects(_ effects: [AUEffectEntry], bundleID: String) {
+        update(bundleID: bundleID) { $0.effects = effects }
+    }
+
     func setOutputDevice(_ uid: String?, bundleID: String) {
         update(bundleID: bundleID) { $0.outputDeviceUID = uid }
     }
@@ -200,7 +208,7 @@ final class TapEngine {
         if sessions[bundleID] != nil,
            entry.needsTap, before.needsTap,
            entry.outputDeviceUID == before.outputDeviceUID,
-           entry.eq == before.eq {
+           entry.eq == before.eq, entry.effects == before.effects {
             pushSessionProcessing(bundleID)
             return
         }
@@ -240,7 +248,8 @@ final class TapEngine {
     /// 增益不存在這裡——裝置音量的持久化本來就在 `SettingsStore.lastVolume`、
     /// EQ 在 `SettingsStore.deviceEQ`，再存一份只會多一個會不同步的來源。
     func updateDeviceProcessing(
-        deviceUID: String?, gain: Float, muted: Bool, eq: EQSettings?, balance: Float = 0
+        deviceUID: String?, gain: Float, muted: Bool, eq: EQSettings?,
+        balance: Float = 0, effects: [AUEffectEntry] = []
     ) {
         let gain = AppAudioSetting.clampGain(gain)
         let balance = min(max(balance, -1), 1)
@@ -248,12 +257,14 @@ final class TapEngine {
         // 這裡；內容沒變就別對帳——裝置清單或引擎狀態變動各有自己的
         // 對帳入口（audioDevicesChanged、reconcileSessions）
         guard deviceUID != deviceTarget || gain != deviceGain
-            || muted != deviceMuted || eq != deviceEQ || balance != deviceBalance else { return }
+            || muted != deviceMuted || eq != deviceEQ || balance != deviceBalance
+            || effects != deviceEffects else { return }
         deviceTarget = deviceUID
         deviceGain = gain
         deviceMuted = muted
         deviceEQ = eq
         deviceBalance = balance
+        deviceEffects = effects
         reconcileGlobalSession()
         // per-app session 的音訊已從全域 tap 排除——裝置級處理不在這裡
         // 一併推，被接管的 App 就永遠套不到裝置 EQ／軟體音量
@@ -275,6 +286,25 @@ final class TapEngine {
         session.setEQ(onDeviceChain ? deviceEQ : nil)
         // 平衡與裝置 EQ 同層：被接管的 App 不該因為繞過全域 tap 就繞過平衡
         session.setBalance(onDeviceChain ? deviceBalance : 0)
+        // AU 兩層（AU-2b）：App 層跟著 App 自己的設定，裝置層跟著鏈
+        session.setAppEffects(loadableEffects(entry.effects))
+        session.setDeviceEffects(onDeviceChain ? loadableEffects(deviceEffects) : [])
+    }
+
+    /// 隔離名單過濾（DESIGN §1.1）：被隔離的格不自動載入，
+    /// 解除隔離是使用者的明確動作。
+    private func loadableEffects(_ entries: [AUEffectEntry]) -> [AUEffectEntry] {
+        entries.filter {
+            $0.enabled && EffectQuarantine.mayLoad($0.component, quarantined: settings.effectQuarantine)
+        }
+    }
+
+    /// 隔離閂接線：session 實例化外掛前後回呼，寫進 SettingsStore 的
+    /// pendingLoad（崩潰後由啟動收養流程判定加害者）。
+    private func wireEffectLatch(_ session: any TapSession) {
+        session.effectLatch = { [weak self] key in
+            self?.settings.effectPendingLoad = key
+        }
     }
 
     /// 「App 增益 × 裝置級軟體音量」的組合公式——唯一定義點。
@@ -331,6 +361,7 @@ final class TapEngine {
                 excludingProcessObjects: excluded,
                 initialGain: deviceGain
             )
+            if let globalSession { wireEffectLatch(globalSession) }
             globalOutputUID = target
             globalExclusions = excluded
             deviceTapUID = target
@@ -396,6 +427,7 @@ final class TapEngine {
         globalSession?.setMuted(deviceMuted)
         globalSession?.setEQ(deviceEQ)
         globalSession?.setBalance(deviceBalance)
+        globalSession?.setDeviceEffects(loadableEffects(deviceEffects))
     }
 
     private func stopGlobalSession() {
@@ -473,6 +505,7 @@ final class TapEngine {
                         outputDeviceUID: outputUID,
                         initialGain: effectiveGain(entry, onDeviceChain: outputUID == deviceTarget)
                     )
+                    sessions[bundleID].map { wireEffectLatch($0) }
                     sessionOutputUIDs[bundleID] = outputUID
                     sessionMemberBundles[bundleID] = members
                     // 裝置中途改取樣率（藍牙耳機切降噪）→ 這條 session 的

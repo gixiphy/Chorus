@@ -47,6 +47,16 @@ final class TapRenderContext: @unchecked Sendable {
     let appEQ = EQLayerState()
     let deviceEQ = EQLayerState()
 
+    /// 兩層 AU 效果鏈（AU-2b）。render 順序：appEQ → appAU → deviceEQ → deviceAU。
+    let appEffects = AUChainLayer()
+    let deviceEffects = AUChainLayer()
+    /// AU 分支的 deinterleaved scratch（4 條聲道緩衝：in L/R ＋ out L/R
+    /// ping-pong）。配置在 session 建立時、與鏈的內容無關——換鏈不重配。
+    /// **只有 render 執行緒碰。**
+    let auScratch: UnsafeMutableBufferPointer<Float>
+
+    static let auScratchChannels = 4
+
     /// **只有 render 執行緒碰**：斜坡目前走到的增益值。
     /// 不是 atomic，因為它不跨執行緒——加 atomic 只會讓 realtime 端
     /// 多付一次同步成本換取沒人需要的可見性。
@@ -62,6 +72,14 @@ final class TapRenderContext: @unchecked Sendable {
         self.playthrough = playthrough
         gainBits.store(initialGain.bitPattern, ordering: .relaxed)
         currentGain = initialGain
+        auScratch = UnsafeMutableBufferPointer<Float>.allocate(
+            capacity: Self.auScratchChannels * Int(AUChainBlock.maxFrames)
+        )
+        auScratch.initialize(repeating: 0)
+    }
+
+    deinit {
+        auScratch.deallocate()
     }
 }
 
@@ -298,6 +316,80 @@ final class CoreAudioTapBackend: TapBackend {
             let boosted = startGain > 1 || endGain > 1
             let clipping = boosted || hasEQ
             let clipKnee: Float = boosted ? SoftClip.threshold : SoftClip.protectThreshold
+
+            // ── AU 效果鏈分支（AU-2b）───────────────────────────────────
+            //
+            // 有鏈且佈局是立體聲（1×2ch 交錯或 2×1ch 分離）才進來；其餘
+            // 佈局走既有路徑、AU 不套（>2ch 的外掛本來就不列，DESIGN §3）。
+            // 順序照 DESIGN §1.2：gain×appEQ.preamp → appEQ → appAU →
+            // deviceEQ.preamp → deviceEQ → deviceAU → SoftClip。
+            // 兩個 preamp 分開套的理由：中間隔著 AU，對動態類外掛（壓縮器）
+            // 進場電平有差——合併相乘只有全線性時才等價。
+            let appChainBits = playthrough ? context.appEffects.chain.load(ordering: .acquiring) : 0
+            let deviceChainBits = playthrough ? context.deviceEffects.chain.load(ordering: .acquiring) : 0
+
+            if appChainBits != 0 || deviceChainBits != 0,
+               frames > 0, frames <= Int(AUChainBlock.maxFrames),
+               let input = stereoChannels(inputList, frames: frames),
+               let output = stereoChannels(outputList, frames: frames) {
+                var sawNonZero = false
+                let scratch = context.auScratch.baseAddress!
+                let capacity = Int(AUChainBlock.maxFrames)
+                var currentL = scratch
+                var currentR = scratch + capacity
+                var spareL = scratch + 2 * capacity
+                var spareR = scratch + 3 * capacity
+
+                // 1) 收集＋增益／平衡斜坡＋App 層 EQ → deinterleaved scratch
+                for frame in 0..<frames {
+                    let gain = (startGain + gainStep * Float(frame)) * appEQ.preamp
+                    let factors = BalanceLaw.factors(startBalance + balanceStep * Float(frame))
+                    var left = input.left.base[frame * input.left.stride]
+                    var right = input.right.base[frame * input.right.stride]
+                    if left != 0 || right != 0 { sawNonZero = true }
+                    left *= gain * factors.left
+                    right *= gain * factors.right
+                    left = applyCascade(left, appEQ, slot: 0)
+                    right = applyCascade(right, appEQ, slot: EQSettings.maxBands)
+                    currentL[frame] = left
+                    currentR[frame] = right
+                }
+                // 2) App 層 AU 鏈
+                if appChainBits != 0, let block = UnsafeMutableRawPointer(bitPattern: appChainBits),
+                   AUChainBlock.render(block, inL: currentL, inR: currentR,
+                                       outL: spareL, outR: spareR, frames: frames) {
+                    swap(&currentL, &spareL)
+                    swap(&currentR, &spareR)
+                }
+                // 3) 裝置層 EQ（preamp ＋ cascade）
+                if deviceEQ.count > 0 || deviceEQ.preamp != 1 {
+                    for frame in 0..<frames {
+                        currentL[frame] = applyCascade(currentL[frame] * deviceEQ.preamp, deviceEQ, slot: 0)
+                        currentR[frame] = applyCascade(
+                            currentR[frame] * deviceEQ.preamp, deviceEQ, slot: EQSettings.maxBands
+                        )
+                    }
+                }
+                // 4) 裝置層 AU 鏈
+                if deviceChainBits != 0, let block = UnsafeMutableRawPointer(bitPattern: deviceChainBits),
+                   AUChainBlock.render(block, inL: currentL, inR: currentR,
+                                       outL: spareL, outR: spareR, frames: frames) {
+                    swap(&currentL, &spareL)
+                    swap(&currentR, &spareR)
+                }
+                // 5) 寫回輸出。AU 可能自行推高——一律過 soft-clip（至少保護膝點）
+                for frame in 0..<frames {
+                    output.left.base[frame * output.left.stride] =
+                        SoftClip.apply(currentL[frame], threshold: clipKnee)
+                    output.right.base[frame * output.right.stride] =
+                        SoftClip.apply(currentR[frame], threshold: clipKnee)
+                }
+                if sawNonZero {
+                    context.nonZeroCallbacks.add(1, ordering: .relaxed)
+                }
+                return
+            }
+            // ── AU 分支結束；以下是既有路徑 ─────────────────────────────
             var channelBase = 0
 
             var sawNonZero = false
@@ -366,6 +458,44 @@ final class CoreAudioTapBackend: TapBackend {
                 context.nonZeroCallbacks.add(1, ordering: .relaxed)
             }
         }
+    }
+
+    // MARK: - render 端的立體聲佈局（AU 分支用）
+
+    /// 全域聲道 0／1 的取樣指標與步進。交錯（base+ch、stride=聲道數）與
+    /// 分離（各 buffer、stride=1）都化成同一形狀，AU 分支不用管佈局。
+    private struct StereoChannelPair {
+        struct Channel {
+            var base: UnsafeMutablePointer<Float>
+            var stride: Int
+        }
+        var left: Channel
+        var right: Channel
+    }
+
+    /// 佈局不是恰好兩聲道、或任何 buffer 裝不下 `frames`，回 nil
+    /// （AU 分支放棄、走既有路徑）。純指標運算，零配置。
+    private nonisolated static func stereoChannels(
+        _ list: UnsafeMutableAudioBufferListPointer, frames: Int
+    ) -> StereoChannelPair? {
+        var left: StereoChannelPair.Channel?
+        var right: StereoChannelPair.Channel?
+        var total = 0
+        for buffer in list {
+            guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { return nil }
+            let channels = max(1, Int(buffer.mNumberChannels))
+            guard Int(buffer.mDataByteSize) / MemoryLayout<Float>.size / channels >= frames else { return nil }
+            for channel in 0..<channels {
+                switch total {
+                case 0: left = .init(base: data + channel, stride: channels)
+                case 1: right = .init(base: data + channel, stride: channels)
+                default: return nil
+                }
+                total += 1
+            }
+        }
+        guard let left, let right else { return nil }
+        return StereoChannelPair(left: left, right: right)
     }
 
     // MARK: - render 端的 EQ 解碼（每回呼每層一次，之後全是指標運算）
@@ -516,6 +646,55 @@ private final class CoreAudioTapSession: TapSession {
         let previous = layer.block.load(ordering: .relaxed)
         layer.block.store(newRaw, ordering: .releasing)
         retire(previous)
+    }
+
+    // MARK: - AU 效果鏈（AU-2b）
+
+    var effectLatch: ((String?) -> Void)?
+    private(set) var effectFailures: [String] = []
+    /// 上次真正建鏈的內容與取樣率——同內容重推不重建（AU 有內部狀態，
+    /// 每次重建都是 reverb 尾音歸零＋一段暖機，與 EQ 的重複推送同一課）。
+    private var lastPushedDeviceEffects: PushedEffects?
+    private var lastPushedAppEffects: PushedEffects?
+    private struct PushedEffects {
+        var entries: [AUEffectEntry]
+        var sampleRate: Double
+    }
+
+    func setDeviceEffects(_ entries: [AUEffectEntry]) {
+        pushEffects(entries, into: context.deviceEffects, last: &lastPushedDeviceEffects)
+    }
+
+    func setAppEffects(_ entries: [AUEffectEntry]) {
+        pushEffects(entries, into: context.appEffects, last: &lastPushedAppEffects)
+    }
+
+    private func pushEffects(
+        _ entries: [AUEffectEntry], into layer: AUChainLayer, last: inout PushedEffects?
+    ) {
+        let active = entries.filter(\.enabled)
+        let sampleRate = deviceSampleRate()
+        if let last, last.entries == active, last.sampleRate == sampleRate { return }
+        last = PushedEffects(entries: active, sampleRate: sampleRate)
+
+        var newRaw: UInt = 0
+        if !active.isEmpty {
+            let built = AUChainBuilder.build(
+                entries: active, sampleRate: sampleRate,
+                latch: { [weak self] key in self?.effectLatch?(key) }
+            )
+            effectFailures = built.failures
+            if let block = built.block {
+                newRaw = UInt(bitPattern: block)
+            }
+        } else {
+            effectFailures = []
+        }
+        let previous = layer.chain.load(ordering: .relaxed)
+        layer.chain.store(newRaw, ordering: .releasing)
+        if previous != 0, let block = UnsafeMutableRawPointer(bitPattern: previous) {
+            AUChainBlock.retire(block)
+        }
     }
 
     private func deviceSampleRate() -> Double {
