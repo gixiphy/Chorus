@@ -1,3 +1,4 @@
+import AppKit
 import ChorusCore
 import Foundation
 import IOKit.pwr_mgt
@@ -39,6 +40,8 @@ final class KeepAwakeController {
     @ObservationIgnored private var displayAssertion: IOPMAssertionID = 0
     @ObservationIgnored private var systemAssertion: IOPMAssertionID = 0
     @ObservationIgnored private var tickTask: Task<Void, Never>?
+    /// 只有綁定 App 模式才掛：其餘模式不必為每次 App 啟動／結束醒來。
+    @ObservationIgnored private var appObservers: [NSObjectProtocol] = []
 
     init(settings: SettingsStore, displayManager: DisplayManager) {
         self.settings = settings
@@ -49,6 +52,7 @@ final class KeepAwakeController {
     func activate(_ mode: KeepAwakeMode) {
         self.mode = mode
         startedAt = mode == .off ? nil : Self.now
+        updateAppObservers()
         reevaluate()
         // 計時模式需要輪詢到期；其餘模式靠事件驅動即可
         tickTask?.cancel()
@@ -75,9 +79,16 @@ final class KeepAwakeController {
         reevaluate()
     }
 
+    /// App 啟動／結束 → 重新評估「這個 App 執行中才防睡眠」。
+    func runningAppsDidChange() {
+        guard case .whileAppRunning = mode else { return }
+        reevaluate()
+    }
+
     /// App 結束前釋放（核心其實也會自動回收，但明確釋放比較乾淨）。
     func shutdown() {
         tickTask?.cancel()
+        removeAppObservers()
         release(&displayAssertion)
         release(&systemAssertion)
         isHolding = false
@@ -86,11 +97,16 @@ final class KeepAwakeController {
     private func reevaluate() {
         remainingSeconds = KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: startedAt, now: Self.now)
         let connected = Set(displayManager?.displays.map(\.uuid) ?? [])
+        // 執行中 App 清單每次現查——只有綁定 App 模式會走到，
+        // 而那個模式是事件驅動的，不會每秒問一次。
+        var running: Set<String> = []
+        if case .whileAppRunning = mode { running = RunningApps.bundleIDs() }
         let shouldHold = KeepAwakePlanner.shouldHoldAssertion(
             mode: mode,
             startedAt: startedAt,
             now: Self.now,
-            connectedDisplayUUIDs: connected
+            connectedDisplayUUIDs: connected,
+            runningAppBundleIDs: running
         )
         if shouldHold {
             hold(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep, reason: "Chorus 螢幕長亮")
@@ -103,7 +119,7 @@ final class KeepAwakeController {
             release(&displayAssertion)
             release(&systemAssertion)
             // 計時到期就把模式收乾淨，UI 才不會停在「開啟中」。
-            // 螢幕綁定模式**不收**：那台螢幕接回來時要能自己恢復。
+            // 螢幕／App 綁定模式**不收**：螢幕接回來、App 再開時要能自己恢復。
             if case .duration = mode {
                 mode = .off
                 startedAt = nil
@@ -111,6 +127,31 @@ final class KeepAwakeController {
             }
         }
         isHolding = shouldHold
+    }
+
+    /// 綁定 App 模式進出時掛上／拆掉 workspace 監聽。
+    private func updateAppObservers() {
+        var needed = false
+        if case .whileAppRunning = mode { needed = true }
+        guard needed else { return removeAppObservers() }
+        guard appObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [
+            NSWorkspace.didLaunchApplicationNotification,
+            NSWorkspace.didTerminateApplicationNotification,
+        ] {
+            appObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    AppStateRegistry.keepAwake?.runningAppsDidChange()
+                }
+            })
+        }
+    }
+
+    private func removeAppObservers() {
+        let center = NSWorkspace.shared.notificationCenter
+        appObservers.forEach { center.removeObserver($0) }
+        appObservers = []
     }
 
     private func hold(_ id: inout IOPMAssertionID, type: String, reason: String) {

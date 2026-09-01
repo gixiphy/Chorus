@@ -224,6 +224,29 @@ def main():
            f"mode={(state or {}).get('keepAwake', {}).get('mode')}")
     notify("A", "setKeepAwake", "0")
 
+    print("\n[測試 6b] 防睡眠綁定 App", flush=True)
+    # Finder 一定在跑；沒安裝的 bundle id 一定不在——不必真的開關 App
+    notify("A", "setKeepAwake", "app:com.apple.finder")
+    ok, state = wait_for("A", lambda d: d["keepAwake"]["holding"] is True, 10)
+    record("綁定執行中的 App → 生效", ok,
+           f"mode={(state or {}).get('keepAwake', {}).get('mode')}")
+    notify("A", "setKeepAwake", "app:com.example.not-installed")
+    ok, _ = wait_for("A", lambda d: d["keepAwake"]["holding"] is False, 10)
+    record("綁定未執行的 App → 不持有 assertion", ok)
+    # 真的開關一個 App，驗 NSWorkspace 啟動／結束通知有接上
+    subprocess.run(["osascript", "-e", 'tell application "TextEdit" to quit'],
+                   capture_output=True)
+    notify("A", "setKeepAwake", "app:com.apple.TextEdit")
+    time.sleep(1)
+    subprocess.run(["open", "-g", "-a", "TextEdit"], capture_output=True)
+    ok, _ = wait_for("A", lambda d: d["keepAwake"]["holding"] is True, 15)
+    record("綁定的 App 啟動 → 自動生效", ok)
+    subprocess.run(["osascript", "-e", 'tell application "TextEdit" to quit'],
+                   capture_output=True)
+    ok, _ = wait_for("A", lambda d: d["keepAwake"]["holding"] is False, 15)
+    record("綁定的 App 結束 → 自動失效", ok)
+    notify("A", "setKeepAwake", "0")
+
     print("\n[測試 7] 跨機 command（第二實例遙控關螢幕）", flush=True)
     launch("B", 47701, 47801)
     ok, _ = wait_for("B", lambda d: len(d.get("displays", [])) > 0, 30)

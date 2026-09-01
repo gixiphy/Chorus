@@ -175,7 +175,7 @@ private struct DisplaySettingsTab: View {
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                Text("開關與計時（30 分鐘／1 小時／無限期／接著某台螢幕時）在選單列。")
+                Text("開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時）在選單列。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

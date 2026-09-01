@@ -338,7 +338,7 @@ private struct FlowRow: Layout {
     }
 }
 
-/// 螢幕長亮（M9）。選單只放最常用的三檔＋螢幕綁定；
+/// 螢幕長亮（M9）。選單只放最常用的三檔＋螢幕／App 綁定；
 /// 「連系統待機一起擋」放設定頁，避免選單長出一排開關。
 private struct KeepAwakeRow: View {
     @Environment(AppState.self) private var appState
@@ -350,26 +350,26 @@ private struct KeepAwakeRow: View {
                     .font(.callout)
                 Spacer()
                 Menu(menuLabel) {
-                    Button("30 分鐘") { appState.keepAwake.activate(.duration(seconds: 1800)) }
-                    Button("1 小時") { appState.keepAwake.activate(.duration(seconds: 3600)) }
-                    Button("無限期") { appState.keepAwake.activate(.indefinite) }
+                    Button("30 分鐘") { activate(.duration(seconds: 1800)) }
+                    Button("1 小時") { activate(.duration(seconds: 3600)) }
+                    Button("無限期") { activate(.indefinite) }
+                    Divider()
                     if !appState.displayManager.displays.isEmpty {
-                        Divider()
                         Menu("接著這台螢幕時") {
                             ForEach(appState.displayManager.displays) { display in
-                                Button(display.name) {
-                                    appState.settings.keepAwakeDisplayUUID = display.uuid
-                                    appState.keepAwake.activate(.whileDisplayConnected(uuid: display.uuid))
-                                }
+                                Button(display.name) { activate(.whileDisplayConnected(uuid: display.uuid)) }
                             }
+                        }
+                    }
+                    // 執行中的 App 每次重繪現查，不另外維護一份會過期的清單。
+                    Menu("這個 App 執行時") {
+                        ForEach(RunningApps.options()) { app in
+                            Button(app.name) { activate(.whileAppRunning(bundleID: app.bundleID)) }
                         }
                     }
                     if appState.keepAwake.mode != .off {
                         Divider()
-                        Button("關閉") {
-                            appState.settings.keepAwakeDisplayUUID = nil
-                            appState.keepAwake.deactivate()
-                        }
+                        Button("關閉") { activate(.off) }
                     }
                 }
                 .menuStyle(.borderlessButton)
@@ -382,12 +382,30 @@ private struct KeepAwakeRow: View {
         }
     }
 
+    /// 切模式時順手把「跨重啟記住的綁定」對齊：兩個綁定互斥，
+    /// 選了計時／無限期／關閉就都清掉——否則下次開機會冒出使用者
+    /// 早就換掉的舊綁定。
+    private func activate(_ mode: KeepAwakeMode) {
+        if case let .whileDisplayConnected(uuid) = mode {
+            appState.settings.keepAwakeDisplayUUID = uuid
+        } else {
+            appState.settings.keepAwakeDisplayUUID = nil
+        }
+        if case let .whileAppRunning(bundleID) = mode {
+            appState.settings.keepAwakeAppBundleID = bundleID
+        } else {
+            appState.settings.keepAwakeAppBundleID = nil
+        }
+        appState.keepAwake.activate(mode)
+    }
+
     private var menuLabel: String {
         switch appState.keepAwake.mode {
         case .off: "關閉"
         case .indefinite: "無限期"
         case .duration: "計時中"
         case .whileDisplayConnected: "綁定螢幕"
+        case .whileAppRunning: "綁定 App"
         }
     }
 
@@ -407,6 +425,9 @@ private struct KeepAwakeRow: View {
             let name = appState.displayManager.displays.first { $0.uuid == uuid }?.name
             guard let name else { return "綁定的螢幕未連接 — 暫停中" }
             return keepAwake.isHolding ? "接著「\(name)」時不待機" : "「\(name)」未連接 — 暫停中"
+        case let .whileAppRunning(bundleID):
+            let name = RunningApps.displayName(for: bundleID)
+            return keepAwake.isHolding ? "「\(name)」執行中不待機" : "「\(name)」未執行 — 暫停中"
         }
     }
 }

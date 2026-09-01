@@ -369,10 +369,12 @@ final class TestHooks {
             appState.emergencyRestore.debugSimulateCommandPresses(Int(info["value"] ?? "") ?? 8)
         case "setKeepAwake":
             // value 依 KeepAwakePlanner 編碼：0 = 關、負值 = 無限期、正值 = 秒數；
-            // "display:<uuid>" 綁定螢幕
+            // "display:<uuid>" 綁定螢幕、"app:<bundleID>" 綁定 App
             if let raw = info["value"] {
                 if raw.hasPrefix("display:") {
                     appState.keepAwake.activate(.whileDisplayConnected(uuid: String(raw.dropFirst(8))))
+                } else if raw.hasPrefix("app:") {
+                    appState.keepAwake.activate(.whileAppRunning(bundleID: String(raw.dropFirst(4))))
                 } else if let value = Double(raw) {
                     appState.keepAwake.activate(KeepAwakePlanner.decode(value))
                 }
@@ -424,6 +426,7 @@ final class TestHooks {
         case .indefinite: "indefinite"
         case let .duration(seconds): "duration:\(Int(seconds))"
         case let .whileDisplayConnected(uuid): "display:\(uuid)"
+        case let .whileAppRunning(bundleID): "app:\(bundleID)"
         }
     }
 

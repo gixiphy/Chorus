@@ -161,9 +161,11 @@ final class AppState {
         coordinator.automationEvents = automationEvents
         displayManager.automationEvents = automationEvents
 
-        // 「接著這台螢幕時防睡眠」是唯一跨重啟保留的模式
+        // 綁定型的兩個模式是唯一跨重啟保留的（設定上互斥，螢幕優先）
         if let uuid = settings.keepAwakeDisplayUUID {
             keepAwake.activate(.whileDisplayConnected(uuid: uuid))
+        } else if let bundleID = settings.keepAwakeAppBundleID {
+            keepAwake.activate(.whileAppRunning(bundleID: bundleID))
         }
 
         displayManager.start()

@@ -58,6 +58,7 @@ final class SettingsStore {
         static let outputPriority = "chorus.audio.outputPriority"
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
+        static let keepAwakeAppBundleID = "chorus.keepAwake.appBundleID"
         static let virtualTargetUID = "chorus.audio.virtualTargetUID"
         static let automationServer = "chorus.automation.serverEnabled"
         static let automationPort = "chorus.automation.serverPort"
@@ -296,10 +297,16 @@ final class SettingsStore {
     }
 
     /// 「接著這台螢幕時防睡眠」綁定的顯示器 UUID。
-    /// 只有這個模式跨重啟保留——計時與無限期是當下的臨時決定，
+    /// 只有綁定型的模式跨重啟保留——計時與無限期是當下的臨時決定，
     /// 重開機還幫使用者擋睡眠是意料之外的行為。
     var keepAwakeDisplayUUID: String? {
         didSet { defaults.set(keepAwakeDisplayUUID, forKey: Key.keepAwakeDisplayUUID) }
+    }
+
+    /// 「這個 App 執行中才防睡眠」綁定的 bundle ID。與 `keepAwakeDisplayUUID`
+    /// 互斥：選單切模式時會把另一個清成 nil。
+    var keepAwakeAppBundleID: String? {
+        didSet { defaults.set(keepAwakeAppBundleID, forKey: Key.keepAwakeAppBundleID) }
     }
 
     /// 虛擬輸出裝置的轉送目標：**nil＝自動**（跟著使用中的螢幕走，都沒有就
@@ -384,6 +391,7 @@ final class SettingsStore {
         outputPriority = defaults.stringArray(forKey: Key.outputPriority) ?? []
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
+        keepAwakeAppBundleID = defaults.string(forKey: Key.keepAwakeAppBundleID)
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)
