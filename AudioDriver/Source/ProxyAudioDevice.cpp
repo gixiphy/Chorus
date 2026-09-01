@@ -5495,11 +5495,22 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
     Float32 volumeFactorL = 1.0, volumeFactorR = 1.0;
     calculateVolumeFactors(currentVolumeL, currentVolumeR, currentMute, volumeFactorL, volumeFactorR);
 
-    // DDC 鏡射模式（applyVolume=0）：音量由 Chorus 鏡射到螢幕硬體（VCP 0x62），
-    // 樣本原樣通過以免雙重衰減；mute 維持數位歸零（立即生效、無音質代價）。
+    // 鏡射模式（applyVolume=0）：總**量級**由 Chorus 鏡射到目標裝置自己的
+    // 音量（DDC 螢幕的 VCP 0x62，或有原生音量的裝置），這裡不做整體衰減
+    // 以免雙重。但 L/R **比例**要留著——v7 以前連比例一起蓋成 1.0，左右
+    // 平衡在鏡射模式下完全失效（v8 修）。最大聲道歸一：平衡置中時 L==R
+    // 一起變 1.0，與 v7 逐位元相同。
+    // mute 維持數位歸零（立即生效、無音質代價），由下面的條件排除在外。
     if (!currentApplyVolume && !currentMute) {
-        volumeFactorL = 1.0;
-        volumeFactorR = 1.0;
+        Float32 maxFactor = std::max(volumeFactorL, volumeFactorR);
+        if (maxFactor > 0.0f) {
+            volumeFactorL /= maxFactor;
+            volumeFactorR /= maxFactor;
+        } else {
+            // 音量 0 但沒 mute：比例無定義，退回原樣通過（量級歸鏡射目標管）
+            volumeFactorL = 1.0;
+            volumeFactorR = 1.0;
+        }
     }
 
     for (UInt32 bufferIndex = 0; bufferIndex < outOutputData->mNumberBuffers; bufferIndex++) {
@@ -6046,6 +6057,22 @@ void ProxyAudioDevice::reportRealtimeDiagnostics() {
                    lastOverrunBufferStart.load(std::memory_order_relaxed),
                    lastOverrunBufferEnd.load(std::memory_order_relaxed));
         }
+    }
+
+    // v8：低頻心跳。v7 把 log 搬到這個 500ms 觀察端之後，「resync 零筆」
+    // 有兩種解釋——真的沒觸發，或觀察端整段沒被排到。心跳在場＋計數為零
+    // ＝「零筆」從此無歧義；也順便是觀察端的活性監測。
+    // 兩鐵則（HANDOFF-20260831-driver-v7 §3a）：
+    // 1) 必須 LOG_NOTICE——driver 的 debug level 不會被保存，降級「怕吵」
+    //    就整個失去意義。每 10 分鐘一筆不吵。
+    // 2) 必須無條件輸出（含零）——不能沿用上面那種 current != logged 的
+    //    變化偵測，否則零的時候心跳自己也消失，等於沒做。
+    if (++heartbeatTicks >= 1200) {  // 1200 × 500ms = 10 分鐘
+        heartbeatTicks = 0;
+        syslog(LOG_NOTICE,
+               "ProxyAudio: diagnostics heartbeat, resyncs=%llu overruns=%llu",
+               currentResyncs,
+               currentOverruns);
     }
 }
 

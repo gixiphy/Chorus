@@ -554,6 +554,10 @@ class ProxyAudioDevice {
     UInt64 loggedResyncCount = 0;
     UInt64 loggedOverrunCount = 0;
     time_t lastOverrunLogTime = 0;
+    // v8：低頻心跳的節拍計數（500ms × 1200 = 10 分鐘）。用 tick 數而不是
+    // 時鐘——心跳要證明的正是「觀察端真的被排到了 1200 次」；高載下
+    // dispatch timer 被 coalesce 造成的心跳遲到，本身就是有效訊號。
+    UInt32 heartbeatTicks = 0;
     // P2（v6→v7）：累加器原本由 getZeroTimestampMutex 保護（IOProc 的第三把
     // 鎖）。v6 拆成兩個 atomic（sum／count）各自 exchange——但兩個 exchange
     // 不是同一個原子步驟：IOProc 的兩個 fetch_add 若剛好插在中間，sum 與

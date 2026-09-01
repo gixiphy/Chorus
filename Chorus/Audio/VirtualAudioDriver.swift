@@ -65,6 +65,12 @@ final class VirtualAudioDriverController {
     private(set) var activeCondition: ActiveCondition?
     /// 已安裝的 driver 版本落後 App 內嵌版本（Info.plist CFBundleVersion 比對）。
     private(set) var updateAvailable = false
+    /// 已安裝的 driver 版本號。nil = 沒裝或讀不到。
+    ///
+    /// 給「這個行為要 driver ≥ N 才有」的 UI 用（例如鏡射模式下的左右平衡
+    /// 要 v8）。**不要改用 `updateAvailable`**——那個在未來出 v9 時對已經
+    /// 裝了 v8 的使用者也會成立，提示會錯誤地跑回來。
+    private(set) var installedDriverVersion: Int?
 
     /// CoreAudio 呼叫可能阻塞——全部走這條 serial queue。
     @ObservationIgnored private let queue = DispatchQueue(label: "com.hermes.Chorus.virtualDriver", qos: .userInitiated)
@@ -83,8 +89,9 @@ final class VirtualAudioDriverController {
 
     func refreshStatus() {
         let installed = FileManager.default.fileExists(atPath: Self.driverPath)
+        let installedVersion = installed ? Self.driverBundleVersion(at: Self.driverPath) : nil
+        installedDriverVersion = installedVersion.flatMap { Int($0) }
         if installed, let bundled = Self.bundledDriverURL {
-            let installedVersion = Self.driverBundleVersion(at: Self.driverPath)
             let bundledVersion = Self.driverBundleVersion(at: bundled.path)
             updateAvailable = bundledVersion != nil && installedVersion != bundledVersion
         } else {

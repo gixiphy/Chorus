@@ -588,9 +588,10 @@ final class AudioDeviceManager {
     }
 
     /// 鏡射目標：driver 設定的轉送裝置，且音量有地方可寫（三態判準見
-    /// `AudioDeviceModel.forwardVolumeMode`）。有地方可寫時 driver
-    /// applyVolume=0、樣本原樣通過；都沒有才輪到數位衰減——有硬體音量
-    /// 卻走數位衰減是純粹的損失（位深＋刻度對不上）。
+    /// `AudioDeviceModel.forwardVolumeMode`）——**DDC 橋接或裝置自己的
+    /// 原生音量都算**。有地方可寫時 driver applyVolume=0、不做整體衰減
+    /// （v8 起仍保留 L/R 比例，平衡才有著力點）；都沒有才輪到數位衰減
+    /// ——有硬體音量卻走數位衰減是純粹的損失（位深＋刻度對不上）。
     /// 暫時 unresponsive 的 DDC 橋**照樣是目標**：寫後驗證是它恢復
     /// 判定的來源，停寫它就再也回不來。
     private func mirrorTarget() -> AudioDeviceModel? {
@@ -698,8 +699,11 @@ final class AudioDeviceManager {
         return CGDirectDisplayID(number.uint32Value)
     }
 
-    /// 依鏡射可用性切 driver 模式：DDC 通 → 鏡射（樣本原樣通過）；
-    /// 不通 → driver 內數位衰減。只在值改變時打設定通道。
+    /// 依鏡射可用性切 driver 模式：目標的音量**有地方可寫**（DDC 橋接
+    /// 或裝置自己的原生音量）→ 鏡射（driver 不做整體衰減，v8 起仍保留
+    /// L/R 比例）；都沒有 → driver 內數位衰減。只在值改變時打設定通道。
+    /// 注意鏡射**不是 DDC 專屬**：轉送到內建輸出、AirPods、USB DAC 這類
+    /// 有原生音量的裝置時同樣走鏡射。
     func updateVirtualMirrorMode() {
         guard let virtualDriver,
               devices.contains(where: { $0.uid == VirtualAudioDriverController.deviceUID })

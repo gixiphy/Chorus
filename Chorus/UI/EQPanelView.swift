@@ -338,10 +338,11 @@ struct DeviceBalanceRow: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if isMirrorModeVirtual, device.balance != 0 {
-                // driver 在 DDC 鏡射模式下樣本原樣通過（不做數位處理），
-                // L/R 因子會被略過——誠實說明而不是裝作有效
-                Text("DDC 鏡射模式下音訊原樣通過，平衡暫不生效")
+            } else if isMirrorModeVirtual, device.balance != 0, needsDriverUpdateForBalance {
+                // v7 以前的 driver 在鏡射模式下把 L/R 因子一起蓋成 1.0，
+                // 平衡完全失效——誠實說明而不是裝作有效。v8 起保留 L/R
+                // 比例（只把總量級交給鏡射目標），裝上去這句就消失。
+                Text("更新驅動後，左右平衡才會在鏡射模式下生效")
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
@@ -358,5 +359,10 @@ struct DeviceBalanceRow: View {
     private var isMirrorModeVirtual: Bool {
         device.uid == VirtualAudioDriverController.deviceUID
             && appState.virtualDriver.mirrorMode == true
+    }
+
+    /// 鏡射模式的左右平衡要 driver v8 以上。
+    private var needsDriverUpdateForBalance: Bool {
+        (appState.virtualDriver.installedDriverVersion ?? 0) < 8
     }
 }
