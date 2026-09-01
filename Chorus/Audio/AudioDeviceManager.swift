@@ -93,6 +93,24 @@ final class AudioDeviceManager {
         settings.audioBridgeDisabled.contains(device.uid)
     }
 
+    // MARK: - 排除此裝置（不做任何裝置級處理）
+
+    /// 排除／取消排除一個裝置（右鍵選單）。語意與界線見
+    /// `SettingsStore.excludedDevices`：不插入處理，但音量滑桿照常運作。
+    func setExcluded(_ excluded: Bool, for device: AudioDeviceModel) {
+        var set = settings.excludedDevices
+        if excluded { set.insert(device.uid) } else { set.remove(device.uid) }
+        settings.excludedDevices = set
+        refreshSoftwareVolume()
+    }
+
+    func isExcluded(_ device: AudioDeviceModel) -> Bool {
+        settings.excludedDevices.contains(device.uid)
+    }
+
+    /// 三個「誠實說明」共用的文案：排除是最強的否決，排在其他理由前面。
+    static let excludedReason = "已排除此裝置——Chorus 不在它上面做任何處理"
+
     // MARK: - 軟體音量（三後端矩陣第三條，B6-4）
 
     /// 這個裝置有沒有資格用軟體音量：**前兩條後端都走不通**才輪到它
@@ -117,6 +135,7 @@ final class AudioDeviceManager {
     /// 預設輸出**時才成立；不是的時候誠實說明，而不是裝作有效。
     func softwareVolumeUnavailableReason(_ device: AudioDeviceModel) -> String? {
         if !isSoftwareVolumeEnabled(device) { return nil }
+        if isExcluded(device) { return Self.excludedReason }
         if !device.isDefault { return "軟體音量只在此裝置是預設輸出時生效" }
         switch tapEngine?.state {
         case .active: return nil
@@ -155,6 +174,7 @@ final class AudioDeviceManager {
     func balanceUnavailableReason(for device: AudioDeviceModel) -> String? {
         guard !device.canSetBalance else { return nil }
         guard (settings.deviceBalance[device.uid] ?? 0) != 0 else { return nil }
+        if isExcluded(device) { return Self.excludedReason }
         if !device.isDefault { return "左右平衡只在此裝置是預設輸出時生效" }
         switch tapEngine?.state {
         case .active: return nil
@@ -414,7 +434,8 @@ final class AudioDeviceManager {
         let engineReady = tapEngine?.state == .active
         let defaultDevice = devices.first(where: \.isDefault)
         let volumeTarget = defaultDevice.flatMap { device in
-            engineReady && isSoftwareVolumeEnabled(device) && canUseSoftwareVolume(device)
+            engineReady && !isExcluded(device)
+                && isSoftwareVolumeEnabled(device) && canUseSoftwareVolume(device)
                 ? device : nil
         }
         for device in devices {
@@ -429,6 +450,14 @@ final class AudioDeviceManager {
         }
         guard engineReady, let defaultDevice else {
             log.debug("deviceProcessing 清空：engineReady=\(engineReady, privacy: .public) default=\(defaultDevice?.uid ?? "nil", privacy: .public)")
+            tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
+            return
+        }
+        // 使用者排除了這個裝置：一條 tap 都不建，音訊回到原生路徑。
+        // 這是裝置級處理的**唯一閘門**——判斷只放這裡，不要散到各處。
+        // 設定（EQ／效果／平衡）全部保留，取消排除即恢復。
+        guard !isExcluded(defaultDevice) else {
+            log.debug("deviceProcessing 排除：default=\(defaultDevice.uid, privacy: .public)")
             tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
             return
         }
@@ -562,6 +591,7 @@ final class AudioDeviceManager {
     /// 每一種都要講出來。
     func eqUnavailableReason(for device: AudioDeviceModel) -> String? {
         guard eqSettings(for: device).isEnabled else { return nil }
+        if isExcluded(device) { return Self.excludedReason }
         if !device.isDefault { return "等化只在此裝置是預設輸出時生效" }
         switch tapEngine?.state {
         case .active: return nil

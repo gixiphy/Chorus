@@ -212,6 +212,16 @@ final class TestHooks {
         case "tapTick":
             // 不等計時器，直接推一格健康判讀（E2E 提速）
             appState.tapEngine.healthTick()
+        case "excludeDevice":
+            // value = "device-uid|1"（1＝排除）。走真正的 AudioDeviceManager
+            // 閘門，不是直接推引擎——要測的正是那道閘。
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|", omittingEmptySubsequences: false)
+                if fields.count == 2,
+                   let device = appState.audioManager.devices.first(where: { $0.uid == fields[0] }) {
+                    appState.audioManager.setExcluded(fields[1] == "1", for: device)
+                }
+            }
         case "tapProbeReconfigured":
             // 模擬探測期間輸出裝置換了格式（藍牙耳機切降噪／通透）
             TestSupport.fakeTapBackend?.probeSession?.simulateDeviceReconfigured()

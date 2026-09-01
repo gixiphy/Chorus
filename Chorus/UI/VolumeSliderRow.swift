@@ -23,6 +23,15 @@ struct VolumeSliderRow: View {
                     .lineLimit(1)
                     .help(nameHelp)
                 Spacer()
+                if manager.isExcluded(device) {
+                    Text("已排除")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.quaternary, in: Capsule())
+                        .help(AudioDeviceManager.excludedReason)
+                }
                 // 徽章擇一：已橋接時 DDC 已含連接資訊（tooltip 補充），不再疊 transport
                 if let target = forwardTarget {
                     // 合併列：徽章講的是「音量怎麼送到目標裝置」——
@@ -126,6 +135,14 @@ struct VolumeSliderRow: View {
                 Button("取消隱藏此裝置") { manager.setHidden(false, for: device) }
             } else {
                 Button("隱藏此裝置") { manager.setHidden(true, for: device) }
+            }
+            // 排除＝不插入任何裝置級處理（軟體音量／EQ／平衡／效果鏈）。
+            // 音量滑桿照常運作——那是寫裝置自己的音量，不是處理。
+            if manager.isExcluded(device) {
+                Button("取消排除此裝置") { manager.setExcluded(false, for: device) }
+            } else {
+                Button("排除此裝置（不做音訊處理）") { manager.setExcluded(true, for: device) }
+                    .help("此裝置的音訊完全走原生路徑：不套用 EQ、平衡、效果鏈與軟體音量。既有設定會保留，取消排除即恢復。")
             }
             if !device.canSetVolume {
                 if manager.isBridgeDisabled(device) {

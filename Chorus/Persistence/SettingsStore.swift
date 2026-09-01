@@ -50,6 +50,7 @@ final class SettingsStore {
         static let audioTaps = "chorus.audio.tapsEnabled"
         static let appAudio = "chorus.audio.appSettings"
         static let excludedApps = "chorus.audio.excludedApps"
+        static let excludedDevices = "chorus.audio.excludedDevices"
         static let deviceBalance = "chorus.audio.deviceBalance"
         static let softwareVolume = "chorus.audio.softwareVolumeDevices"
         static let deviceEQ = "chorus.audio.deviceEQ"
@@ -231,6 +232,21 @@ final class SettingsStore {
         didSet { defaults.set(Array(excludedApps).sorted(), forKey: Key.excludedApps) }
     }
 
+    /// 排除的**裝置** UID：Chorus 不在這些裝置上做任何「裝置級處理」
+    /// （軟體音量、EQ、左右平衡、AU 效果鏈——也就是那條 tap 鏈）。
+    ///
+    /// 與 `excludedApps` 是不同的軸，別混用：
+    /// - `excludedApps`＝這個 **App** 的音訊 Chorus 完全不碰（tap 不建）。
+    /// - `excludedDevices`＝這個**裝置**上不插入處理；per-app 路由到它時，
+    ///   App 層的增益調整仍然有效。
+    ///
+    /// 排除 **不等於**不控制：音量滑桿照常運作（那是寫 HAL 原生音量，
+    /// 不是處理）、裝置照常顯示。既有的 EQ／效果／平衡設定保留不刪，
+    /// 取消排除即恢復。
+    var excludedDevices: Set<String> {
+        didSet { defaults.set(Array(excludedDevices).sorted(), forKey: Key.excludedDevices) }
+    }
+
     /// 使用者為哪些裝置開啟了「軟體音量」（三後端矩陣第三條，B6-4）。
     /// **預設不啟用**：它會讓該裝置的所有音訊繞道 Chorus，多一個 buffer
     /// 的延遲（實測 ~10.7 ms）——這個代價要由使用者明確決定，
@@ -372,6 +388,7 @@ final class SettingsStore {
             appAudio = AppAudioSettings()
         }
         excludedApps = Set(defaults.stringArray(forKey: Key.excludedApps) ?? [])
+        excludedDevices = Set(defaults.stringArray(forKey: Key.excludedDevices) ?? [])
         deviceBalance = (defaults.dictionary(forKey: Key.deviceBalance) as? [String: Double]) ?? [:]
         softwareVolumeDevices = Set(defaults.stringArray(forKey: Key.softwareVolume) ?? [])
         if let data = defaults.data(forKey: Key.deviceEQ),

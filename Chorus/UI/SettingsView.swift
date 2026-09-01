@@ -793,6 +793,15 @@ private struct AudioSettingsTab: View {
                                         .background(.quaternary, in: Capsule())
                                 }
                                 Spacer()
+                                if appState.audioManager.isExcluded(device) {
+                                    Text("已排除")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(.quaternary, in: Capsule())
+                                        .help(AudioDeviceManager.excludedReason)
+                                }
                                 if device.balance != 0 {
                                     Image(systemName: "slider.horizontal.below.rectangle")
                                         .imageScale(.small)
@@ -810,16 +819,30 @@ private struct AudioSettingsTab: View {
                         }
                         .buttonStyle(.plain)
                         if expanded {
-                            // 平衡不吃 taps 閘：原生平衡（vmbc／stereo pan）
-                            // 直接寫 HAL，權限流程與它無關
-                            DeviceBalanceRow(device: device)
-                            if case .active = appState.tapEngine.state {
-                                EQPanelView(device: device)
-                                Divider()
-                                EffectChainView(target: .device(device))
-                                Divider()
-                                AudioAdviceSection(target: .device(uid: device.uid))
-                            } else {
+                            let excluded = appState.audioManager.isExcluded(device)
+                            if excluded {
+                                // 設定全部保留、只是不生效——與 per-app 排除同一套
+                                // 「控制項停用＋說明為什麼」的處理
+                                Text("\(AudioDeviceManager.excludedReason)。設定會保留，在選單列對這個裝置按右鍵可以取消排除。")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Group {
+                                // 平衡不吃 taps 閘：原生平衡（vmbc／stereo pan）
+                                // 直接寫 HAL，權限流程與它無關
+                                DeviceBalanceRow(device: device)
+                                if case .active = appState.tapEngine.state {
+                                    EQPanelView(device: device)
+                                    Divider()
+                                    EffectChainView(target: .device(device))
+                                    Divider()
+                                    AudioAdviceSection(target: .device(uid: device.uid))
+                                }
+                            }
+                            .disabled(excluded)
+                            .opacity(excluded ? 0.5 : 1)
+                            if appState.tapEngine.state != .active {
                                 // 權限沒到手就隱藏功能本體，只留一句為什麼（DESIGN §6）
                                 Text("等化需要先開啟上方的「App 音訊接管」——與 per-app 音量走同一套系統音訊擷取權限。")
                                     .font(.caption)
