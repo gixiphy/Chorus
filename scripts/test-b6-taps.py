@@ -166,6 +166,30 @@ def main():
     record("多格全零但無人發聲 → 維持 probing", tap_state(dump()) == "probing",
            f"實得 {tap_state(dump())}")
 
+    print("\n[2-driver] 自家 HAL driver 宿主不算發聲來源（安靜時不得誤判）", flush=True)
+    # 2026-09-01 實機：driver 宿主永遠回報 IsRunningOutput，安靜時讓
+    # 「有來源發聲 × 全零」恆成立，build 66 重啟 3/3 誤判成 denied
+    notify("tapEngine", "0")
+    notify("tapFakeMode", "zeros")
+    notify("fakeAudioProcesses",
+           "Core Audio Driver|com.apple.audio.Core-Audio-Driver-Service.helper|1|other")
+    notify("tapEngine", "1")
+    ok, _ = wait_for(lambda d: tap_state(d) == "probing", 10)
+    record("啟用後進入探測", ok)
+    for _ in range(6):
+        notify("tapTick")
+    time.sleep(0.5)
+    record("只有 driver 宿主在「輸出」→ 維持 probing（管線不是音源）",
+           tap_state(dump()) == "probing", f"實得 {tap_state(dump())}")
+    # 真的有 App 發聲時判準照常運作
+    notify("fakeAudioProcesses",
+           "Core Audio Driver|com.apple.audio.Core-Audio-Driver-Service.helper|1|other;"
+           "Music|com.apple.Music|1")
+    for _ in range(3):
+        notify("tapTick")
+    ok, state = wait_for(lambda d: tap_state(d) == "denied", 10)
+    record("加入真的在發聲的 App → 判準恢復作用（denied）", ok, f"實得 {tap_state(state)}")
+
     print("\n[2a] 探測中裝置重新配置（藍牙耳機切降噪）不誤判成權限被拒", flush=True)
     notify("tapEngine", "0")
     notify("tapRebuildDelay", "50")
