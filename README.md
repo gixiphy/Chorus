@@ -106,8 +106,9 @@ LLM CLI，計費走你既有的訂閱。偵測到哪幾家就在設定頁列哪�
 - **等化器**：每台輸出裝置、每個 App 各一組。手動 10 段、**21 條風格 preset**，
   或 [AutoEq](https://github.com/jaakkopasanen/AutoEq) 耳機校正（內建常見型號、
   也可貼上校正檔）。抬高頻段時自動配上前置衰減，不會破音。
-- **AU 效果**：掛上本機的 Audio Unit 外掛，per-app 與裝置層各一條鏈，
-  參數面板即時可聽。
+- **AU 效果**：掛上 Audio Unit 效果，per-app 與裝置層各一條鏈，參數面板即時可聽。
+  **只支援 macOS 內建的 Apple 效果**（AUDynamicsProcessor、AUMatrixReverb
+  等二十餘個）；第三方外掛不在支援範圍內，不會出現在清單裡。
 - 外掛在載入時把 App 帶掛的話，下次啟動會被標成**已隔離**、不再自動載入——
   最壞只崩一次，不會每次開機都崩。
 
@@ -176,7 +177,15 @@ open Chorus.xcodeproj
 ```
 
 `./scripts/package.sh` 會遞增 build 號、跑 Release archive、以 Developer ID 重簽、驗簽並產出 zip；
-本機存好 notarytool 憑證（`xcrun notarytool store-credentials chorus …`）的話會一併送公證並 staple。
+本機存好 notarytool 憑證（`xcrun notarytool store-credentials chorus …`）的話會一併送公證、staple
+並驗過 Gatekeeper，任何一關沒過就中止，不會產出半成品。
+
+Keychain 裡有多張同名的 Developer ID Application 憑證（例如舊的還沒刪、新的剛續期）時，
+腳本會停下來要你指定用哪一張——`security find-identity -v -p codesigning` 取指紋後：
+
+```bash
+CHORUS_SIGN_IDENTITY=<40 字元 SHA-1 指紋> ./scripts/package.sh
+```
 
 純邏輯集中在 `Packages/ChorusCore`，`cd Packages/ChorusCore && swift test` 不碰硬體就跑得完。
 

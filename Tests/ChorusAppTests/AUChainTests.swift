@@ -69,6 +69,20 @@ struct AUChainTests {
         #expect(subtypes.contains(kAudioUnitSubType_MatrixReverb))
     }
 
+    @Test("目錄只列 Apple 內建效果——第三方外掛不支援（DESIGN §4）")
+    func catalogListsOnlyAppleEffects() {
+        // 第三方外掛在 Hardened Runtime 下載不進來（E7 實測），列出來只會
+        // 讓使用者選到一個必定失敗的項目。這條同時守住反向的災難：判準
+        // 若寫反，選單會一次清空——上面那條 catalogListsAppleBuiltins
+        // 抓數量，這條抓「有沒有混進非 Apple 的」。
+        let catalog = AUEffectCatalog()
+        catalog.refresh()
+        let foreign = catalog.items.filter {
+            $0.component.manufacturer != kAudioUnitManufacturer_Apple
+        }
+        #expect(foreign.isEmpty, "混進非 Apple 元件：\(foreign.map(\.name))")
+    }
+
     @Test("找不到的元件：整格誠實列入 failures、不建鏈")
     func missingComponentFailsHonestly() {
         let ghost = AUEffectEntry(
