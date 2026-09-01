@@ -480,9 +480,10 @@ private struct AdvisorSettingsTab: View {
     @ViewBuilder
     private func engineRow(_ engine: KnownCLIEngine) -> some View {
         let detected = appState.advisor.registry.detected.first { $0.id == engine.id }
+        let enabled = appState.advisor.registry.isEnabled(engine.id)
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                if let detected, detected.selectable {
+                if let detected, detected.selectable, enabled {
                     // 勾選狀態看的是**實際會用到的**引擎，不是設定值本身：
                     // 選定的引擎被移除時 registry 會回落 claude，若這裡只比對
                     // 設定值就會一個都不打勾，看起來像沒有引擎可用。
@@ -502,7 +503,20 @@ private struct AdvisorSettingsTab: View {
                     badge("實驗性")
                 }
                 Spacer()
-                statusText(engine: engine, detected: detected)
+                statusText(engine: engine, detected: detected, enabled: enabled)
+                if detected != nil, !engine.pendingIntegration {
+                    // 啟用開關（E0）：只控制是否允許 spawn。停用的引擎不會被
+                    // 任何顧問使用、也不成為回落對象——分析計費在使用者的
+                    // 訂閱上，不該有「默默換一家幫你花錢」的路徑。
+                    Toggle("", isOn: Binding(
+                        get: { appState.advisor.registry.isEnabled(engine.id) },
+                        set: { appState.advisor.registry.setEnabled($0, engineID: engine.id) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .help("停用後不會被任何顧問使用，也不會成為回落對象")
+                }
             }
             if let detected {
                 // 家目錄縮成 ~：路徑短一截，截圖／分享畫面時也不會露出使用者名稱
@@ -512,6 +526,13 @@ private struct AdvisorSettingsTab: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                if !engine.capabilities.contains(.vision) {
+                    // 能力旗標（E0）：目前目錄五家都能看圖，這行是為未來的
+                    // 純文字引擎留的——它可以服務調音顧問，但光環境顧問會跳過它。
+                    Text("純文字引擎——光環境顧問（需要看圖）不會使用它")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
                 modelPicker(engine)
             } else {
                 TextField(
@@ -585,12 +606,14 @@ private struct AdvisorSettingsTab: View {
     }
 
     @ViewBuilder
-    private func statusText(engine: KnownCLIEngine, detected: AdviceEngineRegistry.DetectedEngine?) -> some View {
+    private func statusText(engine: KnownCLIEngine, detected: AdviceEngineRegistry.DetectedEngine?, enabled: Bool) -> some View {
         if detected == nil {
             Text("未安裝").font(.caption).foregroundStyle(.secondary)
         } else if engine.pendingIntegration {
             Text("待接入").font(.caption).foregroundStyle(.orange)
                 .help("此 CLI 的 headless 讀圖流程尚未打通，接入層完成後開放選用")
+        } else if !enabled {
+            Text("已停用").font(.caption).foregroundStyle(.secondary)
         } else {
             Text("已安裝").font(.caption).foregroundStyle(.green)
         }

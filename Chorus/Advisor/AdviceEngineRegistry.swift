@@ -9,9 +9,19 @@ import Observation
 /// 差異很大（誰需要權限旗標、圖片怎麼送、回應在 stdout 還是 envelope 的哪個
 /// 欄位），猜錯的症狀往往是「跑完了但沒有輸出」這種難查的失敗。
 struct KnownCLIEngine: Identifiable, Sendable {
+    /// 引擎能力（E0 正式化）。消費端聲明需求、選擇時過濾——
+    /// 光環境顧問要 `.vision`（送照片），調音顧問純文字、什麼都不要求。
+    /// 目前五家都支援看圖，旗標在此刻不改變任何行為；它存在的意義是
+    /// 讓「接一個純文字引擎」成為加一筆目錄的事，而不是改選擇邏輯的事。
+    enum Capability: Sendable, Hashable {
+        /// 能吃影像輸入（路徑讓它讀，或參數直接附加）。
+        case vision
+    }
+
     let id: String
     let executableName: String
     let displayName: String
+    let capabilities: Set<Capability>
     let codec: AdviceOutputCodec
     /// 照片怎麼送到模型手上；決定 prompt 要不要講路徑。
     let photoDelivery: AdvicePrompt.PhotoDelivery
@@ -133,6 +143,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
     static let catalog: [KnownCLIEngine] = [
         KnownCLIEngine(
             id: "claude", executableName: "claude", displayName: "Claude Code",
+            capabilities: [.vision],
             codec: .jsonEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
             modelHint: "別名 opus／sonnet／fable，或完整名稱如 claude-opus-5",
@@ -143,6 +154,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
         ),
         KnownCLIEngine(
             id: "agy", executableName: "agy", displayName: "Antigravity",
+            capabilities: [.vision],
             codec: .responseEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
             modelHint: "slug，如 gemini-3.1-pro-high、claude-sonnet-4-6",
@@ -153,6 +165,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
         ),
         KnownCLIEngine(
             id: "grok", executableName: "grok", displayName: "Grok Build",
+            capabilities: [.vision],
             codec: .textEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
             modelHint: "模型 ID",
@@ -163,6 +176,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
         ),
         KnownCLIEngine(
             id: "codex", executableName: "codex", displayName: "Codex CLI",
+            capabilities: [.vision],
             codec: .plainStdout, photoDelivery: .attached,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
             modelHint: "模型名稱，如 gpt-5.6-terra",
@@ -173,6 +187,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
         ),
         KnownCLIEngine(
             id: "opencode", executableName: "opencode", displayName: "OpenCode",
+            capabilities: [.vision],
             codec: .plainStdout, photoDelivery: .attached,
             pendingIntegration: false, experimental: false, supportsModelSelection: true,
             modelHint: "provider/model 格式",
@@ -218,18 +233,48 @@ final class AdviceEngineRegistry {
         "/opt/homebrew/bin", "/usr/local/bin",
     ]
 
-    init(settings: SettingsStore) {
+    /// `scanOnInit: false` 供測試：不掃描實機、不 spawn `--version`，
+    /// 之後以 `injectDetected` 布置狀態。
+    init(settings: SettingsStore, scanOnInit: Bool = true) {
         self.settings = settings
-        rescan()
+        if scanOnInit { rescan() }
     }
 
-    /// 目前選定且可用的引擎；選定的不可用時回落 claude → 任一可選引擎。
-    var activeEngine: DetectedEngine? {
-        let selectable = detected.filter(\.selectable)
-        if let chosen = selectable.first(where: { $0.id == settings.advisorEngineID }) {
+    /// 目前選定且可用的引擎（不要求任何能力）；純文字消費端（調音顧問）用這個。
+    var activeEngine: DetectedEngine? { activeEngine(requiring: []) }
+
+    /// 選定且具備所需能力的引擎；選定的不合格（被停用、缺能力、已移除）時
+    /// 回落 claude → 任一合格引擎。回落是為了「按了分析不該沒反應」，
+    /// 但**永不**回落到被使用者停用的引擎——停用＝不准 spawn，計費在使用者
+    /// 的訂閱上，這條線比可用性硬。
+    func activeEngine(requiring required: Set<KnownCLIEngine.Capability>) -> DetectedEngine? {
+        let usable = detected.filter {
+            $0.selectable && isEnabled($0.id) && $0.engine.capabilities.isSuperset(of: required)
+        }
+        if let chosen = usable.first(where: { $0.id == settings.advisorEngineID }) {
             return chosen
         }
-        return selectable.first { $0.id == "claude" } ?? selectable.first
+        return usable.first { $0.id == "claude" } ?? usable.first
+    }
+
+    // MARK: - 啟用開關（E0）
+
+    /// 開關只控制「是否允許 spawn」（DESIGN §2.1）；偵測與列出照舊。
+    func isEnabled(_ engineID: String) -> Bool {
+        !settings.advisorDisabledEngines.contains(engineID)
+    }
+
+    func setEnabled(_ enabled: Bool, engineID: String) {
+        if enabled {
+            settings.advisorDisabledEngines.remove(engineID)
+        } else {
+            settings.advisorDisabledEngines.insert(engineID)
+        }
+    }
+
+    /// 測試注入（同 TestHooks 慣例）：直接布置偵測結果，跳過實機掃描。
+    func injectDetected(_ entries: [DetectedEngine]) {
+        detected = entries
     }
 
     func rescan() {

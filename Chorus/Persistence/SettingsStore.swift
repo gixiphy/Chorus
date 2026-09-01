@@ -46,6 +46,7 @@ final class SettingsStore {
         static let advisorConfirmed = "chorus.advisor.confirmed"
         static let advisorModelIDs = "chorus.advisor.modelIDs"
         static let advisorModelCache = "chorus.advisor.modelCache"
+        static let advisorDisabledEngines = "chorus.advisor.disabledEngines"
         static let audioTaps = "chorus.audio.tapsEnabled"
         static let appAudio = "chorus.audio.appSettings"
         static let excludedApps = "chorus.audio.excludedApps"
@@ -193,6 +194,12 @@ final class SettingsStore {
     /// 版本沒變就用快取，升版即重抓——列舉要打網路，不該每次開設定頁都跑。
     var advisorModelCache: [String: [String]] {
         didSet { defaults.set(advisorModelCache, forKey: Key.advisorModelCache) }
+    }
+
+    /// 被使用者停用的引擎（engine id）。停用＝不准 spawn、也不成為回落對象
+    /// （計費走使用者訂閱，回落到沒選過的引擎等於替人花錢）。預設全部啟用。
+    var advisorDisabledEngines: Set<String> {
+        didSet { defaults.set(Array(advisorDisabledEngines).sorted(), forKey: Key.advisorDisabledEngines) }
     }
 
     /// Process tap 引擎（per-app 音量的基礎設施，B6）。**預設關閉**
@@ -356,6 +363,7 @@ final class SettingsStore {
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)
         advisorModelIDs = (defaults.dictionary(forKey: Key.advisorModelIDs) as? [String: String]) ?? [:]
         advisorModelCache = (defaults.dictionary(forKey: Key.advisorModelCache) as? [String: [String]]) ?? [:]
+        advisorDisabledEngines = Set(defaults.stringArray(forKey: Key.advisorDisabledEngines) ?? [])
         audioTapsEnabled = defaults.bool(forKey: Key.audioTaps)
         if let data = defaults.data(forKey: Key.appAudio),
            let decoded = try? JSONDecoder().decode(AppAudioSettings.self, from: data) {
