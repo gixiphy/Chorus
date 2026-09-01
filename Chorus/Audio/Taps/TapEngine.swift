@@ -229,8 +229,13 @@ final class TapEngine {
             guard settings.audioTapsEnabled else { return }
             scheduleRebuild(after: rebuildDelay) { engine in
                 if case .active = engine.state { return } // 期間已經活了就別打斷
-                engine.beginProbe()
+                engine.beginProbe(afterDeviceEvent: true)
             }
+        case .probing:
+            // 探測中撞上裝置清單變動：那段的全零不算證據。
+            // **刻意不重建 probe**——首次啟用時 TCC 對話框正在畫面上，
+            // 裝置清單抖一下就收舊建新會把對話框扯掉重出。
+            monitor.noteDeviceChanged()
         default:
             reconcileSessions()
         }
@@ -605,9 +610,13 @@ final class TapEngine {
 
     // MARK: - 探測與健康判讀
 
-    private func beginProbe() {
+    /// `afterDeviceEvent`：這次探測是被裝置事件觸發的（插拔、重協商）。
+    /// 鏈路可能還沒穩——起步就給 monitor 一段 hold，否則重探測撞上
+    /// 空隙的尾巴會立刻再 latch 一次 denied。
+    private func beginProbe(afterDeviceEvent: Bool = false) {
         shutdownSessions()
         monitor.reset()
+        if afterDeviceEvent { monitor.noteDeviceChanged() }
         lastProbeStats = TapSessionStats()
         probeStats = TapSessionStats()
         registry.refresh()
@@ -621,6 +630,18 @@ final class TapEngine {
                 outputDeviceUID: outputUID, excludingProcessObjects: excluded
             )
             state = .probing
+            // 探測期間裝置換了格式（藍牙耳機切降噪／通透）：aggregate 的格式
+            // 綁在建立時，不重建輕則卡在無聲、重則整輪誤判成權限被拒。
+            // 只標 hold 不夠——格式過期的 probe 等 hold 過完照樣全零。
+            probeSession?.onDeviceReconfigured = { [weak self] in
+                guard let self, self.state == .probing else { return }
+                self.log.notice("probe 的裝置重新配置 → \(self.rebuildDelay.components.seconds, privacy: .public)s 後重新探測")
+                self.stopProbe()
+                self.scheduleRebuild(after: self.rebuildDelay) { engine in
+                    guard engine.state == .probing else { return }
+                    engine.beginProbe(afterDeviceEvent: true)
+                }
+            }
             startTicking()
         } catch {
             state = .failed("探測啟動失敗：\(error)")
@@ -673,6 +694,19 @@ final class TapEngine {
     /// 裝置」被收舊建新；**明確指定路由的不動**——使用者選了「這個 App
     /// 固定走耳機」，換系統預設不該把它拉回來。
     private func defaultOutputChanged() {
+        // 探測中換了預設輸出：probe 建在舊裝置上，聲音已經走新裝置——
+        // 舊 tap 從此全零，而來源仍在發聲，正是誤判成權限被拒的形狀。
+        // （`audioDevicesChanged` 只在裝置**清單**變動時才叫，接不到這條。）
+        // 只 hold 不夠：吸著過期裝置的 probe 永遠等不到非零，得重建。
+        if state == .probing {
+            log.notice("探測中預設輸出變更 → \(self.rebuildDelay.components.seconds, privacy: .public)s 後重新探測")
+            stopProbe()
+            scheduleRebuild(after: rebuildDelay) { engine in
+                guard engine.state == .probing else { return }
+                engine.beginProbe(afterDeviceEvent: true)
+            }
+            return
+        }
         reconcileSessions()
     }
 

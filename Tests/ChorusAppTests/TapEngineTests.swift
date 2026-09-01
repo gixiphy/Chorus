@@ -91,6 +91,102 @@ struct TapEngineTests {
         #expect(engine.state == .active)
     }
 
+    // MARK: - 探測期間的裝置事件（藍牙重協商不該被當成權限被拒）
+
+    /// 等重探測開跑：`captureOnly` 的 session 數量多一條就是新 probe 建好了。
+    private func waitForReProbe(_ backend: FakeTapBackend, count: Int) async throws {
+        for _ in 0..<100 {
+            if backend.startedSessions.filter({ $0.kind == .captureOnly }).count >= count { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    @Test("探測中取樣率變動（切降噪）：重新探測且不誤判 denied")
+    func probeReconfigureDoesNotDeny() async throws {
+        let (engine, backend, registry) = makeEngine(mode: .zeros)
+        injectAudibleApp(registry)
+        engine.rebuildDelay = .zero
+        engine.setEnabled(true)
+        engine.healthTick() // 事件抵達前已經記了一格嫌疑
+        #expect(engine.state == .probing)
+
+        backend.probeSession?.simulateDeviceReconfigured()
+        try await waitForReProbe(backend, count: 2)
+        #expect(backend.startedSessions.filter { $0.kind == .captureOnly }.count == 2)
+
+        // 舊碼在這裡第二格就 denied；新判準要撐過 hold
+        for _ in 0..<3 {
+            engine.healthTick()
+            #expect(engine.state == .probing)
+        }
+        backend.mode = .audio // 重協商結束，樣本回來了
+        engine.healthTick()
+        #expect(engine.state == .active)
+    }
+
+    @Test("探測中裝置清單變動：嫌疑歸零，但不重建 probe（TCC 對話框還在畫面上）")
+    func probeDeviceListChangeHoldsWithoutRebuild() {
+        let (engine, backend, registry) = makeEngine(mode: .zeros)
+        injectAudibleApp(registry)
+        engine.setEnabled(true)
+        engine.healthTick()
+        #expect(engine.state == .probing)
+
+        engine.audioDevicesChanged()
+        #expect(backend.startedSessions.filter { $0.kind == .captureOnly }.count == 1)
+
+        for _ in 0..<3 {
+            engine.healthTick()
+            #expect(engine.state == .probing)
+        }
+        // hold 過期 → 回到原判準，兩格後照樣判定
+        engine.healthTick()
+        #expect(engine.state == .probing)
+        engine.healthTick()
+        #expect(engine.state == .denied)
+    }
+
+    @Test("探測中預設輸出變更：重新探測（probe 吸著舊裝置永遠等不到非零）")
+    func probeDefaultOutputChangeReProbes() async throws {
+        let (engine, backend, registry) = makeEngine(mode: .zeros)
+        injectAudibleApp(registry)
+        engine.rebuildDelay = .zero
+        engine.setEnabled(true)
+        engine.healthTick()
+
+        backend.simulateDefaultOutputChange()
+        try await waitForReProbe(backend, count: 2)
+        #expect(backend.startedSessions.filter { $0.kind == .captureOnly }.count == 2)
+
+        for _ in 0..<3 {
+            engine.healthTick()
+            #expect(engine.state == .probing)
+        }
+        backend.mode = .audio
+        engine.healthTick()
+        #expect(engine.state == .active)
+    }
+
+    @Test("真被拒時裝置事件只是延後判定，偵測沒有被做壞")
+    func stillDeniesAfterDeviceEvent() async throws {
+        let (engine, backend, registry) = makeEngine(mode: .zeros)
+        injectAudibleApp(registry)
+        engine.rebuildDelay = .zero
+        engine.setEnabled(true)
+        engine.healthTick()
+
+        backend.probeSession?.simulateDeviceReconfigured()
+        try await waitForReProbe(backend, count: 2)
+
+        // hold 三格 ＋ 嫌疑兩格 = 第五格判定
+        for _ in 0..<4 {
+            engine.healthTick()
+            #expect(engine.state == .probing)
+        }
+        engine.healthTick()
+        #expect(engine.state == .denied)
+    }
+
     @Test("active 前不建 tap；active 後依設定自動建 playthrough session")
     func tapRequiresActive() {
         let (engine, backend, registry) = makeEngine(mode: .audio)

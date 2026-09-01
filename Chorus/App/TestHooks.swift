@@ -212,6 +212,14 @@ final class TestHooks {
         case "tapTick":
             // 不等計時器，直接推一格健康判讀（E2E 提速）
             appState.tapEngine.healthTick()
+        case "tapProbeReconfigured":
+            // 模擬探測期間輸出裝置換了格式（藍牙耳機切降噪／通透）
+            TestSupport.fakeTapBackend?.probeSession?.simulateDeviceReconfigured()
+        case "tapRebuildDelay":
+            // value = 毫秒。E2E 不想等正式的 1.5 秒重建延遲
+            if let raw = info["value"], let ms = Int(raw) {
+                appState.tapEngine.rebuildDelay = .milliseconds(ms)
+            }
         case "fakeAudioProcesses":
             // value = "Name|bundle.id|1;Name2|bundle2|0"（audible 旗標）。
             // 第 4 欄可選：regular（預設）／accessory／other——

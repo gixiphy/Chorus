@@ -38,11 +38,18 @@ public struct TapHealthMonitor: Sendable, Equatable {
     /// 判定權限缺失需要的連續可疑窗數。1 太躁（發聲旗標與樣本有時間差），
     /// 預設 2（約兩秒）。
     public let suspicionThreshold: Int
+    /// 裝置變動後要忽略幾個窗。藍牙耳機切降噪／通透時鏈路重協商，樣本會
+    /// 空掉 1–2 秒（空隙在耳機自己的 DSP 裡，無從消除）——那段期間的
+    /// 「發聲×全零」與權限被拒同形，不能當證據。加上窗邊界量化最多 1 秒，
+    /// 預設 3。
+    public let holdWindowsAfterDeviceChange: Int
     private var suspicion = 0
+    private var holdRemaining = 0
     private var latched: Verdict?
 
-    public init(suspicionThreshold: Int = 2) {
+    public init(suspicionThreshold: Int = 2, holdWindowsAfterDeviceChange: Int = 3) {
         self.suspicionThreshold = max(1, suspicionThreshold)
+        self.holdWindowsAfterDeviceChange = max(0, holdWindowsAfterDeviceChange)
     }
 
     public var verdict: Verdict { latched ?? .undetermined }
@@ -56,6 +63,11 @@ public struct TapHealthMonitor: Sendable, Equatable {
             return .healthy
         }
         guard window.callbacks > 0 else { return .undetermined }
+        if holdRemaining > 0 {
+            // hold 是時間性的：任何窗（含無聲窗）都消耗一格。
+            holdRemaining -= 1
+            return .undetermined
+        }
         if window.anySourceAudible {
             suspicion += 1
             if suspicion >= suspicionThreshold {
@@ -67,9 +79,24 @@ public struct TapHealthMonitor: Sendable, Equatable {
         return .undetermined
     }
 
+    /// 裝置面貌或格式剛變動（清單插拔、取樣率重協商）。既有嫌疑作廢，
+    /// 接下來 `holdWindowsAfterDeviceChange` 個窗不作為 denied 證據。
+    ///
+    /// **清零而非凍結**：全零可能比 rate-change 的 property 通知早零點幾秒
+    /// 開始——事件抵達前那個窗可能已經記過一次嫌疑，一併作廢才乾淨。
+    /// 代價只是真被拒時多等最多一個窗。
+    ///
+    /// 已 latch（healthy／denied）時是 no-op：latch 只由 `reset()` 清。
+    public mutating func noteDeviceChanged() {
+        guard latched == nil else { return }
+        suspicion = 0
+        holdRemaining = holdWindowsAfterDeviceChange
+    }
+
     /// 引擎重啟（或使用者到系統設定改了權限後重試）時歸零。
     public mutating func reset() {
         suspicion = 0
+        holdRemaining = 0
         latched = nil
     }
 }

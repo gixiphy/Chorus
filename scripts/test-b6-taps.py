@@ -166,6 +166,39 @@ def main():
     record("多格全零但無人發聲 → 維持 probing", tap_state(dump()) == "probing",
            f"實得 {tap_state(dump())}")
 
+    print("\n[2a] 探測中裝置重新配置（藍牙耳機切降噪）不誤判成權限被拒", flush=True)
+    notify("tapEngine", "0")
+    notify("tapRebuildDelay", "50")
+    notify("tapFakeMode", "zeros")
+    notify("fakeAudioProcesses", "Music|com.apple.Music|1")
+    notify("tapEngine", "1")
+    ok, _ = wait_for(lambda d: tap_state(d) == "probing", 10)
+    record("重新啟用後進入探測", ok)
+    # 注意：引擎自己每秒也會 tick 一格，hold 的額度是三格（約三秒）——
+    # 這段要壓在幾百毫秒內做完，否則自動 tick 把額度吃光就會照常判定。
+    notify("tapProbeReconfigured")    # 鏈路重協商 → 收掉舊 probe、延遲重探測
+    time.sleep(0.4)                   # rebuildDelay 已調成 50ms，重探測開跑了
+    notify("tapTick"); notify("tapTick")   # 舊碼在這裡就 denied 了
+    time.sleep(0.3)
+    record("重協商期間的「發聲×全零」不算證據 → 維持 probing",
+           tap_state(dump()) == "probing", f"實得 {tap_state(dump())}")
+    notify("tapFakeMode", "audio")
+    notify("tapTick")
+    ok, _ = wait_for(lambda d: tap_state(d) == "active", 10)
+    record("空窗結束、樣本回來 → active（不必使用者手動重試）", ok)
+
+    print("\n[2b] 真被拒時仍然判得出來（偵測沒有被 hold 做壞）", flush=True)
+    notify("tapEngine", "0")
+    notify("tapFakeMode", "zeros")
+    notify("tapEngine", "1")
+    ok, _ = wait_for(lambda d: tap_state(d) == "probing", 10)
+    record("再次進入探測", ok)
+    for _ in range(6):
+        notify("tapTick")
+    ok, state = wait_for(lambda d: tap_state(d) == "denied", 10)
+    record("持續全零 → 仍然 denied", ok, f"實得 {tap_state(state)}")
+    notify("tapRebuildDelay", "1500")
+
     print("\n[3] 權限正常 → active，per-app session 生命週期", flush=True)
     notify("tapEngine", "0")
     notify("tapFakeMode", "audio")

@@ -24,12 +24,18 @@ final class FakeTapBackend: TapBackend {
     func defaultOutputDeviceUID() -> String? { defaultOutputUID }
     func outputDeviceUIDs() -> [String] { availableOutputUIDs }
 
+    /// 目前的探測 session。測試要對它觸發 `simulateDeviceReconfigured()`
+    /// （模擬探測期間藍牙耳機切降噪），沒有參照就摸不到。
+    private(set) var probeSession: FakeTapSession?
+
     func startProbeSession(
         outputDeviceUID: String,
         excludingProcessObjects: [AudioObjectID]
     ) throws -> any TapSession {
         startedSessions.append((.captureOnly, "probe"))
-        return FakeTapSession(kind: .captureOnly, backend: self)
+        let session = FakeTapSession(kind: .captureOnly, backend: self)
+        probeSession = session
+        return session
     }
 
     func startPlaythroughSession(
