@@ -91,10 +91,15 @@ struct EQPanelView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // 搜尋框獨佔一列。與三顆按鈕併排時，按鈕都是自然寬度、只有
+            // 輸入框會被壓縮，placeholder 直接被截成「搜尋耳機型號（…」——
+            // 而那串括號裡的 AutoEq 正是在說這個欄位查的是什麼清單。
+            TextField("搜尋耳機型號（AutoEq）", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+
+            // 找不到型號時的三條替代路徑，各自獨立
             HStack(spacing: 6) {
-                TextField("搜尋耳機型號（AutoEq）", text: $query)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
                 // 風格 preset：口味，不是校正——與 AutoEq 是不同責任。
                 // 套用後照樣可以逐段微調（會走同一條手動編輯路徑）
                 Menu("風格") {
@@ -114,6 +119,7 @@ struct EQPanelView: View {
                 }
                 .controlSize(.small)
                 .help("任何型號都適用，而且離線可用——內建清單找不到時走這條")
+                Spacer(minLength: 0)
             }
 
             if !query.isEmpty {
