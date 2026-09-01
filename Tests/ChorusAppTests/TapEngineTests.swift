@@ -91,6 +91,44 @@ struct TapEngineTests {
         #expect(engine.state == .active)
     }
 
+    // MARK: - driver 宿主行程不是音源
+
+    @Test("HAL driver 宿主永遠宣稱在輸出——不能當成發聲證據")
+    func driverHostIsNotAnAudibleSource() {
+        let registry = AudioProcessRegistry()
+        registry.injectFake([
+            .init(objectID: 2001, pid: 3001,
+                  bundleID: AudioProcessRegistry.driverHostBundleID,
+                  name: "Core Audio Driver (ChorusAudioDevice.driver)", isAudible: true),
+        ])
+        // 只有我們自己的 driver 宿主在「輸出」＝系統其實是安靜的
+        #expect(!registry.anyOtherProcessAudible)
+
+        // 真的有 App 在放音樂時照樣算數
+        registry.injectFake([
+            .init(objectID: 2001, pid: 3001,
+                  bundleID: AudioProcessRegistry.driverHostBundleID,
+                  name: "Core Audio Driver (ChorusAudioDevice.driver)", isAudible: true),
+            .init(objectID: 1001, pid: 2001, bundleID: "com.apple.Music",
+                  name: "Music", isAudible: true),
+        ])
+        #expect(registry.anyOtherProcessAudible)
+    }
+
+    @Test("系統安靜、只有 driver 宿主在「輸出」：探測不誤判成權限被拒")
+    func silentSystemWithDriverHostStaysProbing() {
+        let (engine, _, registry) = makeEngine(mode: .zeros)
+        registry.injectFake([
+            .init(objectID: 2001, pid: 3001,
+                  bundleID: AudioProcessRegistry.driverHostBundleID,
+                  name: "Core Audio Driver (ChorusAudioDevice.driver)", isAudible: true),
+        ])
+        engine.setEnabled(true)
+        // 舊碼在這裡兩格就 denied（2026-09-01 實機重現 3/3）
+        for _ in 0..<6 { engine.healthTick() }
+        #expect(engine.state == .probing)
+    }
+
     // MARK: - 探測期間的裝置事件（藍牙重協商不該被當成權限被拒）
 
     /// 等重探測開跑：`captureOnly` 的 session 數量多一條就是新 probe 建好了。

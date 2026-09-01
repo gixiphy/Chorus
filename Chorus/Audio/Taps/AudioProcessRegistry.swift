@@ -45,10 +45,24 @@ final class AudioProcessRegistry {
     }
     @ObservationIgnored private var cachedOwnProcessObjectID: AudioObjectID?
 
+    /// HAL driver 的宿主行程。macOS 把每支第三方 HAL plugin 裝在這個通用
+    /// helper 裡，所以**我們自己的虛擬裝置 driver 也是它**。
+    static let driverHostBundleID = "com.apple.audio.Core-Audio-Driver-Service.helper"
+
     /// 有任何**非自己**的來源正在發聲（健康判讀的 audible 訊號）。
+    ///
+    /// 排除 driver 宿主行程：它們永遠回報「正在輸出」——包含 Chorus 自己的
+    /// 虛擬裝置——但那是管線不是音源。2026-09-01 實測：系統安靜時，我們自己
+    /// 的 driver host 讓「有來源發聲 × 樣本全零」恆成立，探測必定在兩格內
+    /// 誤判成權限被拒（安靜時重啟 3/3 denied、有聲音時 2/2 active）。
+    /// 真有音訊流過 driver host 時源頭 App 自己也會登記為 audible，
+    /// 所以排除它們不會漏掉訊號；而萬一漏了，失效模式是停在 undetermined
+    /// （安全），不是誤判 denied（有害）。
     var anyOtherProcessAudible: Bool {
         let ownPid = ProcessInfo.processInfo.processIdentifier
-        return processes.contains { $0.isAudible && $0.pid != ownPid }
+        return processes.contains {
+            $0.isAudible && $0.pid != ownPid && $0.bundleID != Self.driverHostBundleID
+        }
     }
 
     /// 選單列 per-app 清單的來源：歸組後可列出的 App root，依顯示名稱排序。
