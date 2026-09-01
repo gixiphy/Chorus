@@ -68,15 +68,32 @@ xattr -cr "$APP"
 
 # Developer ID 重簽：archive 出來的是開發簽章（Apple Development），別台 Mac 打不開。
 # 巢狀先簽、app 本體最後——順序反了外層簽章會被內層改動作廢。
-DEVID="Developer ID Application"
-if security find-identity -v -p codesigning | grep -q "$DEVID"; then
+#
+# 憑證用 40 字元 SHA-1 指紋指定，不用名稱。Keychain 裡常同時躺著過期的舊憑證和剛
+# 續期的新憑證，名稱一模一樣，codesign 拿名稱做子字串比對會報 ambiguous 直接中止。
+# 要指定特定一張：CHORUS_SIGN_IDENTITY=<40 字元指紋> scripts/package.sh
+DEVID="${CHORUS_SIGN_IDENTITY:-}"
+if [[ -z "$DEVID" ]]; then
+  CERT_LINES=$(security find-identity -v -p codesigning | grep '"Developer ID Application' || true)
+  CERT_COUNT=$(printf '%s\n' "$CERT_LINES" | grep -c . || true)
+  if [[ "$CERT_COUNT" -eq 1 ]]; then
+    DEVID=$(printf '%s\n' "$CERT_LINES" | awk '{print $2}')
+  elif [[ "$CERT_COUNT" -gt 1 ]]; then
+    echo "✗ Keychain 裡有 $CERT_COUNT 張 Developer ID Application 憑證，無法判斷該用哪張：" >&2
+    printf '%s\n' "$CERT_LINES" >&2
+    echo "  請指定：CHORUS_SIGN_IDENTITY=<40 字元指紋> scripts/package.sh" >&2
+    exit 1
+  fi
+fi
+
+if [[ -n "$DEVID" ]]; then
   codesign --force --options runtime --timestamp --sign "$DEVID" \
     "$APP/Contents/PlugIns/ChorusAudioDevice.driver"
   codesign --force --options runtime --timestamp --sign "$DEVID" \
     "$APP/Contents/SharedSupport/chorus"
   codesign --force --options runtime --timestamp \
     --entitlements Chorus/Support/Chorus.entitlements --sign "$DEVID" "$APP"
-  echo "▸ 已用 Developer ID 重簽"
+  echo "▸ 已用 Developer ID 重簽（$DEVID）"
 else
   echo "⚠︎ 找不到 Developer ID Application 憑證——這包是開發簽章，只能自己機器跑" >&2
 fi
@@ -86,7 +103,24 @@ if ! codesign --verify --deep --strict "$APP"; then
   echo "簽章驗證失敗，不產出 zip" >&2
   exit 1
 fi
-echo "▸ 簽章驗證通過（含巢狀 driver 與 CLI）"
+
+# --verify --deep --strict 對開發簽章一樣會過，所以還要確認「是誰簽的、有沒有開
+# Hardened Runtime」。這兩項不對公證一定被拒，但要送出去等上好幾分鐘才知道。
+if [[ -n "$DEVID" ]]; then
+  SIGN_INFO=$(codesign -dv --verbose=4 "$APP" 2>&1)
+  if ! grep -q '^Authority=Developer ID Application' <<< "$SIGN_INFO"; then
+    echo "✗ 簽出來的不是 Developer ID 憑證，不產出 zip：" >&2
+    grep '^Authority=' <<< "$SIGN_INFO" >&2 || true
+    exit 1
+  fi
+  if ! grep -qE '^CodeDirectory .*flags=[^ ]*runtime' <<< "$SIGN_INFO"; then
+    echo "✗ 沒有啟用 Hardened Runtime，公證會被拒，不產出 zip" >&2
+    exit 1
+  fi
+  echo "▸ 簽章驗證通過（Developer ID＋Hardened Runtime＋巢狀 driver 與 CLI）"
+else
+  echo "▸ 簽章驗證通過（開發簽章，含巢狀 driver 與 CLI）"
+fi
 
 ZIP="dist/Chorus-$VERSION-b$NEXT_BUILD.zip"
 WORK_ZIP="$WORK/Chorus-$VERSION-b$NEXT_BUILD.zip"
@@ -98,12 +132,28 @@ echo "▸ 已打包 $ZIP"
 NOTARY_PROFILE="${CHORUS_NOTARY_PROFILE:-chorus}"
 if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" > /dev/null 2>&1; then
   echo "▸ 送公證（profile: $NOTARY_PROFILE）…"
-  xcrun notarytool submit "$WORK_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  SUBMIT_LOG="$WORK/notary-submit.txt"
+  xcrun notarytool submit "$WORK_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait \
+    2>&1 | tee "$SUBMIT_LOG" || true
+  NOTARY_STATUS=$(grep -E '^ *status:' "$SUBMIT_LOG" | tail -1 | awk '{print $2}' || true)
+  SUBMIT_ID=$(grep -E '^ *id:' "$SUBMIT_LOG" | tail -1 | awk '{print $2}' || true)
+  # 被拒時畫面上只有一行 status，真正的原因要另外抓 log
+  # （多半是巢狀 code 沒簽、缺 Hardened Runtime，或 entitlements 無效）。
+  if [[ "$NOTARY_STATUS" != "Accepted" ]]; then
+    echo "✗ 公證未通過（status: ${NOTARY_STATUS:-未知}）" >&2
+    if [[ -n "$SUBMIT_ID" ]]; then
+      echo "  詳細原因（submission $SUBMIT_ID）：" >&2
+      xcrun notarytool log "$SUBMIT_ID" --keychain-profile "$NOTARY_PROFILE" >&2 || true
+    fi
+    exit 1
+  fi
   xcrun stapler staple "$APP"
+  xcrun stapler validate "$APP"   # ticket 有沒有真的貼上去，staple 成功不等於驗得過
   rm -f "$WORK_ZIP"
   ditto -c -k --keepParent "$APP" "$WORK_ZIP"
-  spctl -a -vvv -t exec "$APP" || true
-  echo "▸ 已公證並重新打包"
+  # 最後一道：模擬別台 Mac 下載後開啟的判定。這關過不了就不該把包發出去，不吞錯。
+  spctl -a -vvv -t exec "$APP"
+  echo "▸ 已公證、staple 並重新打包"
 else
   echo "⚠︎ 沒有 notarytool 憑證（profile: $NOTARY_PROFILE）——這包未公證，別台 Mac 會被 Gatekeeper 擋" >&2
 fi
