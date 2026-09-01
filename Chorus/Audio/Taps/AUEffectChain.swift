@@ -2,6 +2,7 @@ import AudioToolbox
 import ChorusCore
 import Foundation
 import Synchronization
+import os
 
 /// 一層 AU 效果鏈的共享狀態（App 層／裝置層各一份，B6-8 AU-2b）。
 /// 與 `EQLayerState` 同構：主執行緒建好整條鏈後一次 atomic store 交出
@@ -199,6 +200,13 @@ enum AUChainBlock {
 /// 主執行緒的鏈建造者：實例化、掛 feed、還原 ClassInfo、配隔離閂。
 @MainActor
 enum AUChainBuilder {
+    /// 與 TapEngine 同一條觀測窗口（`log stream --predicate
+    /// 'subsystem == "com.hermes.Chorus"'`）。`failures` 雖然有進效果面板，
+    /// 但那要使用者剛好打開那個 target 的面板才看得到；事後從 log 診斷
+    /// 「效果為什麼沒回來」時，這裡原本一行痕跡都沒有。成功路徑也要記，
+    /// 否則裝置重建後「鏈有沒有帶著參數回來」無從對帳。
+    private static let log = Logger(subsystem: "com.hermes.Chorus", category: "taps")
+
     struct BuildResult {
         var block: UnsafeMutableRawPointer?
         /// 建不起來的格（外掛不在、實例化失敗）——UI 誠實說明用。
@@ -261,6 +269,7 @@ enum AUChainBuilder {
             )
             guard let component = AudioComponentFindNext(nil, &description) else {
                 result.failures.append("找不到「\(entry.name)」——外掛可能已移除")
+                Self.log.error("AU 找不到元件：\(entry.name, privacy: .public) key=\(entry.component.key, privacy: .public)")
                 continue
             }
 
@@ -270,6 +279,7 @@ enum AUChainBuilder {
             guard status == noErr, let unit = maybeUnit else {
                 latch(nil)
                 result.failures.append("「\(entry.name)」實例化失敗（\(status)）")
+                Self.log.error("AU 實例化失敗：\(entry.name, privacy: .public) key=\(entry.component.key, privacy: .public) status=\(status, privacy: .public)")
                 continue
             }
 
@@ -311,18 +321,26 @@ enum AUChainBuilder {
                 latch(nil)
                 AudioComponentInstanceDispose(unit)
                 result.failures.append("「\(entry.name)」初始化失敗（\(status)）")
+                Self.log.error("AU 初始化失敗：\(entry.name, privacy: .public) key=\(entry.component.key, privacy: .public) status=\(status, privacy: .public)")
                 continue
             }
 
             // 參數存檔（標準 aupreset 內容）。還原失敗不是致命——外掛
-            // 回到預設狀態，比整格消失誠實
-            if let data = entry.classInfo,
-               let restored = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) {
-                var classInfo = restored as CFPropertyList?
-                AudioUnitSetProperty(
-                    unit, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0,
-                    &classInfo, UInt32(MemoryLayout<CFPropertyList?>.size)
-                )
+            // 回到預設狀態，比整格消失誠實。但要記一筆：使用者調過的參數
+            // 靜靜回到預設是「聽起來不對卻查不出為什麼」的典型形狀。
+            if let data = entry.classInfo {
+                if let restored = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) {
+                    var classInfo = restored as CFPropertyList?
+                    let restoreStatus = AudioUnitSetProperty(
+                        unit, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0,
+                        &classInfo, UInt32(MemoryLayout<CFPropertyList?>.size)
+                    )
+                    if restoreStatus != noErr {
+                        Self.log.notice("AU 參數還原被拒：\(entry.name, privacy: .public) status=\(restoreStatus, privacy: .public)——該格回到預設值")
+                    }
+                } else {
+                    Self.log.notice("AU 參數存檔解析失敗：\(entry.name, privacy: .public)——該格回到預設值")
+                }
             }
             latch(nil)
             units.append(unit)
@@ -331,6 +349,7 @@ enum AUChainBuilder {
 
         guard !units.isEmpty else {
             block.deallocate() // 只有空槽，沒有任何實例——不用走 dispose
+            log.error("AU 鏈全數建不起來：要求 \(active.count, privacy: .public) 格、失敗 \(result.failures.count, privacy: .public) 格")
             return result
         }
         // 回填實際實例數與內容
@@ -341,6 +360,11 @@ enum AUChainBuilder {
             slots[index] = unit
         }
         result.block = block
+        let names = active
+            .filter { result.builtIDs.contains($0.id) }
+            .map(\.name)
+            .joined(separator: " → ")
+        log.notice("AU 鏈建立：\(names, privacy: .public)（\(units.count, privacy: .public)/\(active.count, privacy: .public) 格，\(Int(sampleRate), privacy: .public) Hz）")
         return result
     }
 }
