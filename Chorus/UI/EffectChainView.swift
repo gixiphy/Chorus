@@ -242,8 +242,9 @@ private struct AUParameterSheet: View {
             .padding(12)
             Divider()
             if let unit {
+                // 寬高交給 AUGenericView 的自然尺寸決定（sizeThatFits）；
+                // 硬給 minWidth 會讓 generic 面板比 sheet 寬、右緣被裁
                 AUGenericParameterView(unit: unit)
-                    .frame(minWidth: 480, minHeight: 320)
             } else {
                 Text("活實例已不在（鏈被重建）——重新打開面板")
                     .font(.caption)
@@ -257,16 +258,56 @@ private struct AUParameterSheet: View {
 private struct AUGenericParameterView: NSViewRepresentable {
     let unit: AudioUnit
 
+    /// sheet 的尺寸邊界：窄於 minWidth 拉到 minWidth，
+    /// 超過 maxWidth / maxHeight 就靠 NSScrollView 捲
+    private static let minWidth: CGFloat = 480
+    private static let maxWidth: CGFloat = 960
+    private static let maxHeight: CGFloat = 560
+
+    final class Coordinator {
+        var naturalSize = CGSize(width: 480, height: 320)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
         let generic = AUGenericView(audioUnit: unit)
         generic.showsExpertParameters = false
+
+        // AUGenericView 在 init 就依偏好尺寸把 slider 排好，之後不會跟著
+        // 容器縮；所以反過來讓 sheet 配合它，而不是給它一個更窄的框
+        var natural = generic.frame.size
+        if natural.width < 1 || natural.height < 1 { natural = generic.fittingSize }
+        natural.width = max(Self.minWidth, natural.width)
+        generic.frame = CGRect(origin: .zero, size: natural)
+        context.coordinator.naturalSize = natural
+
+        // 翻轉的容器讓內容從頂端開始排（NSScrollView 的 documentView 預設
+        // 原點在左下，內容比視窗矮時會沉到底部）
+        let container = FlippedContainer(frame: CGRect(origin: .zero, size: natural))
+        container.addSubview(generic)
         generic.autoresizingMask = [.width]
-        scroll.documentView = generic
+
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.documentView = container
         return scroll
     }
 
     func updateNSView(_ view: NSScrollView, context: Context) {}
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        let natural = context.coordinator.naturalSize
+        return CGSize(
+            width: min(natural.width, Self.maxWidth),
+            height: min(natural.height, Self.maxHeight)
+        )
+    }
+}
+
+private final class FlippedContainer: NSView {
+    override var isFlipped: Bool { true }
 }
