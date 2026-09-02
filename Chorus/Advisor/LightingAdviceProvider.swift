@@ -36,21 +36,21 @@ enum AdviceError: Error {
     var userMessage: String {
         switch self {
         case let .engineNotFound(engineID):
-            "未找到 \(engineID) CLI，請確認已安裝（設定 → 分析引擎）"
+            String(localized: "未找到 \(engineID) CLI，請確認已安裝（設定 → 分析引擎）")
         case let .notLoggedIn(engineID):
-            "\(engineID) 未登入或憑證已失效，請在終端重新登入後再試"
+            String(localized: "\(engineID) 未登入或憑證已失效，請在終端重新登入後再試")
         case .timedOut:
-            "分析逾時，可重試"
+            String(localized: "分析逾時，可重試")
         case let .processFailed(status, stderr):
             stderr.isEmpty
-                ? "分析失敗（退出碼 \(status)），CLI 未提供錯誤訊息"
-                : "分析失敗（退出碼 \(status)）：\(stderr.prefix(200))"
+                ? String(localized: "分析失敗（退出碼 \(status)），CLI 未提供錯誤訊息")
+                : String(localized: "分析失敗（退出碼 \(status)）：\(stderr.prefix(200))")
         case let .decodeFailed(raw):
-            "模型回覆無法解析：\(raw.prefix(300))"
+            String(localized: "模型回覆無法解析：\(raw.prefix(300))")
         case let .emptyResponse(engineID, detail):
             detail.isEmpty
-                ? "\(engineID) 沒有產出回應，可重試"
-                : "\(engineID) 沒有產出回應：\(detail.prefix(300))"
+                ? String(localized: "\(engineID) 沒有產出回應，可重試")
+                : String(localized: "\(engineID) 沒有產出回應：\(detail.prefix(300))")
         }
     }
 

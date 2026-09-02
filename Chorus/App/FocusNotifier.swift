@@ -29,14 +29,14 @@ final class FocusNotifier: FocusNotifying {
     /// （選單那一行會分開講）。
     static func body(for outcome: FocusOutcome) -> String {
         let unrestored = outcome.failed.count + outcome.unrestorable.count
-        guard unrestored > 0 else { return "已還原 \(outcome.restored) 項" }
-        return "已還原 \(outcome.restored) 項，\(unrestored) 項未還原"
+        guard unrestored > 0 else { return String(localized: "已還原 \(outcome.restored) 項") }
+        return String(localized: "已還原 \(outcome.restored) 項，\(unrestored) 項未還原")
     }
 
     static func title(for outcome: FocusOutcome) -> String {
         outcome.reason == .relaunch
-            ? "「\(outcome.sceneName)」已於啟動時還原"
-            : "「\(outcome.sceneName)」結束"
+            ? String(localized: "「\(outcome.sceneName)」已於啟動時還原")
+            : String(localized: "「\(outcome.sceneName)」結束")
     }
 
     /// **只要 `.alert`**：不要 sound、不要 badge。這是一則「事情已經做完了」

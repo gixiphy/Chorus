@@ -194,15 +194,15 @@ struct EffectChainView: View {
         guard entries.contains(where: \.enabled) else { return nil }
         switch target {
         case let .device(device):
-            if !device.isDefault { return "效果鏈只在此裝置是預設輸出時生效" }
+            if !device.isDefault { return String(localized: "效果鏈只在此裝置是預設輸出時生效") }
         case .app:
             break
         }
         switch appState.tapEngine.state {
         case .active: return nil
-        case .denied: return "系統音訊錄製權限被拒——效果鏈無法運作"
-        case .off: return "需要先在設定 → 音訊開啟「App 音訊接管」"
-        default: return "正在確認權限…"
+        case .denied: return String(localized: "系統音訊錄製權限被拒——效果鏈無法運作")
+        case .off: return String(localized: "需要先在設定 → 音訊開啟「App 音訊接管」")
+        default: return String(localized: "正在確認權限…")
         }
     }
 

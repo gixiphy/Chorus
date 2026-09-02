@@ -125,7 +125,7 @@ struct AudioAdviceSection: View {
                     .buttonStyle(.link)
                     .font(.caption)
             }
-            Button("關閉") { tuner.result = nil }
+            Button(String(localized: "close", defaultValue: "關閉")) { tuner.result = nil }
                 .buttonStyle(.link)
                 .font(.caption)
         }

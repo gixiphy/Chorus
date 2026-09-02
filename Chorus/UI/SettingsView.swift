@@ -26,7 +26,9 @@ struct SettingsView: View {
                 BackupSettingsTab()
             }
         }
-        .frame(width: 460, height: 420)
+        // 500 而非 460：六個英文分頁名（General…Analysis Engine…Backup）在 460 會把
+        // 最後一頁擠進工具列的 » 溢出選單
+        .frame(width: 500, height: 420)
         .environment(appState)
     }
 }
@@ -178,7 +180,7 @@ private struct GeneralSettingsTab: View {
     /// 隱藏裝置目前在線時顯示名稱，否則顯示 UID 尾段。
     private func deviceName(for uid: String) -> String {
         appState.audioManager.devices.first { $0.uid == uid }?.name
-            ?? "未連接的裝置（\(uid.suffix(8))）"
+            ?? String(localized: "未連接的裝置（\(uid.suffix(8))）")
     }
 }
 
@@ -287,8 +289,8 @@ private struct DisplaySettingsTab: View {
     private func backendLabel(_ display: DisplayModel) -> String {
         switch display.backend {
         case .ddc: "DDC/CI"
-        case .displayServices: "Apple 原生"
-        case .gammaOnly: "軟體調光"
+        case .displayServices: String(localized: "Apple 原生")
+        case .gammaOnly: String(localized: "軟體調光")
         }
     }
 }
@@ -324,30 +326,30 @@ private struct DDCDiagnosticsRow: View {
         Task {
             let diag = await appState.displayManager.ddc.diagnostics(id)
             var lines: [String] = []
-            lines.append("IOAVService：" + (diag.hasService ? "已配對" : "無（DDC 不可用或已降級）"))
+            lines.append(diag.hasService ? String(localized: "IOAVService：已配對") : String(localized: "IOAVService：無（DDC 不可用或已降級）"))
             if let transport = diag.transport {
-                var line = "傳輸路徑：\(transport.upstream) → \(transport.downstream)"
+                var line = String(localized: "傳輸路徑：\(transport.upstream) → \(transport.downstream)")
                 if transport.upstream.localizedCaseInsensitiveContains("DisplayPort"),
                    transport.downstream.localizedCaseInsensitiveContains("HDMI") {
-                    line += "（DP→HDMI 轉換晶片：此路徑不透傳標準 DDC，請改接 DP／USB-C）"
+                    line += String(localized: "（DP→HDMI 轉換晶片：此路徑不透傳標準 DDC，請改接 DP／USB-C）")
                 }
                 lines.append(line)
             }
-            lines.append(format("亮度 0x10", diag.brightness))
-            lines.append(format("對比 0x12", diag.contrast))
+            lines.append(format(String(localized: "亮度 0x10"), diag.brightness))
+            lines.append(format(String(localized: "對比 0x12"), diag.contrast))
             if let input = diag.inputSource {
-                lines.append("輸入源 0x60：\(InputSource.describe(input.current))（raw \(input.current)）")
+                lines.append(String(localized: "輸入源 0x60：\(InputSource.describe(input.current))（raw \(input.current)）"))
             } else {
-                lines.append("輸入源 0x60：讀取失敗（螢幕不支援讀或通道不通）")
+                lines.append(String(localized: "輸入源 0x60：讀取失敗（螢幕不支援讀或通道不通）"))
             }
-            lines.append(format("音量 0x62", diag.volume))
-            lines.append(format("靜音 0x8D", diag.mute))
+            lines.append(format(String(localized: "音量 0x62"), diag.volume))
+            lines.append(format(String(localized: "靜音 0x8D"), diag.mute))
             let failures = diag.failureCounts.filter { $0.value > 0 }
             if !failures.isEmpty {
-                lines.append("寫入失敗計數：" + failures
+                lines.append(String(localized: "寫入失敗計數：") + failures
                     .map { String(format: "0x%02X×%d", $0.key, $0.value) }
                     .sorted()
-                    .joined(separator: "、"))
+                    .joined(separator: String(localized: "、")))
             }
             lines.append(contentsOf: troubleshootingHints(diag))
             result = lines.joined(separator: "\n")
@@ -356,8 +358,8 @@ private struct DDCDiagnosticsRow: View {
     }
 
     private func format(_ name: String, _ value: (current: UInt16, max: UInt16)?) -> String {
-        if let value { return "\(name)：\(value.current)／max \(value.max)" }
-        return "\(name)：讀取失敗（螢幕不支援讀或通道不通）"
+        if let value { return String(localized: "\(name)：\(value.current)／max \(value.max)") }
+        return String(localized: "\(name)：讀取失敗（螢幕不支援讀或通道不通）")
     }
 
     /// 硬體怪癖知識庫（B1/B2 實測累積）：依讀值與失敗計數給對症提示。
@@ -368,14 +370,14 @@ private struct DDCDiagnosticsRow: View {
         if diag.hasService, !anyReadable {
             // 實測（Mac mini 內建 HDMI × Q34E2G5）：I2C 端點在、寫入被 ACK、
             // 讀取全滅＝轉換晶片本地假成功，螢幕實際收不到指令
-            hints.append("▲ 讀取全滅但服務存在：寫入很可能是「假成功」（轉換晶片本地 ACK、不透傳）。改用 DP／USB-C 直連，或螢幕若有第二輸入埠可換埠。")
+            hints.append(String(localized: "▲ 讀取全滅但服務存在：寫入很可能是「假成功」（轉換晶片本地 ACK、不透傳）。改用 DP／USB-C 直連，或螢幕若有第二輸入埠可換埠。"))
         }
         let volumeWriteFailures = diag.failureCounts[DDCController.VCP.volume] ?? 0
         if diag.brightness != nil, diag.volume == nil || volumeWriteFailures > 0 {
-            hints.append("▲ 亮度可用但音量 0x62 不通：此螢幕不支援 DDC 音量。可在選單列該音訊裝置上按右鍵標記「不支援 DDC 音量」，滑桿會誠實停用。")
+            hints.append(String(localized: "▲ 亮度可用但音量 0x62 不通：此螢幕不支援 DDC 音量。可在選單列該音訊裝置上按右鍵標記「不支援 DDC 音量」，滑桿會誠實停用。"))
         }
         if diag.hasService, anyReadable {
-            hints.append("ⓘ 若拖曳滑桿後畫面雪花／訊號異常：部分螢幕的 scaler 承受不了連續 I2C 寫入（已內建節流）。復發時開啟「強制軟體調光」並保留此診斷輸出回報。")
+            hints.append(String(localized: "ⓘ 若拖曳滑桿後畫面雪花／訊號異常：部分螢幕的 scaler 承受不了連續 I2C 寫入（已內建節流）。復發時開啟「強制軟體調光」並保留此診斷輸出回報。"))
         }
         return hints
     }
@@ -643,7 +645,7 @@ private struct AdvisorSettingsTab: View {
         }
     }
 
-    private func badge(_ text: String) -> some View {
+    private func badge(_ text: LocalizedStringKey) -> some View {
         Text(text)
             .font(.caption2)
             .padding(.horizontal, 4)
@@ -667,13 +669,13 @@ private struct AudioSettingsTab: View {
     private var tapStateCaption: String {
         switch appState.tapEngine.state {
         case .off:
-            "未啟用。"
+            String(localized: "未啟用。")
         case .probing:
-            "確認權限中——播放任何聲音即可完成檢查（權限被拒不會有錯誤訊息，只能靠聲音判讀）。"
+            String(localized: "確認權限中——播放任何聲音即可完成檢查（權限被拒不會有錯誤訊息，只能靠聲音判讀）。")
         case .active:
-            "就緒。選單列的「各 App 音量」可以逐一調整——沒調整過的 App 完全走原生路徑，不建立任何 tap。"
+            String(localized: "就緒。選單列的「各 App 音量」可以逐一調整——沒調整過的 App 完全走原生路徑，不建立任何 tap。")
         case .denied:
-            "偵測到系統音訊全為靜音——權限可能被拒。請到系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製 開啟 Chorus。"
+            String(localized: "偵測到系統音訊全為靜音——權限可能被拒。請到系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製 開啟 Chorus。")
         case let .failed(message):
             message
         }
@@ -1119,7 +1121,7 @@ private struct SyncSettingsTab: View {
                         HStack {
                             Button("安裝 chorus 到 /usr/local/bin") {
                                 cliInstallMessage = switch appState.automationServer.installCLISymlink() {
-                                case let .installed(path): "已安裝到 \(path)"
+                                case let .installed(path): String(localized: "已安裝到 \(path)")
                                 case let .needsManualCommand(command): command
                                 }
                             }
@@ -1134,8 +1136,7 @@ private struct SyncSettingsTab: View {
                     }
                 }
                 Text(
-                    "只在回送介面（127.0.0.1）上接受連線，需要 Bearer token。"
-                        + "跨機控制一律走已配對的加密同步通道，不經這個介面。"
+                    "只在回送介面（127.0.0.1）上接受連線，需要 Bearer token。跨機控制一律走已配對的加密同步通道，不經這個介面。"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1265,7 +1266,7 @@ private struct BackupSettingsTab: View {
         .formStyle(.grouped)
         .onAppear { appState.cloudBackup.refresh() }
         .confirmationDialog(
-            pendingImport.map { "要套用「\($0.deviceName)」的設定嗎？" } ?? "",
+            pendingImport.map { String(localized: "要套用「\($0.deviceName)」的設定嗎？") } ?? "",
             isPresented: Binding(get: { pendingImport != nil },
                                  set: { if !$0 { pendingImport = nil } }),
             titleVisibility: .visible

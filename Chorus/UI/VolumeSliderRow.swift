@@ -182,19 +182,19 @@ struct VolumeSliderRow: View {
         guard let target = forwardTarget else { return device.name }
         switch target.forwardVolumeMode {
         case .ddc:
-            return "由 Chorus 轉送到「\(target.name)」：音量直接寫進螢幕硬體（DDC，不損音質）"
+            return String(localized: "由 Chorus 轉送到「\(target.name)」：音量直接寫進螢幕硬體（DDC，不損音質）")
         case .native:
-            return "由 Chorus 轉送到「\(target.name)」：音量鏡射到該裝置自己的音量（不損音質）"
+            return String(localized: "由 Chorus 轉送到「\(target.name)」：音量鏡射到該裝置自己的音量（不損音質）")
         case .digital:
-            return "由 Chorus 轉送到「\(target.name)」：音量以數位衰減調整"
+            return String(localized: "由 Chorus 轉送到「\(target.name)」：音量以數位衰減調整")
         }
     }
 
     private func badgeText(for target: AudioDeviceModel) -> String {
         switch target.forwardVolumeMode {
         case .ddc: "DDC"
-        case .native: "鏡射"
-        case .digital: "數位音量"
+        case .native: String(localized: "鏡射")
+        case .digital: String(localized: "數位音量")
         }
     }
 }

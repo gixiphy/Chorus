@@ -73,18 +73,18 @@ struct DisplaySliderRow: View {
     /// 三層的行為差很多，使用者不該需要知道 VCP 0xD6 是什麼才敢按。
     private var powerHelp: String {
         if model.isPoweredOff {
-            return "開啟這台螢幕"
+            return String(localized: "開啟這台螢幕")
         }
         let escape = appState.emergencyRestore.isTrusted
-            ? "按不回來時連按 8 次 ⌘ 可全部復原。"
-            : "連按 8 次 ⌘ 的緊急復原需要輔助使用權限（目前未授權，只在 Chorus 為前景時有效）；結束 Chorus 一定會還原。"
+            ? String(localized: "按不回來時連按 8 次 ⌘ 可全部復原。")
+            : String(localized: "連按 8 次 ⌘ 的緊急復原需要輔助使用權限（目前未授權，只在 Chorus 為前景時有效）；結束 Chorus 一定會還原。")
         switch model.powerLayer {
         case .ddc:
-            return "關閉螢幕（DDC 電源，背光真的斷電）。\(escape)"
+            return String(localized: "關閉螢幕（DDC 電源，背光真的斷電）。\(escape)")
         case .softDisconnect:
-            return "關閉螢幕（移出顯示器配置，等同拔線；視窗會被搬到其他螢幕）。\(escape)"
+            return String(localized: "關閉螢幕（移出顯示器配置，等同拔線；視窗會被搬到其他螢幕）。\(escape)")
         case .gammaBlackout:
-            return "畫面轉黑（螢幕仍通電——這台不支援 DDC 電源，也不能移出配置）。\(escape)"
+            return String(localized: "畫面轉黑（螢幕仍通電——這台不支援 DDC 電源，也不能移出配置）。\(escape)")
         }
     }
 }

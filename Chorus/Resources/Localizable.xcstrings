@@ -1,0 +1,5057 @@
+{
+  "sourceLanguage" : "zh-Hant",
+  "strings" : {
+    "" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : ""
+          }
+        }
+      }
+    },
+    "%@ (build %@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (build %@)"
+          }
+        }
+      }
+    },
+    "%@ — %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ — %@"
+          }
+        }
+      }
+    },
+    "%@ → %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ → %@"
+          }
+        }
+      }
+    },
+    "%@ 未登入或憑證已失效，請在終端重新登入後再試" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ is not signed in or its credentials have expired. Sign in again in Terminal, then try again."
+          }
+        }
+      }
+    },
+    "%@ 沒有產出回應，可重試" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ produced no response. Try again."
+          }
+        }
+      }
+    },
+    "%@ 沒有產出回應：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ produced no response: %@"
+          }
+        }
+      }
+    },
+    "%@。設定會保留，在選單列對這個裝置按右鍵可以取消排除。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@. The setting is retained; right-click this device in the menu bar to cancel exclusion."
+          }
+        }
+      }
+    },
+    "%@：%u／max %u" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@：%u／max %u"
+          }
+        }
+      }
+    },
+    "%@：讀取失敗（螢幕不支援讀或通道不通）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: Couldn't read (the display doesn't support reading or the channel is unavailable)"
+          }
+        }
+      }
+    },
+    "%lld lx" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld lx"
+          }
+        }
+      }
+    },
+    "%lld lx → %lld lx" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld lx → %lld lx"
+          }
+        }
+      }
+    },
+    "%lld 個動作" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld action"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld actions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld 分鐘" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld minutes"
+          }
+        }
+      }
+    },
+    "%lld 項未還原（%@離線）" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld item not restored (%@ offline)"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld items not restored (%@ offline)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld."
+          }
+        }
+      }
+    },
+    "1 小時" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 hour"
+          }
+        }
+      }
+    },
+    "30 分鐘" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "30 minutes"
+          }
+        }
+      }
+    },
+    "AI 建議" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI Advice"
+          }
+        }
+      }
+    },
+    "AI 調音建議" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI Tuning Advice"
+          }
+        }
+      }
+    },
+    "App 內沒有附 driver（開發版）。請在專案目錄執行 scripts/build-audio-driver.sh 後 sudo scripts/install-audio-driver.sh。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The app does not include a driver (development build). In the project directory, run scripts/build-audio-driver.sh, then sudo scripts/install-audio-driver.sh."
+          }
+        }
+      }
+    },
+    "App 內附的驅動比已安裝的新；更新會重啟音訊服務。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The driver bundled with the app is newer than the installed one; updating restarts audio services."
+          }
+        }
+      }
+    },
+    "App 層的 EQ 與 AU 效果鏈——只套這個 App，與裝置層是不同責任的兩次" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App-level EQ and AU effect chain - applied only to this app, separate from device-level processing"
+          }
+        }
+      }
+    },
+    "App 音訊處理" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App Audio Processing"
+          }
+        }
+      }
+    },
+    "Apple 原生" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Native Apple"
+          }
+        }
+      }
+    },
+    "Chorus" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus"
+          }
+        }
+      }
+    },
+    "Chorus 完全不碰這個 App 的音訊——per-app 調整與裝置等化／軟體音量都略過它" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus does not touch this app's audio - it skips per-app adjustments, device EQ, and software volume"
+          }
+        }
+      }
+    },
+    "Chorus 完全不碰這個 App：不建 per-app tap，裝置等化與軟體音量也略過它（調整保留，適合 DAW、遊戲、視訊會議）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus does not touch this app: it creates no per-app tap, and device EQ and software volume also skip it (adjustments are retained; suited to DAWs, games, and video calls)"
+          }
+        }
+      }
+    },
+    "DDC" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DDC"
+          }
+        }
+      }
+    },
+    "DDC 硬體鏡射（不損音質）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DDC hardware mirroring (no audio quality loss)"
+          }
+        }
+      }
+    },
+    "DDC 診斷" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DDC Diagnostics"
+          }
+        }
+      }
+    },
+    "DP/HDMI 螢幕音訊沒有系統音量，macOS 會停用 Touch Bar／控制中心／音量鍵。安裝虛擬輸出裝置後，把它設為預設輸出：系統音量 UI 全部恢復，音訊轉送到螢幕；支援 DDC 的螢幕直接鏡射硬體音量（不損音質），其餘用數位衰減。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DP/HDMI display audio has no system volume, so macOS disables the Touch Bar, Control Center, and volume keys. After installing a virtual output device, set it as the default output: all system volume UI is restored and audio is forwarded to the display. Displays that support DDC mirror hardware volume directly (no audio quality loss); others use digital attenuation."
+          }
+        }
+      }
+    },
+    "IOAVService：已配對" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IOAVService: paired"
+          }
+        }
+      }
+    },
+    "IOAVService：無（DDC 不可用或已降級）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IOAVService: none (DDC unavailable or downgraded)"
+          }
+        }
+      }
+    },
+    "Token" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Token"
+          }
+        }
+      }
+    },
+    "boost" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "boost"
+          }
+        }
+      }
+    },
+    "close" : {
+      "comment" : "關閉面板／對話框的按鈕",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關閉"
+          }
+        }
+      }
+    },
+    "dB" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "dB"
+          }
+        }
+      }
+    },
+    "iCloud Drive 未啟用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud Drive is disabled"
+          }
+        }
+      }
+    },
+    "iCloud 上還沒有任何備份。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There are no backups in iCloud yet."
+          }
+        }
+      }
+    },
+    "provider/model 格式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Provider/model Format"
+          }
+        }
+      }
+    },
+    "slug，如 gemini-3.1-pro-high、claude-sonnet-4-6" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "slug, e.g. gemini-3.1-pro-high, claude-sonnet-4-6"
+          }
+        }
+      }
+    },
+    "—" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "—"
+          }
+        }
+      }
+    },
+    "ⓘ 若拖曳滑桿後畫面雪花／訊號異常：部分螢幕的 scaler 承受不了連續 I2C 寫入（已內建節流）。復發時開啟「強制軟體調光」並保留此診斷輸出回報。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ⓘ If the display shows static or an abnormal signal after dragging the slider: some display scalers cannot handle continuous I2C writes (throttling is built in). If it recurs, enable \"Force Software Dimming\" and keep this diagnostic output for your report."
+          }
+        }
+      }
+    },
+    "▲ 亮度可用但音量 0x62 不通：此螢幕不支援 DDC 音量。可在選單列該音訊裝置上按右鍵標記「不支援 DDC 音量」，滑桿會誠實停用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "▲ Brightness is available, but volume 0x62 is unavailable: this display does not support DDC volume. Right-click this audio device in the menu bar and mark \"DDC volume unsupported\" so the slider is honestly disabled."
+          }
+        }
+      }
+    },
+    "▲ 讀取全滅但服務存在：寫入很可能是「假成功」（轉換晶片本地 ACK、不透傳）。改用 DP／USB-C 直連，或螢幕若有第二輸入埠可換埠。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "▲ All reads fail but the service is present: writes are likely \"false successes\" (the converter chip ACKs locally and does not pass through). Use a direct DP/USB-C connection, or switch ports if the display has a second input."
+          }
+        }
+      }
+    },
+    "、" : {
+      "comment" : "列舉分隔符（AX 描述、離線裝置名單）",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : ", "
+          }
+        }
+      }
+    },
+    "「%@」初始化失敗（%d）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" failed to initialize (%d)"
+          }
+        }
+      }
+    },
+    "「%@」執行中不待機" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" is running - preventing sleep"
+          }
+        }
+      }
+    },
+    "「%@」實例化失敗（%d）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" failed to instantiate (%d)"
+          }
+        }
+      }
+    },
+    "「%@」已於啟動時還原" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" was restored at launch"
+          }
+        }
+      }
+    },
+    "「%@」想要與這台 Mac 配對" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" wants to pair with this Mac"
+          }
+        }
+      }
+    },
+    "「%@」未執行 — 暫停中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" is not running - paused"
+          }
+        }
+      }
+    },
+    "「%@」未連接 — 暫停中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" is not connected - paused"
+          }
+        }
+      }
+    },
+    "「%@」結束" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" ended"
+          }
+        }
+      }
+    },
+    "「%@」限時套用中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" is being applied for a limited time"
+          }
+        }
+      }
+    },
+    "・%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "・%@"
+          }
+        }
+      }
+    },
+    "一般" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "General"
+          }
+        }
+      }
+    },
+    "上次備份" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last Backup"
+          }
+        }
+      }
+    },
+    "上次分析結果" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last Analysis Results"
+          }
+        }
+      }
+    },
+    "上次的「%@」已於啟動時還原" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last \"%@\" was restored at launch"
+          }
+        }
+      }
+    },
+    "上次載入這個外掛時 Chorus 崩潰了——不再自動載入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus crashed the last time this plug-in was loaded—it will no longer load automatically"
+          }
+        }
+      }
+    },
+    "下載到的內容不是有效的 ParametricEQ 檔" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The downloaded content is not a valid ParametricEQ file"
+          }
+        }
+      }
+    },
+    "下載失敗（HTTP %lld）——AutoEq 可能已移動這個型號的路徑" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download failed (HTTP %lld)—AutoEq may have moved this model's path"
+          }
+        }
+      }
+    },
+    "下載失敗：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download failed: %@"
+          }
+        }
+      }
+    },
+    "不會備份的" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not backed up"
+          }
+        }
+      }
+    },
+    "不相符" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doesn't match"
+          }
+        }
+      }
+    },
+    "亮度 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brightness %lld%%"
+          }
+        }
+      }
+    },
+    "亮度 0x10" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brightness 0x10"
+          }
+        }
+      }
+    },
+    "亮度差異值" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brightness Difference"
+          }
+        }
+      }
+    },
+    "以目前的亮度、音量與自動亮度狀態建立場景" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create a scene with the current brightness, volume, and auto-brightness state"
+          }
+        }
+      }
+    },
+    "以軟體衰減調整音量（Chorus 處理）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adjust volume with software attenuation (processed by Chorus)"
+          }
+        }
+      }
+    },
+    "以軟體音量控制此裝置…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Control this device with software volume…"
+          }
+        }
+      }
+    },
+    "任何型號都適用，而且離線可用——內建清單找不到時走這條" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Works with any model and is available offline—use this when the built-in list can't find it"
+          }
+        }
+      }
+    },
+    "使用本機光線感測器" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Using this Mac's ambient light sensor"
+          }
+        }
+      }
+    },
+    "使用預設" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use Default"
+          }
+        }
+      }
+    },
+    "依環境光自動調整亮度" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatically adjust brightness based on ambient light"
+          }
+        }
+      }
+    },
+    "停用 DDC 讀取（讀取造成閃爍時開啟；將直接信任 DDC 寫入）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disable DDC reads (turn on if reads cause flickering; DDC writes will be trusted directly)"
+          }
+        }
+      }
+    },
+    "停用後不會被任何顧問使用，也不會成為回落對象" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When disabled, it won't be used by any advisor or become a fallback target"
+          }
+        }
+      }
+    },
+    "偵測到系統音訊全為靜音——權限可能被拒。請到系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製 開啟 Chorus。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All system audio was detected as muted—the permission may have been denied. Go to System Settings → Privacy & Security → Screen & System Audio Recording and enable Chorus."
+          }
+        }
+      }
+    },
+    "備份" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back Up"
+          }
+        }
+      }
+    },
+    "備份失敗：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Backup failed: %@"
+          }
+        }
+      }
+    },
+    "備份的是**這台**的設定：場景、等化器與效果鏈、排除清單、各種偏好。寫進你的 iCloud Drive，**不會自動套到別台**——要用得在下面挑一份匯入。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This backs up **this Mac's** settings: scenes, equalizers and effect chains, exclusion lists, and preferences. It is saved to your iCloud Drive and **will not automatically apply to other Macs**—choose a backup below to import it."
+          }
+        }
+      }
+    },
+    "傳輸路徑：%@ → %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer path: %@ → %@"
+          }
+        }
+      }
+    },
+    "儲存" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save"
+          }
+        }
+      }
+    },
+    "先匯入桌面照片才能分析" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import a desk photo before analyzing"
+          }
+        }
+      }
+    },
+    "光感" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ambient Light"
+          }
+        }
+      }
+    },
+    "光環境分析建議" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ambient Light Analysis Advice"
+          }
+        }
+      }
+    },
+    "光環境顧問與調音顧問共用的本機 LLM CLI（偵測到什麼列什麼；不經手任何金鑰）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The local LLM CLI shared by the ambient light advisor and tuning advisor (lists what it detects; never handles any keys)"
+          }
+        }
+      }
+    },
+    "內建清單裡沒有這個型號——可到 AutoEq 的 results 目錄複製該型號的 ParametricEQ 內容，用「貼上校正檔」套用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This model is not in the built-in list—copy its ParametricEQ contents from AutoEq's results directory and apply it with \"Paste Correction Profile.\""
+          }
+        }
+      }
+    },
+    "內建顯示器" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Built-in Display"
+          }
+        }
+      }
+    },
+    "全亮環境光" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bright Ambient Light"
+          }
+        }
+      }
+    },
+    "全部 %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All %lld"
+          }
+        }
+      }
+    },
+    "全部歸零" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset All"
+          }
+        }
+      }
+    },
+    "全部關燈" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn Off All Lights"
+          }
+        }
+      }
+    },
+    "其他裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Other Devices"
+          }
+        }
+      }
+    },
+    "其餘 %lld 段不變" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld other band unchanged"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld other bands unchanged"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "再試一次" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try Again"
+          }
+        }
+      }
+    },
+    "分析中…（預期 20–60 秒；若跳出鑰匙圈授權，請選「永遠允許」）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analyzing… (expected 20–60 seconds; if Keychain authorization appears, choose \"Always Allow\")"
+          }
+        }
+      }
+    },
+    "分析光環境" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analyze Lighting Environment"
+          }
+        }
+      }
+    },
+    "分析失敗（退出碼 %d），CLI 未提供錯誤訊息" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analysis failed (exit code %d), CLI provided no error message"
+          }
+        }
+      }
+    },
+    "分析失敗（退出碼 %d）：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analysis failed (exit code %d): %@"
+          }
+        }
+      }
+    },
+    "分析失敗：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analysis failed: %@"
+          }
+        }
+      }
+    },
+    "分析引擎" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analysis Engine"
+          }
+        }
+      }
+    },
+    "分析逾時，可重試" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analysis timed out; try again"
+          }
+        }
+      }
+    },
+    "切到別的輸入後，這台 Mac 會失去此螢幕——由接在該輸入的機器（或螢幕實體按鈕）才能切回來。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After switching to another input, this Mac will lose access to this display—you can only switch back from the Mac connected to that input (or with the display's physical buttons)."
+          }
+        }
+      }
+    },
+    "切換…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switching…"
+          }
+        }
+      }
+    },
+    "別名 opus／sonnet／fable，或完整名稱如 claude-opus-5" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aliases opus/sonnet/fable, or a full name such as claude-opus-5"
+          }
+        }
+      }
+    },
+    "刪除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete"
+          }
+        }
+      }
+    },
+    "刪除「%@」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete \"%@\""
+          }
+        }
+      }
+    },
+    "刪除目前情境" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete Current Scenario"
+          }
+        }
+      }
+    },
+    "到 系統設定 > 隱私權與安全性 > 區域網路 開啟 Chorus；若清單中沒有 Chorus，重新開機通常可以修復" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Go to System Settings > Privacy & Security > Local Network and enable Chorus; if Chorus is not listed, restarting your Mac usually fixes it"
+          }
+        }
+      }
+    },
+    "前置增益取自校正檔——AutoEq 已依整條曲線的峰值算好。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The preamp comes from the correction profile—AutoEq has already calculated it from the peak across the full curve."
+          }
+        }
+      }
+    },
+    "前置增益由最大的正增益自動算出，用來抵銷提升、避免削波。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The preamp is calculated automatically from the largest positive gain to offset boosts and prevent clipping."
+          }
+        }
+      }
+    },
+    "剛安裝完請稍候幾秒再重新整理；一直沒出現時重開機。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After installation, wait a few seconds and refresh; restart your Mac if it still does not appear."
+          }
+        }
+      }
+    },
+    "剩餘 %d:%02d" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remaining %d:%02d"
+          }
+        }
+      }
+    },
+    "加入效果" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Effect"
+          }
+        }
+      }
+    },
+    "加入裝置…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Device…"
+          }
+        }
+      }
+    },
+    "匯入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import"
+          }
+        }
+      }
+    },
+    "匯入…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import…"
+          }
+        }
+      }
+    },
+    "匯入桌面照片…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Desk Photos…"
+          }
+        }
+      }
+    },
+    "原聲" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original"
+          }
+        }
+      }
+    },
+    "參數…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parameters…"
+          }
+        }
+      }
+    },
+    "參與自動亮度" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Include in Auto-Brightness"
+          }
+        }
+      }
+    },
+    "取得建議" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get Advice"
+          }
+        }
+      }
+    },
+    "取消" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "取消排除此裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop Excluding This Device"
+          }
+        }
+      }
+    },
+    "取消隱藏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unhide"
+          }
+        }
+      }
+    },
+    "取消隱藏此裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unhide This Device"
+          }
+        }
+      }
+    },
+    "只在 macOS 原生處理不了時接手：螢幕喇叭（HDMI/DP）的音量鍵、沒有內建螢幕機器（如 Mac mini）的亮度鍵。其餘按鍵行為維持原生。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Take over only when macOS cannot handle it natively: volume keys for display speakers (HDMI/DP), and brightness keys on Macs without a built-in display (such as Mac mini). All other key behavior remains native."
+          }
+        }
+      }
+    },
+    "只在回送介面（127.0.0.1）上接受連線，需要 Bearer token。跨機控制一律走已配對的加密同步通道，不經這個介面。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accepts connections only on the loopback interface (127.0.0.1) and requires a Bearer token. Cross-machine control always uses the encrypted sync channel between paired Macs, not this interface."
+          }
+        }
+      }
+    },
+    "只看使用中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Active Only"
+          }
+        }
+      }
+    },
+    "可一次選多張（最多 %lld 張）：第一張作為配置圖背景與座標基準，其餘為分析用補充視角。拍不同照明情境（白天／夜晚／只開掛燈）並各自標註，分析會更準" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Select up to %lld photo: The first is used as the layout background and coordinate reference; additional views are used for analysis. Capture and label different lighting scenarios (daytime/nighttime/desk lamp only) for more accurate analysis"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Select up to %lld photos: The first is used as the layout background and coordinate reference; additional views are used for analysis. Capture and label different lighting scenarios (daytime/nighttime/desk lamp only) for more accurate analysis"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "右" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right"
+          }
+        }
+      }
+    },
+    "右 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right %lld%%"
+          }
+        }
+      }
+    },
+    "各 App 音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per-App Volume"
+          }
+        }
+      }
+    },
+    "各 App 音量與等化" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per-App Volume and EQ"
+          }
+        }
+      }
+    },
+    "各台的設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings for Each Mac"
+          }
+        }
+      }
+    },
+    "同步" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sync"
+          }
+        }
+      }
+    },
+    "同步亮度" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sync Brightness"
+          }
+        }
+      }
+    },
+    "同步音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sync Volume"
+          }
+        }
+      }
+    },
+    "同步項目" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sync Items"
+          }
+        }
+      }
+    },
+    "名稱（例：家、公司）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Name (e.g., Home, Work)"
+          }
+        }
+      }
+    },
+    "命令列工具" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Command-Line Tool"
+          }
+        }
+      }
+    },
+    "啟動中…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starting…"
+          }
+        }
+      }
+    },
+    "啟動失敗：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Failed to start: %@"
+          }
+        }
+      }
+    },
+    "啟用 App 音訊接管" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable App Audio Takeover"
+          }
+        }
+      }
+    },
+    "啟用 localhost 控制介面" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Localhost Control Interface"
+          }
+        }
+      }
+    },
+    "回到 100%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back to 100%"
+          }
+        }
+      }
+    },
+    "回覆失敗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Response failed"
+          }
+        }
+      }
+    },
+    "在 Finder 顯示" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show in Finder"
+          }
+        }
+      }
+    },
+    "在另一台 Mac 上也打開「配對新裝置」視窗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Also open the \"Pair New Device\" window on the other Mac"
+          }
+        }
+      }
+    },
+    "在選單列的音訊裝置上按右鍵可以隱藏；成為預設輸出時仍會顯示。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right-click audio devices in the menu bar to hide them; they remain visible when they are the default output."
+          }
+        }
+      }
+    },
+    "執行" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Run"
+          }
+        }
+      }
+    },
+    "執行中 · http://127.0.0.1:%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Running · http://127.0.0.1:%@"
+          }
+        }
+      }
+    },
+    "場景" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scene"
+          }
+        }
+      }
+    },
+    "場景名稱" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scene Name"
+          }
+        }
+      }
+    },
+    "填入常用的照明情境" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter common lighting scenarios"
+          }
+        }
+      }
+    },
+    "增益超過 100%，超出部分會過 soft limiter 防削波" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gain exceeds 100%; excess is passed through a soft limiter to prevent clipping"
+          }
+        }
+      }
+    },
+    "夜晚，只開掛燈" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "At night, lamp only"
+          }
+        }
+      }
+    },
+    "夜晚，開頂燈" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "At night, overhead light on"
+          }
+        }
+      }
+    },
+    "套用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apply"
+          }
+        }
+      }
+    },
+    "套用勾選項" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apply Selected"
+          }
+        }
+      }
+    },
+    "套用貼上的內容" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apply Pasted Content"
+          }
+        }
+      }
+    },
+    "安裝 chorus 到 /usr/local/bin" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install chorus to /usr/local/bin"
+          }
+        }
+      }
+    },
+    "安裝中…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installing…"
+          }
+        }
+      }
+    },
+    "安裝失敗：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installation failed: %@"
+          }
+        }
+      }
+    },
+    "安裝驅動…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installing driver…"
+          }
+        }
+      }
+    },
+    "完全不處理這個 App" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Don't Process This App"
+          }
+        }
+      }
+    },
+    "完成" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Done"
+          }
+        }
+      }
+    },
+    "實驗性" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Experimental"
+          }
+        }
+      }
+    },
+    "寫下這張照片的照明情境。照片是自動曝光的，畫面看不出絕對亮度，也分不出暗處是沒有燈還是燈關著——標註補的正是這段資訊" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Describe the lighting scenario in this photo. The photo is auto-exposed, so it does not show absolute brightness or whether dark areas have no light or lights turned off—the annotation provides that missing information."
+          }
+        }
+      }
+    },
+    "寫入失敗計數：" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Write failure count:"
+          }
+        }
+      }
+    },
+    "將目前桌面存為新情境…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save current desk as a new scenario…"
+          }
+        }
+      }
+    },
+    "專注中：「%@」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Focusing: \"%@\""
+          }
+        }
+      }
+    },
+    "專注剩餘 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Focus remaining %@"
+          }
+        }
+      }
+    },
+    "對方" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Other Mac"
+          }
+        }
+      }
+    },
+    "對比" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contrast"
+          }
+        }
+      }
+    },
+    "對比 0x12" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contrast 0x12"
+          }
+        }
+      }
+    },
+    "尚未匯入桌面照片" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No desk photo imported yet"
+          }
+        }
+      }
+    },
+    "尚未有分析結果" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No analysis results yet"
+          }
+        }
+      }
+    },
+    "尚未設定順位（功能關閉）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No priority set (feature off)"
+          }
+        }
+      }
+    },
+    "尚未配對任何裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No devices paired yet"
+          }
+        }
+      }
+    },
+    "尚無場景——按 ＋ 把目前的亮度與音量存成一組" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No scenes yet — press ＋ to save the current brightness and volume as a set"
+          }
+        }
+      }
+    },
+    "尚無場景。在選單列按場景列的 ＋ 可把目前的亮度、音量與自動亮度狀態存成一組。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No scenes yet. Press ＋ in the menu bar's scene row to save the current brightness, volume, and auto-brightness status as a set."
+          }
+        }
+      }
+    },
+    "就緒。選單列的「各 App 音量」可以逐一調整——沒調整過的 App 完全走原生路徑，不建立任何 tap。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ready. Use Per-app Volume in the menu bar to adjust apps individually — untouched apps remain fully native, with no taps created."
+          }
+        }
+      }
+    },
+    "展開後在裝置上按右鍵可取消隱藏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expand, then right-click a device to unhide it"
+          }
+        }
+      }
+    },
+    "左" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left"
+          }
+        }
+      }
+    },
+    "左 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left %lld%%"
+          }
+        }
+      }
+    },
+    "左右切著聽，判斷這組等化有沒有讓聲音變好。切到「原聲」只是暫時不送出等化，設定不會被清掉。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switch between left and right to judge whether this EQ improves the sound. Switching to \"Original\" only temporarily stops applying EQ; your settings are not cleared."
+          }
+        }
+      }
+    },
+    "左右平衡" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Balance"
+          }
+        }
+      }
+    },
+    "左右平衡不在置中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Balance is not centered"
+          }
+        }
+      }
+    },
+    "左右平衡只在此裝置是預設輸出時生效" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Balance only takes effect when this device is the default output"
+          }
+        }
+      }
+    },
+    "差異值會疊加在環境基準亮度上" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The offset is added to the ambient baseline brightness"
+          }
+        }
+      }
+    },
+    "已停用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disabled"
+          }
+        }
+      }
+    },
+    "已備份" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Backed Up"
+          }
+        }
+      }
+    },
+    "已啟用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enabled"
+          }
+        }
+      }
+    },
+    "已套用「%@」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Applied \"%@\""
+          }
+        }
+      }
+    },
+    "已套用「%@」，%lld 項未生效（裝置已不在）" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Applied \"%@\"; %lld item did not take effect (device no longer available)"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Applied \"%@\"; %lld items did not take effect (device no longer available)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "已安裝" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installed"
+          }
+        }
+      }
+    },
+    "已安裝到 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installed to %@"
+          }
+        }
+      }
+    },
+    "已安裝，等待音訊服務載入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installed; waiting for the audio service to load"
+          }
+        }
+      }
+    },
+    "已建立「%@」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Created \"%@\""
+          }
+        }
+      }
+    },
+    "已從「%@」匯入，跳過 %lld 項綁機設定" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Imported from \"%@\"; skipped %lld device-bound setting"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Imported from \"%@\"; skipped %lld device-bound settings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "已從「%@」還原全部設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restored all settings from \"%@\""
+          }
+        }
+      }
+    },
+    "已排除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excluded"
+          }
+        }
+      }
+    },
+    "已排除此裝置——Chorus 不在它上面做任何處理" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device is excluded — Chorus does not process it"
+          }
+        }
+      }
+    },
+    "已標記為不支援 DDC 音量（右鍵可重新啟用）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Marked as not supporting DDC volume (right-click to re-enable)"
+          }
+        }
+      }
+    },
+    "已與「%@」配對完成" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paired with \"%@\""
+          }
+        }
+      }
+    },
+    "已連線" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected"
+          }
+        }
+      }
+    },
+    "已還原 %lld 項" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Restored %lld item"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Restored %lld items"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "已還原 %lld 項，%lld 項未還原" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restored %lld; %lld not restored"
+          }
+        }
+      }
+    },
+    "已配對的 Mac" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paired Macs"
+          }
+        }
+      }
+    },
+    "已配對的裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paired Devices"
+          }
+        }
+      }
+    },
+    "已關閉" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off"
+          }
+        }
+      }
+    },
+    "已隔離" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Isolated"
+          }
+        }
+      }
+    },
+    "已靜音" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Muted"
+          }
+        }
+      }
+    },
+    "延伸調暗（硬體亮度到底後接續軟體調光）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Extended dimming (continues with software dimming after hardware brightness reaches minimum)"
+          }
+        }
+      }
+    },
+    "建議" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advice"
+          }
+        }
+      }
+    },
+    "強制軟體調光" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Force Software Dimming"
+          }
+        }
+      }
+    },
+    "待接入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pending connection"
+          }
+        }
+      }
+    },
+    "從 %@ 回報的清單挑選" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose from the list reported by %@"
+          }
+        }
+      }
+    },
+    "從**別台**匯入時會跳過綁在機器上的設定：顯示器與音訊裝置的個別調整、防睡眠綁定、效果隔離名單，以及要各台自己開的權限（App 音訊接管、自動化介面、自動備份）。從**這台**自己的備份還原則是全套。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When importing from **another Mac**, device-bound settings are skipped: individual display and audio device adjustments, Keep Awake bindings, the effect isolation list, and permissions that must be enabled on each Mac (App audio takeover, automation interface, and automatic backups). Restoring from **this Mac's** own backup restores everything."
+          }
+        }
+      }
+    },
+    "從鏈上移除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove From Chain"
+          }
+        }
+      }
+    },
+    "恢復 Chorus 對這個 App 的處理——先前的調整原樣回來" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resume Chorus processing for this app—the previous adjustments will be restored unchanged"
+          }
+        }
+      }
+    },
+    "情境" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scenario"
+          }
+        }
+      }
+    },
+    "手動 10 段" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manual 10-Band"
+          }
+        }
+      }
+    },
+    "打開輔助使用設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Accessibility Settings"
+          }
+        }
+      }
+    },
+    "找不到 App 內嵌的驅動——這個 App 可能已損壞，請重新安裝 Chorus。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The driver embedded in the app could not be found—the app may be damaged. Reinstall Chorus."
+          }
+        }
+      }
+    },
+    "找不到「%@」——外掛可能已移除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\" could not be found—the plug-in may have been removed"
+          }
+        }
+      }
+    },
+    "找不到可控制的顯示器" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No controllable displays found"
+          }
+        }
+      }
+    },
+    "找不到輸出裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No output device found"
+          }
+        }
+      }
+    },
+    "找不到轉送目標——聲音會沒有" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forwarding destination not found—audio will be unavailable"
+          }
+        }
+      }
+    },
+    "找不到顯示器" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display not found"
+          }
+        }
+      }
+    },
+    "把照片與裝置配置交給本機 %@ CLI 分析" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Have the local %@ CLI analyze photos and the device layout"
+          }
+        }
+      }
+    },
+    "把音量鍵／Touch Bar 交給它：設為預設輸出。自動模式下轉送目標會跟著使用中的螢幕走，螢幕關掉或拔掉就退回內建輸出——不會靜靜沒有聲音。選單列會把它與轉送目標併成一列。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Give it the volume keys/Touch Bar: set it as the default output. In Auto mode, the forwarding destination follows the display in use; if the display is turned off or disconnected, it falls back to the built-in output—audio will not silently disappear. The menu bar combines it and the forwarding destination into one row."
+          }
+        }
+      }
+    },
+    "拒絕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Decline"
+          }
+        }
+      }
+    },
+    "拖拉節點擺放實際位置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag nodes to set their actual positions"
+          }
+        }
+      }
+    },
+    "拖曳以標示這台裝置在桌面上的實際位置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag to indicate this device's actual position on the desk"
+          }
+        }
+      }
+    },
+    "指定的輸出裝置不在，暫時走系統預設" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The specified output device is unavailable; temporarily using the system default"
+          }
+        }
+      }
+    },
+    "按不回來時連按 8 次 ⌘ 可全部復原。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If you can't restore it, press ⌘ eight times in a row to restore everything."
+          }
+        }
+      }
+    },
+    "掃描順序：自訂路徑 → PATH → 常見安裝位置。找不到時可在上方填入執行檔完整路徑。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search order: custom path → PATH → common install locations. If it isn't found, enter the executable's full path above."
+          }
+        }
+      }
+    },
+    "排除於音訊處理之外" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exclude From Audio Processing"
+          }
+        }
+      }
+    },
+    "排除此裝置（不做音訊處理）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exclude This Device (No Audio Processing)"
+          }
+        }
+      }
+    },
+    "接上時自動成為預設輸出，並還原上次的音量。只在裝置插拔時作用——手動選的裝置不會被搶走。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatically becomes the default output when connected and restores the previous volume. Only applies when devices are connected or disconnected—manually selected devices will not be overridden."
+          }
+        }
+      }
+    },
+    "接受" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accept"
+          }
+        }
+      }
+    },
+    "接管亮度／音量鍵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Take Over Brightness/Volume Keys"
+          }
+        }
+      }
+    },
+    "接著「%@」時不待機" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prevent sleep while connected to \"%@\""
+          }
+        }
+      }
+    },
+    "接著這台螢幕時" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When Connected to This Display"
+          }
+        }
+      }
+    },
+    "控制方式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Control Method"
+          }
+        }
+      }
+    },
+    "提前結束" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "End Early"
+          }
+        }
+      }
+    },
+    "提示音" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alert Sound"
+          }
+        }
+      }
+    },
+    "提示音音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alert Sound Volume"
+          }
+        }
+      }
+    },
+    "提示音音量（與輸出音量分開）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alert sound volume (separate from output volume)"
+          }
+        }
+      }
+    },
+    "搜尋耳機型號（AutoEq）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search headphone model (AutoEq)"
+          }
+        }
+      }
+    },
+    "收合隱藏的裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapse Hidden Devices"
+          }
+        }
+      }
+    },
+    "收起" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapse"
+          }
+        }
+      }
+    },
+    "放棄" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "效果鏈" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Effect Chain"
+          }
+        }
+      }
+    },
+    "效果鏈只在此裝置是預設輸出時生效" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The effect chain only takes effect when this device is the default output"
+          }
+        }
+      }
+    },
+    "效果鏈（Audio Unit）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Effect Chain (Audio Unit)"
+          }
+        }
+      }
+    },
+    "數位衰減（軟體音量）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Digital attenuation (software volume)"
+          }
+        }
+      }
+    },
+    "數位音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Digital Volume"
+          }
+        }
+      }
+    },
+    "新增桌面情境" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Desk Scenario"
+          }
+        }
+      }
+    },
+    "時長（25m／1h／90s）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Duration (25m/1h/90s)"
+          }
+        }
+      }
+    },
+    "更新中…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updating…"
+          }
+        }
+      }
+    },
+    "更新目前情境（含螢幕組合）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update current scenario (including display setup)"
+          }
+        }
+      }
+    },
+    "更新驅動…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updating driver…"
+          }
+        }
+      }
+    },
+    "更新驅動後，左右平衡才會在鏡射模式下生效" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Balance will only take effect in mirror mode after updating the driver"
+          }
+        }
+      }
+    },
+    "最暗亮度" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Minimum Brightness"
+          }
+        }
+      }
+    },
+    "未偵測到分析引擎——與光環境顧問共用同一組（設定 → 分析引擎）。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No analysis engine detected—shared with the ambient light advisor (Settings → Analysis Engine)."
+          }
+        }
+      }
+    },
+    "未啟用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not enabled."
+          }
+        }
+      }
+    },
+    "未安裝" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not Installed"
+          }
+        }
+      }
+    },
+    "未找到 %@ CLI，請確認已安裝（設定 → 分析引擎）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ CLI not found. Make sure it is installed (Settings → Analysis Engine)"
+          }
+        }
+      }
+    },
+    "未找到分析引擎" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analysis engine not found"
+          }
+        }
+      }
+    },
+    "未找到可用的分析引擎（設定 → 分析引擎）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No available analysis engine found (Settings → Analysis Engine)"
+          }
+        }
+      }
+    },
+    "未知的 Mac" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unknown Mac"
+          }
+        }
+      }
+    },
+    "未知錯誤" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unknown Error"
+          }
+        }
+      }
+    },
+    "未連接的裝置（%@）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disconnected device (%@)"
+          }
+        }
+      }
+    },
+    "本機" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Mac"
+          }
+        }
+      }
+    },
+    "格式：AutoEq 的 ParametricEQ.txt" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Format: AutoEq ParametricEQ.txt"
+          }
+        }
+      }
+    },
+    "桌面情境：各自記住照片、節點位置與亮度設定；接上對應螢幕組合時自動切換" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desk scenarios remember their own photos, node positions, and brightness settings; they switch automatically when the matching display setup is connected"
+          }
+        }
+      }
+    },
+    "標記此螢幕不支援 DDC 音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mark this display as not supporting DDC volume"
+          }
+        }
+      }
+    },
+    "模型" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model"
+          }
+        }
+      }
+    },
+    "模型 ID" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model ID"
+          }
+        }
+      }
+    },
+    "模型名稱，如 gpt-5.6-terra" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model name, such as gpt-5.6-terra"
+          }
+        }
+      }
+    },
+    "模型回覆無法解析：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to parse model response: %@"
+          }
+        }
+      }
+    },
+    "模型沒有給出可套用的調整建議" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model did not provide any applicable adjustment advice"
+          }
+        }
+      }
+    },
+    "正在套用「%@」…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Applying \"%@\"…"
+          }
+        }
+      }
+    },
+    "正在尋找附近的 Mac…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Looking for nearby Macs…"
+          }
+        }
+      }
+    },
+    "正在發聲" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Playing sound"
+          }
+        }
+      }
+    },
+    "正在確認權限…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checking permissions…"
+          }
+        }
+      }
+    },
+    "此 CLI 的 headless 讀圖流程尚未打通，接入層完成後開放選用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The headless image-reading workflow for this CLI is not yet available; it will be offered once the integration layer is complete"
+          }
+        }
+      }
+    },
+    "此裝置沒有軟體音量，且未橋接到可用的 DDC 螢幕（螢幕需支援 DDC/CI 音量）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device has no software volume and is not bridged to an available DDC display (the display must support DDC/CI volume)"
+          }
+        }
+      }
+    },
+    "此裝置的所有音訊會經過 Chorus 做衰減，多約 10 ms 延遲；需要「App 音訊接管」權限" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All audio from this device is attenuated by Chorus, adding about 10 ms of latency; requires \"App audio takeover\" permission"
+          }
+        }
+      }
+    },
+    "此裝置的音訊完全走原生路徑：不套用 EQ、平衡、效果鏈與軟體音量。既有設定會保留，取消排除即恢復。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Audio from this device uses the native path only: EQ, balance, effect chain, and software volume are not applied. Existing settings are retained and restored when it is no longer excluded."
+          }
+        }
+      }
+    },
+    "歷史" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History"
+          }
+        }
+      }
+    },
+    "每個輸出裝置一組：左右平衡與等化。耳機校正（AutoEq）的主場景本來就不經虛擬裝置——直接對那支耳機開。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Each output device has its own balance and EQ. The primary scene for headphone correction (AutoEq) already bypasses the virtual device—enable it directly for those headphones."
+          }
+        }
+      }
+    },
+    "沒有可顯示的裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No devices to display"
+          }
+        }
+      }
+    },
+    "沒有效果。掛上的外掛以 in-process 執行——不穩的外掛可能連帶影響 Chorus；崩潰過的會被自動隔離、不再自動載入。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No effects. Attached plug-ins run in-process—unstable plug-ins may also affect Chorus; crashed ones are automatically quarantined and no longer loaded automatically."
+          }
+        }
+      }
+    },
+    "注意事項（%lld）" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Note (%lld)"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Notes (%lld)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "活實例已不在（鏈被重建）——重新打開面板" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The live instance is gone (the chain was rebuilt)—reopen the panel"
+          }
+        }
+      }
+    },
+    "清掉所有調整——這個 App 會回到完全原生的音訊路徑，不再建立 tap" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear all adjustments—this app will return to a fully native audio path and stop creating a tap"
+          }
+        }
+      }
+    },
+    "滑桿下段 25% 改為軟體調光：外接螢幕的硬體最低亮度常常還是太亮，夜間可再往下壓。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The lower 25% of the slider uses software dimming: the hardware minimum brightness of external displays is often still too bright, so you can dim them further at night."
+          }
+        }
+      }
+    },
+    "無光線感測器 — 等待其他裝置回報" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No ambient light sensor — waiting for reports from other devices"
+          }
+        }
+      }
+    },
+    "無法探索裝置 — 檢查「區域網路」權限" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to discover devices — check the \"Local Network\" permission"
+          }
+        }
+      }
+    },
+    "無法組出下載網址" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to build download URL"
+          }
+        }
+      }
+    },
+    "無法連線到對方" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to connect to the other Mac"
+          }
+        }
+      }
+    },
+    "無限期" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Indefinitely"
+          }
+        }
+      }
+    },
+    "照明情境（例：夜晚，只開掛燈）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lighting scenario (e.g., nighttime, only the floor lamp on)"
+          }
+        }
+      }
+    },
+    "照明情境（例：白天，窗簾拉開）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lighting scenario (e.g., daytime, curtains open)"
+          }
+        }
+      }
+    },
+    "照片" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photos"
+          }
+        }
+      }
+    },
+    "照片將交由本機 %@ CLI 分析（經你的訂閱送至其服務商）。分析只在你按下按鈕時發生。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photos will be analyzed by the local %@ CLI (sent to its provider through your subscription). Analysis happens only when you click the button."
+          }
+        }
+      }
+    },
+    "版本" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Version"
+          }
+        }
+      }
+    },
+    "狀態" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Status"
+          }
+        }
+      }
+    },
+    "由 Chorus 轉送到「%@」：音量以數位衰減調整" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forwarded by Chorus to \"%@\" : volume is adjusted through digital attenuation"
+          }
+        }
+      }
+    },
+    "由 Chorus 轉送到「%@」：音量直接寫進螢幕硬體（DDC，不損音質）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forwarded by Chorus to \"%@\" : volume is written directly to the display hardware (DDC, no loss in audio quality)"
+          }
+        }
+      }
+    },
+    "由 Chorus 轉送到「%@」：音量鏡射到該裝置自己的音量（不損音質）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forwarded by Chorus to \"%@\" : volume mirrors the device's own volume (no loss in audio quality)"
+          }
+        }
+      }
+    },
+    "畫面轉黑（螢幕仍通電——這台不支援 DDC 電源，也不能移出配置）。%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Screen blacked out (the display is still powered—the display doesn't support DDC power control and cannot be removed from the layout). %@"
+          }
+        }
+      }
+    },
+    "登入時啟動 Chorus" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Chorus at Login"
+          }
+        }
+      }
+    },
+    "白天，窗簾拉上" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daytime, Curtains Closed"
+          }
+        }
+      }
+    },
+    "白天，窗簾拉開" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daytime, Curtains Open"
+          }
+        }
+      }
+    },
+    "目前沒有 App 在播放聲音" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No apps are currently playing audio"
+          }
+        }
+      }
+    },
+    "目前沒有可逐段對照的等化——套用會建立一組 10 段。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There is currently no EQ to compare band by band—applying it will create a 10-band EQ."
+          }
+        }
+      }
+    },
+    "目前環境光 %lld lx" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current ambient light: %lld lx"
+          }
+        }
+      }
+    },
+    "目前送到" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Currently Forwarding To"
+          }
+        }
+      }
+    },
+    "相符" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Match"
+          }
+        }
+      }
+    },
+    "看上次分析結果" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View Last Analysis Results"
+          }
+        }
+      }
+    },
+    "確認兩台 Mac 顯示相同的配對碼" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm that both Macs show the same pairing code"
+          }
+        }
+      }
+    },
+    "確認權限中——播放任何聲音即可完成檢查（權限被拒不會有錯誤訊息，只能靠聲音判讀）。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checking permission—play any sound to complete the check (there is no error message if permission is denied, so it can only be determined by sound)."
+          }
+        }
+      }
+    },
+    "移除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove"
+          }
+        }
+      }
+    },
+    "移除驅動…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Removing Driver…"
+          }
+        }
+      }
+    },
+    "立即備份" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back Up Now"
+          }
+        }
+      }
+    },
+    "等化只在此裝置是預設輸出時生效" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "EQ takes effect only when this device is the default output"
+          }
+        }
+      }
+    },
+    "等化器" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Equalizer"
+          }
+        }
+      }
+    },
+    "等化器（只套這個 App）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Equalizer (This App Only)"
+          }
+        }
+      }
+    },
+    "等化後" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After EQ"
+          }
+        }
+      }
+    },
+    "等化與效果…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "EQ & Effects…"
+          }
+        }
+      }
+    },
+    "等化資料來源：AutoEq（MIT）· jaakkopasanen/AutoEq" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "EQ data source: AutoEq (MIT) · jaakkopasanen/AutoEq"
+          }
+        }
+      }
+    },
+    "等化需要先開啟上方的「App 音訊接管」——與 per-app 音量走同一套系統音訊擷取權限。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "EQ requires enabling \"App Audio Takeover\" above - it uses the same System Audio Recording permission as Per-app volume."
+          }
+        }
+      }
+    },
+    "等待「%@」接受配對…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for \"%@\" to accept pairing…"
+          }
+        }
+      }
+    },
+    "等待「輔助使用」權限…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for Accessibility permission…"
+          }
+        }
+      }
+    },
+    "等待對方確認…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for confirmation from the other Mac…"
+          }
+        }
+      }
+    },
+    "系統目前直接輸出到螢幕——點左側圓圈改由 Chorus 轉送，音量鍵才會生效" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The system is currently outputting directly to the display - click the circle on the left to forward through Chorus so the volume keys work"
+          }
+        }
+      }
+    },
+    "系統設定裡未允許 Chorus 通知" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus notifications aren't allowed in System Settings"
+          }
+        }
+      }
+    },
+    "系統音訊錄製權限被拒——App 層處理無法運作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "System Audio Recording permission was denied - per-app processing can't operate"
+          }
+        }
+      }
+    },
+    "系統音訊錄製權限被拒——效果鏈無法運作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "System Audio Recording permission was denied - the effect chain can't operate"
+          }
+        }
+      }
+    },
+    "系統音訊錄製權限被拒——等化無法運作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "System Audio Recording permission was denied - EQ can't operate"
+          }
+        }
+      }
+    },
+    "系統音訊錄製權限被拒——軟體平衡無法運作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "System Audio Recording permission was denied - software balance can't operate"
+          }
+        }
+      }
+    },
+    "系統音訊錄製權限被拒——軟體音量無法運作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "System Audio Recording permission was denied - software volume can't operate"
+          }
+        }
+      }
+    },
+    "約兩打常見風格曲線，一鍵套用；套用後仍可逐段微調" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About two dozen common curve presets, apply with one click; fine-tune each band afterward"
+          }
+        }
+      }
+    },
+    "純文字引擎——光環境顧問（需要看圖）不會使用它" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text-only engine - the ambient light advisor (which needs image input) won't use it"
+          }
+        }
+      }
+    },
+    "結束 Chorus" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quit Chorus"
+          }
+        }
+      }
+    },
+    "結束時通知我" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notify me when it ends"
+          }
+        }
+      }
+    },
+    "結束時還原 %lld 項" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Restore %lld item when it ends"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Restore %lld items when it ends"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "綁定 App" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bind App"
+          }
+        }
+      }
+    },
+    "綁定的螢幕未連接 — 暫停中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bound display disconnected - paused"
+          }
+        }
+      }
+    },
+    "綁定螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bind Display"
+          }
+        }
+      }
+    },
+    "繼續" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resume"
+          }
+        }
+      }
+    },
+    "繼續配對其他裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue Pairing Other Devices"
+          }
+        }
+      }
+    },
+    "置中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Center"
+          }
+        }
+      }
+    },
+    "自動" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto"
+          }
+        }
+      }
+    },
+    "自動亮度" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto-Brightness"
+          }
+        }
+      }
+    },
+    "自動亮度管理中；手動調整會學為此螢幕的差異值" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto-brightness is managing this display; manual adjustments will be learned as an offset for it"
+          }
+        }
+      }
+    },
+    "自動備份（每分鐘檢查一次）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto backup (checked every minute)"
+          }
+        }
+      }
+    },
+    "自動化介面" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automation Interface"
+          }
+        }
+      }
+    },
+    "自動（跟著使用中的螢幕）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto (follow active display)"
+          }
+        }
+      }
+    },
+    "自訂 %@ 路徑（例：/opt/homebrew/bin/%@）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Custom %@ path (e.g., /opt/homebrew/bin/%@)"
+          }
+        }
+      }
+    },
+    "自訂…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Custom…"
+          }
+        }
+      }
+    },
+    "與「%@」配對" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pair With \"%@\""
+          }
+        }
+      }
+    },
+    "與目前這組等化相同——套用不會改變任何一段。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Same as the current EQ - applying it won't change any band."
+          }
+        }
+      }
+    },
+    "與輸出音量分開的系統設定——「會議」場景可以只關提示音、不動音樂。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A system setting separate from output volume - a \"Meeting\" scene can mute only notification sounds without changing music."
+          }
+        }
+      }
+    },
+    "螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display"
+          }
+        }
+      }
+    },
+    "螢幕不會待機" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display Doesn't Sleep"
+          }
+        }
+      }
+    },
+    "螢幕會照系統設定待機" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display sleeps per System Settings"
+          }
+        }
+      }
+    },
+    "螢幕未回應 DDC 音量指令——已改用數位衰減" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The display didn't respond to the DDC volume command - switched to digital attenuation"
+          }
+        }
+      }
+    },
+    "螢幕未回應音量指令——可能不支援 DDC 音量（VCP 0x62）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The display didn't respond to the volume command - it may not support DDC volume (VCP 0x62)"
+          }
+        }
+      }
+    },
+    "螢幕的 DDC 不可用，音量無法控制" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display DDC is unavailable; volume can't be controlled"
+          }
+        }
+      }
+    },
+    "螢幕與系統都不會待機" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The display and system will not sleep"
+          }
+        }
+      }
+    },
+    "螢幕長亮" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Awake"
+          }
+        }
+      }
+    },
+    "螢幕長亮中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keeping awake"
+          }
+        }
+      }
+    },
+    "螢幕長亮剩餘 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display Keep Awake: %@ remaining"
+          }
+        }
+      }
+    },
+    "螢幕音訊（%@）：音量經 DDC/CI 控制螢幕喇叭" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display audio (%@): Volume controls the display speakers via DDC/CI"
+          }
+        }
+      }
+    },
+    "螢幕音量（虛擬輸出裝置）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display volume (virtual output device)"
+          }
+        }
+      }
+    },
+    "裝置優先順序" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Device Priority"
+          }
+        }
+      }
+    },
+    "裝置插拔、預設輸出切換、場景套用與還原、App 音訊接管的每一步都記在這裡，2 MB 一輪、留三輪。聲音或畫面突然不對時，把這個檔連同發生時間一起回報。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Device connections, default output changes, scene applications and restores, and every step of App audio takeover are recorded here. Logs rotate at 2 MB, with three retained. If audio or visuals suddenly seem wrong, report this file along with when it happened."
+          }
+        }
+      }
+    },
+    "裝置目前不在，無法套用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Device is currently unavailable and can't be applied"
+          }
+        }
+      }
+    },
+    "裝置配置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Device Configuration"
+          }
+        }
+      }
+    },
+    "裝置配置圖" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Device Layout"
+          }
+        }
+      }
+    },
+    "複製「%@」，到終端機貼上執行完成登入後再重試" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy \"%@\", paste it into Terminal, complete sign-in, then try again"
+          }
+        }
+      }
+    },
+    "複製登入指令" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Sign-In Command"
+          }
+        }
+      }
+    },
+    "要套用「%@」的設定嗎？" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apply the settings from \"%@\"?"
+          }
+        }
+      }
+    },
+    "計時中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Timer running"
+          }
+        }
+      }
+    },
+    "記住目前的照片、節點位置與亮度設定；之後接上同一組螢幕會自動切換。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remember the current photo, node positions, and brightness settings; reconnecting the same set of displays will switch automatically."
+          }
+        }
+      }
+    },
+    "設定 → 分析引擎：確認 CLI 已安裝或指定路徑" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings → Analysis Engine: Verify the CLI is installed or specify its path"
+          }
+        }
+      }
+    },
+    "設為預設輸出" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set as Default Output"
+          }
+        }
+      }
+    },
+    "設為預設輸出裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set as Default Output Device"
+          }
+        }
+      }
+    },
+    "診斷中…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diagnosing…"
+          }
+        }
+      }
+    },
+    "診斷紀錄" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diagnostic Log"
+          }
+        }
+      }
+    },
+    "試聽" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Play Test Sound"
+          }
+        }
+      }
+    },
+    "調整對方的整機亮度差異值" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adjust the other Mac's overall brightness offset"
+          }
+        }
+      }
+    },
+    "調整音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adjust Volume"
+          }
+        }
+      }
+    },
+    "請先匯入桌面照片" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please import a desk photo first"
+          }
+        }
+      }
+    },
+    "讀取「%@」的設定失敗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Failed to read settings from \"%@\""
+          }
+        }
+      }
+    },
+    "讀取中…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading…"
+          }
+        }
+      }
+    },
+    "讀取環境光中…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reading ambient light…"
+          }
+        }
+      }
+    },
+    "貼上校正檔" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste Correction Profile"
+          }
+        }
+      }
+    },
+    "貼上的校正檔" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pasted Correction Profile"
+          }
+        }
+      }
+    },
+    "跟隨 %@ · %lld lx" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Following %@ · %lld lx"
+          }
+        }
+      }
+    },
+    "跟隨系統預設" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Follow System Default"
+          }
+        }
+      }
+    },
+    "軟體調光" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Software Dimming"
+          }
+        }
+      }
+    },
+    "軟體音量只在此裝置是預設輸出時生效" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Software volume only takes effect when this device is the default output"
+          }
+        }
+      }
+    },
+    "軟體音量生效中——此裝置的所有音訊經過 Chorus（多約 10 ms 延遲）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Software volume is active—All audio from this device passes through Chorus (about 10 ms of additional latency)"
+          }
+        }
+      }
+    },
+    "輸入源" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Input Source"
+          }
+        }
+      }
+    },
+    "輸入源 0x60：%@（raw %u）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Input source 0x60: %@ (raw %u)"
+          }
+        }
+      }
+    },
+    "輸入源 0x60：讀取失敗（螢幕不支援讀或通道不通）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Input source 0x60: Failed to read (the display doesn't support reading or the channel is unavailable)"
+          }
+        }
+      }
+    },
+    "輸出到" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Output To"
+          }
+        }
+      }
+    },
+    "輸出到「%@」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Output to \"%@\""
+          }
+        }
+      }
+    },
+    "輸出裝置調整" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Output Device Adjustments"
+          }
+        }
+      }
+    },
+    "轉送到" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forward To"
+          }
+        }
+      }
+    },
+    "這個 App 執行時" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When this app is running"
+          }
+        }
+      }
+    },
+    "這台 Mac 沒有光線感測器，將跟隨已配對裝置回報的環境光。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Mac has no ambient light sensor and will follow the ambient light reported by a paired device."
+          }
+        }
+      }
+    },
+    "這台沒有啟用 iCloud Drive，備份功能停用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud Drive is not enabled on this Mac, so backups are disabled."
+          }
+        }
+      }
+    },
+    "這會蓋掉目前的設定。匯入前會先把現況另存一份，檔名帶「-before-import」。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This will overwrite the current settings. Before importing, the current state will be saved separately with \"-before-import\" in the filename."
+          }
+        }
+      }
+    },
+    "連按 8 次 ⌘ 的緊急復原需要輔助使用權限（目前未授權，只在 Chorus 為前景時有效）；結束 Chorus 一定會還原。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Emergency restore by pressing ⌘ 8 times requires Accessibility permission (currently not granted, and works only when Chorus is in the foreground); quitting Chorus always restores."
+          }
+        }
+      }
+    },
+    "連系統待機一起擋" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Also Prevent System Sleep"
+          }
+        }
+      }
+    },
+    "連線中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting"
+          }
+        }
+      }
+    },
+    "連線中斷" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disconnected"
+          }
+        }
+      }
+    },
+    "運作中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Active"
+          }
+        }
+      }
+    },
+    "選單列、`chorus scene <名稱>` 與 HTTP 觸發的是同一份。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The menu bar, `chorus scene <name>`, and HTTP all trigger the same scene."
+          }
+        }
+      }
+    },
+    "還原" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore"
+          }
+        }
+      }
+    },
+    "還原上次套用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore Last Applied"
+          }
+        }
+      }
+    },
+    "還原本機 offset 與曲線參數；遠端裝置的差異值無法還原" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore this Mac's offsets and curve parameters; differences on remote devices cannot be restored"
+          }
+        }
+      }
+    },
+    "配對" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pair"
+          }
+        }
+      }
+    },
+    "配對失敗：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pairing failed: %@"
+          }
+        }
+      }
+    },
+    "配對新裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pair New Device"
+          }
+        }
+      }
+    },
+    "配對資訊與自動化介面的 token（存在鑰匙串，備份是明文 JSON）、亮度與音量的當下值、進行中的限時場景。換機器後配對要重做一次。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pairing information and the automation interface token (stored in Keychain; the backup is plain-text JSON), current brightness and volume values, and active timed scenes. Pair again after switching Macs."
+          }
+        }
+      }
+    },
+    "配置圖" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Layout"
+          }
+        }
+      }
+    },
+    "重新啟用 DDC 音量橋接" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reenable DDC Volume Bridging"
+          }
+        }
+      }
+    },
+    "重新安裝驅動…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reinstall Driver…"
+          }
+        }
+      }
+    },
+    "重新掃描" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rescan"
+          }
+        }
+      }
+    },
+    "重新整理" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refresh"
+          }
+        }
+      }
+    },
+    "重新檢查" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check Again"
+          }
+        }
+      }
+    },
+    "重新產生" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Regenerate"
+          }
+        }
+      }
+    },
+    "重新納入音訊處理" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reinclude in Audio Processing"
+          }
+        }
+      }
+    },
+    "重設" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset"
+          }
+        }
+      }
+    },
+    "重試" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
+          }
+        }
+      }
+    },
+    "金鑰交換失敗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Key exchange failed"
+          }
+        }
+      }
+    },
+    "鍵盤媒體鍵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keyboard Media Keys"
+          }
+        }
+      }
+    },
+    "鏈未生效（未播放或未達成立條件）時無法編輯參數" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parameters cannot be edited when the chain did not take effect (nothing is playing or the activation conditions are not met)"
+          }
+        }
+      }
+    },
+    "鏡射" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mirror"
+          }
+        }
+      }
+    },
+    "長亮期間只擋螢幕待機，機器仍會照系統設定進入睡眠。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "During Keep Awake, only display sleep is prevented; the Mac still sleeps according to system settings."
+          }
+        }
+      }
+    },
+    "長亮期間螢幕與整台機器都不會待機（長時間下載／編譯用）。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "During Keep Awake, neither the display nor the Mac will sleep (for long downloads/compilation)."
+          }
+        }
+      }
+    },
+    "開 generic 參數面板，直接編輯活實例——改了立刻聽得到" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open the generic parameter panel to edit the live instance - changes are audible immediately"
+          }
+        }
+      }
+    },
+    "開啟後系統會詢問「系統音訊錄製」權限。音訊只在本機處理，不會傳送到任何地方；未被調整的 App 完全不經過 Chorus。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After enabling this, the system will request Screen & System Audio Recording permission. Audio is processed only on this Mac and is not sent anywhere; apps that are not adjusted do not pass through Chorus at all."
+          }
+        }
+      }
+    },
+    "開啟所有已關閉的螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn On All Disabled Displays"
+          }
+        }
+      }
+    },
+    "開啟系統設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open System Settings"
+          }
+        }
+      }
+    },
+    "開啟設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Settings"
+          }
+        }
+      }
+    },
+    "開啟設定 → 分析引擎，確認 CLI 已安裝或指定路徑" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Settings → Analysis Engine and make sure the CLI is installed or specify its path"
+          }
+        }
+      }
+    },
+    "開啟這台螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn On This Display"
+          }
+        }
+      }
+    },
+    "開始" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start"
+          }
+        }
+      }
+    },
+    "開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時）在選單列。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Controls and triggers (30 minutes/1 hour/indefinitely/when connected to a display/while an app is running) are in the menu bar."
+          }
+        }
+      }
+    },
+    "關閉" : {
+      "comment" : "螢幕長亮的「不長亮」選項；對話框的關閉鈕另用 key \"close\"",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off"
+          }
+        }
+      }
+    },
+    "關閉螢幕（DDC 電源，背光真的斷電）。%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn off display (DDC power; backlight is actually powered off). %@"
+          }
+        }
+      }
+    },
+    "關閉螢幕（移出顯示器配置，等同拔線；視窗會被搬到其他螢幕）。%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn off display (remove from the display layout, equivalent to unplugging it; windows will move to other displays). %@"
+          }
+        }
+      }
+    },
+    "關閉軟體音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disable Software Volume"
+          }
+        }
+      }
+    },
+    "限時套用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apply for a Limited Time"
+          }
+        }
+      }
+    },
+    "隱藏此裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide This Device"
+          }
+        }
+      }
+    },
+    "隱藏的音訊裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hidden Audio Devices"
+          }
+        }
+      }
+    },
+    "雙方已確認" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirmed by both Macs"
+          }
+        }
+      }
+    },
+    "離線" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Offline"
+          }
+        }
+      }
+    },
+    "離線時無法調整" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can't adjust while offline"
+          }
+        }
+      }
+    },
+    "需求描述（例：玩 FPS 想聽清腳步；可留空）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Describe what you need (e.g., hear footsteps clearly in FPS games; optional)"
+          }
+        }
+      }
+    },
+    "需要先在設定 → 音訊開啟「App 音訊接管」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable \"App audio takeover\" in Settings → Audio first"
+          }
+        }
+      }
+    },
+    "需要管理員密碼一次；會重啟音訊服務（聲音短暫中斷）。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requires your administrator password once; restarts the audio service (audio briefly interrupts)."
+          }
+        }
+      }
+    },
+    "靜音 0x8D" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mute 0x8D"
+          }
+        }
+      }
+    },
+    "音訊" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Audio"
+          }
+        }
+      }
+    },
+    "音訊輸出" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Audio Output"
+          }
+        }
+      }
+    },
+    "音量 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volume %lld%%"
+          }
+        }
+      }
+    },
+    "音量 0x62" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volume 0x62"
+          }
+        }
+      }
+    },
+    "音量模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volume Mode"
+          }
+        }
+      }
+    },
+    "音量鍵對螢幕喇叭無效——設定 → 鍵盤媒體鍵可接管" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volume keys don't affect display speakers — enable control in Settings → Keyboard Media Keys"
+          }
+        }
+      }
+    },
+    "預設" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default"
+          }
+        }
+      }
+    },
+    "顯示 %lld 個隱藏裝置" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Show %lld Hidden Device"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Show %lld Hidden Devices"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "顯示器" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Displays"
+          }
+        }
+      }
+    },
+    "顯示／隱藏建議區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show/Hide Advice Section"
+          }
+        }
+      }
+    },
+    "顯示／隱藏照片區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show/Hide Photos Section"
+          }
+        }
+      }
+    },
+    "風格" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Style"
+          }
+        }
+      }
+    },
+    "點縮圖可標註" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Click a thumbnail to annotate"
+          }
+        }
+      }
+    },
+    "（DP→HDMI 轉換晶片：此路徑不透傳標準 DDC，請改接 DP／USB-C）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(DP-to-HDMI conversion chip: this path doesn't pass through standard DDC; connect via DP/USB-C instead)"
+          }
+        }
+      }
+    },
+    "；%lld 項不會自動還原" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "; %lld item will not be restored automatically"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "; %lld items will not be restored automatically"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

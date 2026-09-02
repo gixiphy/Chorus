@@ -137,7 +137,7 @@ final class PairingController {
                 try await framed.send(PairingMessageCoding.encode(.request(hello)))
                 self?.consume(framed)
             } catch {
-                self?.fail("無法連線到對方")
+                self?.fail(String(localized: "無法連線到對方"))
             }
         }
     }
@@ -164,7 +164,7 @@ final class PairingController {
                 try await channel.send(PairingMessageCoding.encode(.response(hello)))
                 self?.deriveAndShowSAS(remotePublicKey: remoteHello.publicKey)
             } catch {
-                self?.fail("回覆失敗")
+                self?.fail(String(localized: "回覆失敗"))
             }
         }
     }
@@ -258,7 +258,7 @@ final class PairingController {
             }
             // 通道關閉：若還在流程中視為失敗
             if let self, self.phase.isMidPairing {
-                self.fail("連線中斷")
+                self.fail(String(localized: "連線中斷"))
             }
         }
     }
@@ -303,7 +303,7 @@ final class PairingController {
                 remoteConfirmed: remoteConfirmed
             )
         } catch {
-            fail("金鑰交換失敗")
+            fail(String(localized: "金鑰交換失敗"))
         }
     }
 
@@ -338,7 +338,7 @@ final class PairingController {
         endpoints = Dictionary(uniqueKeysWithValues: peers.map { ($0.peerID, $0.endpoint) })
         candidates = peers
             .filter { !pairedPeers.isPaired($0.peerID) }
-            .map { Candidate(peerID: $0.peerID, name: $0.name.isEmpty ? "未知的 Mac" : $0.name) }
+            .map { Candidate(peerID: $0.peerID, name: $0.name.isEmpty ? String(localized: "未知的 Mac") : $0.name) }
     }
 
     private func fail(_ reason: String) {

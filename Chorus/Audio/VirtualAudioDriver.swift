@@ -230,9 +230,9 @@ final class VirtualAudioDriverController {
         var errorDescription: String? {
             switch self {
             case .driverMissing:
-                "App 內沒有附 driver（開發版）。請在專案目錄執行 scripts/build-audio-driver.sh 後 sudo scripts/install-audio-driver.sh。"
+                String(localized: "App 內沒有附 driver（開發版）。請在專案目錄執行 scripts/build-audio-driver.sh 後 sudo scripts/install-audio-driver.sh。")
             case let .adminFailed(message):
-                "安裝失敗：\(message)"
+                String(localized: "安裝失敗：\(message)")
             }
         }
     }
@@ -276,7 +276,7 @@ final class VirtualAudioDriverController {
         }
         guard process.terminationStatus == 0 else {
             let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            throw InstallError.adminFailed(String(data: data, encoding: .utf8) ?? "未知錯誤")
+            throw InstallError.adminFailed(String(data: data, encoding: .utf8) ?? String(localized: "未知錯誤"))
         }
     }
 }

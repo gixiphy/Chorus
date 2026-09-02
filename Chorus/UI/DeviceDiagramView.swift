@@ -88,7 +88,7 @@ struct DeviceDiagramView: View {
         .onAppear { appState.advisor.loadHistoryIfNeeded() }
     }
 
-    private func paneTitle(_ title: String, systemImage: String) -> some View {
+    private func paneTitle(_ title: LocalizedStringKey, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .font(.caption)
             .fontWeight(.medium)
@@ -338,7 +338,7 @@ struct DeviceDiagramView: View {
             }
         } label: {
             Label(
-                appState.scenarios.activeScenario?.name ?? "情境",
+                appState.scenarios.activeScenario?.name ?? String(localized: "情境"),
                 systemImage: "square.3.layers.3d"
             )
         }
@@ -741,17 +741,17 @@ private struct DiagramNodeView: View {
     }
 
     private func localBadges(uuid: String) -> [String] {
-        var badges: [String] = ["本機"]
-        if appState.autoBrightness.isAutoActive(for: uuid) { badges.append("自動") }
+        var badges: [String] = [String(localized: "本機")]
+        if appState.autoBrightness.isAutoActive(for: uuid) { badges.append(String(localized: "自動")) }
         return badges
     }
 
     private func peerBadges(_ capabilities: [String]) -> [String] {
         capabilities.compactMap { capability in
             switch capability {
-            case "als": "光感"
-            case "display": "螢幕"
-            case "audio": "音訊"
+            case "als": String(localized: "光感")
+            case "display": String(localized: "螢幕")
+            case "audio": String(localized: "音訊")
             default: nil
             }
         }

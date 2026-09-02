@@ -4,6 +4,8 @@ options:
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
+  # UI 原文是繁體中文；String Catalog 的 source language 也是 zh-Hant，英文是翻譯。
+  developmentLanguage: zh-Hant
 
 packages:
   ChorusCore:
@@ -68,6 +70,9 @@ targets:
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: Chorus/Support/Chorus-Bridging-Header.h
+        # 建置時把 SwiftUI 字面值與 String(localized:) 抽進 Chorus/Resources/*.xcstrings
+        SWIFT_EMIT_LOC_STRINGS: YES
+        LOCALIZATION_PREFERS_STRING_CATALOGS: YES
     dependencies:
       - package: ChorusCore
       - sdk: CoreDisplay.framework

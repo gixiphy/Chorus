@@ -139,22 +139,22 @@ enum StatusIconRenderer {
     private static func accessibilityDescription(_ state: StatusIconState) -> String {
         var parts: [String] = []
         if let brightness = state.brightness {
-            parts.append("亮度 \(Int((brightness * 100).rounded()))%")
+            parts.append(String(localized: "亮度 \(Int((brightness * 100).rounded()))%"))
         }
         if state.isMuted {
-            parts.append("已靜音")
+            parts.append(String(localized: "已靜音"))
         } else if let volume = state.volume {
-            parts.append("音量 \(Int((volume * 100).rounded()))%")
+            parts.append(String(localized: "音量 \(Int((volume * 100).rounded()))%"))
         }
         if let badge = state.badge {
             // 唸出來要說對是誰的時間：同一串數字，防睡眠與限時場景的意思差很多
             switch badge.kind {
             case .keepAwake:
-                parts.append(badge.text == "∞" ? "螢幕長亮中" : "螢幕長亮剩餘 \(badge.text)")
+                parts.append(badge.text == "∞" ? String(localized: "螢幕長亮中") : String(localized: "螢幕長亮剩餘 \(badge.text)"))
             case .focus:
-                parts.append("專注剩餘 \(badge.text)")
+                parts.append(String(localized: "專注剩餘 \(badge.text)"))
             }
         }
-        return parts.isEmpty ? "Chorus" : "Chorus — " + parts.joined(separator: "、")
+        return parts.isEmpty ? "Chorus" : "Chorus — " + parts.joined(separator: String(localized: "、"))
     }
 }

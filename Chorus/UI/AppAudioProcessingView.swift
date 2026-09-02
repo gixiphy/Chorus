@@ -149,9 +149,9 @@ struct AppAudioProcessingView: View {
     private var engineReason: String? {
         switch appState.tapEngine.state {
         case .active: nil
-        case .denied: "系統音訊錄製權限被拒——App 層處理無法運作"
-        case .off: "需要先在設定 → 音訊開啟「App 音訊接管」"
-        default: "正在確認權限…"
+        case .denied: String(localized: "系統音訊錄製權限被拒——App 層處理無法運作")
+        case .off: String(localized: "需要先在設定 → 音訊開啟「App 音訊接管」")
+        default: String(localized: "正在確認權限…")
         }
     }
 }

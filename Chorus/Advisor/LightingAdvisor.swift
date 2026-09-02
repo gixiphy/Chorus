@@ -105,7 +105,10 @@ final class LightingAdvisor {
     }
 
     /// 常用的照明情境，供 UI 一鍵填入。
-    static let labelSuggestions = ["白天，窗簾拉開", "白天，窗簾拉上", "夜晚，只開掛燈", "夜晚，開頂燈", "全部關燈"]
+    static let labelSuggestions = [
+        String(localized: "白天，窗簾拉開"), String(localized: "白天，窗簾拉上"),
+        String(localized: "夜晚，只開掛燈"), String(localized: "夜晚，開頂燈"), String(localized: "全部關燈"),
+    ]
 
     func importExtraPhotos(from sources: [URL]) {
         let fm = FileManager.default
@@ -155,12 +158,12 @@ final class LightingAdvisor {
     func analyze() {
         guard !isAnalyzing else { return }
         guard let photoURL = diagram.backgroundImageURL else {
-            lastErrorMessage = "請先匯入桌面照片"
+            lastErrorMessage = String(localized: "請先匯入桌面照片")
             return
         }
         // 這位顧問送照片，引擎必須能看圖；調音顧問純文字、不設此要求。
         guard let engine = registry.activeEngine(requiring: [.vision]) else {
-            lastErrorMessage = "未找到可用的分析引擎（設定 → 分析引擎）"
+            lastErrorMessage = String(localized: "未找到可用的分析引擎（設定 → 分析引擎）")
             return
         }
         let provider = CLIAdviceProvider(
@@ -212,7 +215,7 @@ final class LightingAdvisor {
                 self?.lastErrorMessage = error.userMessage
                 self?.lastErrorAssist = error.assist
             } catch {
-                self?.lastErrorMessage = "分析失敗：\(error.localizedDescription)"
+                self?.lastErrorMessage = String(localized: "分析失敗：\(error.localizedDescription)")
             }
         }
     }

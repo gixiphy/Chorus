@@ -601,7 +601,7 @@ final class DisplayManager {
                 return screen.localizedName
             }
         }
-        return CGDisplayIsBuiltin(id) != 0 ? "內建顯示器" : "顯示器"
+        return CGDisplayIsBuiltin(id) != 0 ? String(localized: "內建顯示器") : String(localized: "顯示器")
     }
 }
 

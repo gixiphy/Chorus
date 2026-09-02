@@ -268,7 +268,7 @@ enum AUChainBuilder {
                 componentFlags: 0, componentFlagsMask: 0
             )
             guard let component = AudioComponentFindNext(nil, &description) else {
-                result.failures.append("找不到「\(entry.name)」——外掛可能已移除")
+                result.failures.append(String(localized: "找不到「\(entry.name)」——外掛可能已移除"))
                 Self.log.error("AU 找不到元件：\(entry.name) key=\(entry.component.key)")
                 continue
             }
@@ -278,7 +278,7 @@ enum AUChainBuilder {
             var status = AudioComponentInstanceNew(component, &maybeUnit)
             guard status == noErr, let unit = maybeUnit else {
                 latch(nil)
-                result.failures.append("「\(entry.name)」實例化失敗（\(status)）")
+                result.failures.append(String(localized: "「\(entry.name)」實例化失敗（\(status)）"))
                 Self.log.error("AU 實例化失敗：\(entry.name) key=\(entry.component.key) status=\(status)")
                 continue
             }
@@ -320,7 +320,7 @@ enum AUChainBuilder {
             guard status == noErr else {
                 latch(nil)
                 AudioComponentInstanceDispose(unit)
-                result.failures.append("「\(entry.name)」初始化失敗（\(status)）")
+                result.failures.append(String(localized: "「\(entry.name)」初始化失敗（\(status)）"))
                 Self.log.error("AU 初始化失敗：\(entry.name) key=\(entry.component.key) status=\(status)")
                 continue
             }

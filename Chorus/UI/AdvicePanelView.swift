@@ -144,7 +144,7 @@ struct AdvicePanelView: View {
                 .help("還原本機 offset 與曲線參數；遠端裝置的差異值無法還原")
             }
             Spacer()
-            Button("關閉") { onClose() }
+            Button(String(localized: "close", defaultValue: "關閉")) { onClose() }
                 .controlSize(.small)
             Button("套用勾選項") {
                 appState.advisor.apply(

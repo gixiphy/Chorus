@@ -109,7 +109,7 @@ final class AudioDeviceManager {
     }
 
     /// 三個「誠實說明」共用的文案：排除是最強的否決，排在其他理由前面。
-    static let excludedReason = "已排除此裝置——Chorus 不在它上面做任何處理"
+    static let excludedReason = String(localized: "已排除此裝置——Chorus 不在它上面做任何處理")
 
     // MARK: - 軟體音量（三後端矩陣第三條，B6-4）
 
@@ -136,12 +136,12 @@ final class AudioDeviceManager {
     func softwareVolumeUnavailableReason(_ device: AudioDeviceModel) -> String? {
         if !isSoftwareVolumeEnabled(device) { return nil }
         if isExcluded(device) { return Self.excludedReason }
-        if !device.isDefault { return "軟體音量只在此裝置是預設輸出時生效" }
+        if !device.isDefault { return String(localized: "軟體音量只在此裝置是預設輸出時生效") }
         switch tapEngine?.state {
         case .active: return nil
-        case .denied: return "系統音訊錄製權限被拒——軟體音量無法運作"
-        case .off, nil: return "需要先在設定 → 音訊開啟「App 音訊接管」"
-        default: return "正在確認權限…"
+        case .denied: return String(localized: "系統音訊錄製權限被拒——軟體音量無法運作")
+        case .off, nil: return String(localized: "需要先在設定 → 音訊開啟「App 音訊接管」")
+        default: return String(localized: "正在確認權限…")
         }
     }
 
@@ -176,12 +176,12 @@ final class AudioDeviceManager {
         guard !device.canSetBalance else { return nil }
         guard (settings.deviceBalance[device.uid] ?? 0) != 0 else { return nil }
         if isExcluded(device) { return Self.excludedReason }
-        if !device.isDefault { return "左右平衡只在此裝置是預設輸出時生效" }
+        if !device.isDefault { return String(localized: "左右平衡只在此裝置是預設輸出時生效") }
         switch tapEngine?.state {
         case .active: return nil
-        case .denied: return "系統音訊錄製權限被拒——軟體平衡無法運作"
-        case .off, nil: return "需要先在設定 → 音訊開啟「App 音訊接管」"
-        default: return "正在確認權限…"
+        case .denied: return String(localized: "系統音訊錄製權限被拒——軟體平衡無法運作")
+        case .off, nil: return String(localized: "需要先在設定 → 音訊開啟「App 音訊接管」")
+        default: return String(localized: "正在確認權限…")
         }
     }
 
@@ -619,12 +619,12 @@ final class AudioDeviceManager {
     func eqUnavailableReason(for device: AudioDeviceModel) -> String? {
         guard eqSettings(for: device).isEnabled else { return nil }
         if isExcluded(device) { return Self.excludedReason }
-        if !device.isDefault { return "等化只在此裝置是預設輸出時生效" }
+        if !device.isDefault { return String(localized: "等化只在此裝置是預設輸出時生效") }
         switch tapEngine?.state {
         case .active: return nil
-        case .denied: return "系統音訊錄製權限被拒——等化無法運作"
-        case .off, nil: return "需要先在設定 → 音訊開啟「App 音訊接管」"
-        default: return "正在確認權限…"
+        case .denied: return String(localized: "系統音訊錄製權限被拒——等化無法運作")
+        case .off, nil: return String(localized: "需要先在設定 → 音訊開啟「App 音訊接管」")
+        default: return String(localized: "正在確認權限…")
         }
     }
 

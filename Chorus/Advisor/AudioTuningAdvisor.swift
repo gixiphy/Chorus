@@ -95,7 +95,7 @@ final class AudioTuningAdvisor {
     func analyze(target: AudioTuningTarget, request: String) {
         guard !isAnalyzing else { return }
         guard let engine = registry?.activeEngine else {
-            lastErrorMessage = "未找到可用的分析引擎（設定 → 分析引擎）"
+            lastErrorMessage = String(localized: "未找到可用的分析引擎（設定 → 分析引擎）")
             lastErrorAssist = .openEngineSettings
             return
         }
@@ -139,7 +139,7 @@ final class AudioTuningAdvisor {
                 self?.lastErrorMessage = error.userMessage
                 self?.lastErrorAssist = error.assist
             } catch {
-                self?.lastErrorMessage = "分析失敗：\(error.localizedDescription)"
+                self?.lastErrorMessage = String(localized: "分析失敗：\(error.localizedDescription)")
             }
         }
     }
@@ -241,7 +241,7 @@ final class AudioTuningAdvisor {
             for (index, gain) in suggestion.bandsGainDB.enumerated() where index < eq.bands.count {
                 eq.bands[index].gainDB = gain
             }
-            eq.sourceName = "AI 建議"
+            eq.sourceName = String(localized: "AI 建議")
             return eq
         }
         let suggestedEffects = advice.effects.compactMap { suggestion -> AUEffectEntry? in
@@ -265,7 +265,7 @@ final class AudioTuningAdvisor {
             }
         case let .device(uid):
             guard let device = audioManager?.devices.first(where: { $0.uid == uid }) else {
-                lastErrorMessage = "裝置目前不在，無法套用"
+                lastErrorMessage = String(localized: "裝置目前不在，無法套用")
                 return
             }
             if let suggestedEQ {

@@ -203,15 +203,15 @@ private struct AutoBrightnessRow: View {
         let auto = appState.autoBrightness
         if auto.hasLocalSensor {
             if let lux = auto.currentLux {
-                return "目前環境光 \(Int(lux.rounded())) lx"
+                return String(localized: "目前環境光 \(Int(lux.rounded())) lx")
             }
-            return appState.settings.autoBrightnessEnabled ? "讀取環境光中…" : "使用本機光線感測器"
+            return appState.settings.autoBrightnessEnabled ? String(localized: "讀取環境光中…") : String(localized: "使用本機光線感測器")
         }
         if let sourceID = auto.baselineSourceID, let lux = auto.baselineLux {
-            let name = appState.pairedPeers.peers.first { $0.peerID == sourceID }?.deviceName ?? "其他裝置"
-            return "跟隨 \(name) · \(Int(lux.rounded())) lx"
+            let name = appState.pairedPeers.peers.first { $0.peerID == sourceID }?.deviceName ?? String(localized: "其他裝置")
+            return String(localized: "跟隨 \(name) · \(Int(lux.rounded())) lx")
         }
-        return "無光線感測器 — 等待其他裝置回報"
+        return String(localized: "無光線感測器 — 等待其他裝置回報")
     }
 }
 
@@ -283,8 +283,8 @@ private struct FocusRow: View {
     private var pendingSummary: String {
         let pending = appState.focus.pendingPeerRestores
         let peers = Set(pending.compactMap(\.peer)).sorted()
-        let names = peers.isEmpty ? "對方" : peers.joined(separator: "、")
-        return "\(pending.count) 項未還原（\(names)離線）"
+        let names = peers.isEmpty ? String(localized: "對方") : peers.joined(separator: String(localized: "、"))
+        return String(localized: "\(pending.count) 項未還原（\(names)離線）")
     }
 
     /// 與選單列圖示上那格是同一份文字——兩處對不上的話，使用者會以為
@@ -295,10 +295,10 @@ private struct FocusRow: View {
     }
 
     private func caption(_ session: FocusSession) -> String {
-        var text = "結束時還原 \(session.snapshot.restorableCount) 項"
+        var text = String(localized: "結束時還原 \(session.snapshot.restorableCount) 項")
         if !session.snapshot.unrestorable.isEmpty {
             // 數字之外還要能看到是哪幾項——滑上去有 tooltip
-            text += "；\(session.snapshot.unrestorable.count) 項不會自動還原"
+            text += String(localized: "；\(session.snapshot.unrestorable.count) 項不會自動還原")
         }
         return text
     }
@@ -425,7 +425,7 @@ private struct ScenesRow: View {
         appState.sceneStore.save(appState.automation.captureCurrentScene(named: name))
         naming = false
         draftName = ""
-        note = "已建立「\(name)」"
+        note = String(localized: "已建立「\(name)」")
     }
 
     private var lastDurationMinutes: Int {
@@ -446,7 +446,7 @@ private struct ScenesRow: View {
                     let granted = await appState.focusNotifier.requestAuthorization()
                     appState.settings.focusNotifyOnEnd = granted
                     if !granted {
-                        note = "系統設定裡未允許 Chorus 通知"
+                        note = String(localized: "系統設定裡未允許 Chorus 通知")
                     }
                 }
             }
@@ -457,7 +457,7 @@ private struct ScenesRow: View {
     /// 與 hint 全部與 CLI／HTTP 共用同一份，選單不會長出自己的規則。
     private func start(_ scene: ControlScene, duration: String) {
         customScene = nil
-        note = "正在套用「\(scene.name)」…"
+        note = String(localized: "正在套用「\(scene.name)」…")
         Task { @MainActor in
             // executeAsync：場景含跨機項目時要先把對方的現值問回來，
             // 否則還原時沒有原值可放。最多一秒
@@ -471,8 +471,8 @@ private struct ScenesRow: View {
             }
             let failed = (response.results ?? []).filter { $0.property == "error" }.count
             note = failed == 0
-                ? "「\(scene.name)」限時套用中"
-                : "已套用「\(scene.name)」，\(failed) 項未生效（裝置已不在）"
+                ? String(localized: "「\(scene.name)」限時套用中")
+                : String(localized: "已套用「\(scene.name)」，\(failed) 項未生效（裝置已不在）")
         }
     }
 
@@ -484,8 +484,8 @@ private struct ScenesRow: View {
         // 不要讓使用者以為整組都生效了
         let failed = (response.results ?? []).filter { $0.property == "error" }.count
         note = failed == 0
-            ? "已套用「\(scene.name)」"
-            : "已套用「\(scene.name)」，\(failed) 項未生效（裝置已不在）"
+            ? String(localized: "已套用「\(scene.name)」")
+            : String(localized: "已套用「\(scene.name)」，\(failed) 項未生效（裝置已不在）")
     }
 }
 
@@ -588,11 +588,11 @@ private struct KeepAwakeRow: View {
 
     private var menuLabel: String {
         switch appState.keepAwake.mode {
-        case .off: "關閉"
-        case .indefinite: "無限期"
-        case .duration: "計時中"
-        case .whileDisplayConnected: "綁定螢幕"
-        case .whileAppRunning: "綁定 App"
+        case .off: String(localized: "關閉")
+        case .indefinite: String(localized: "無限期")
+        case .duration: String(localized: "計時中")
+        case .whileDisplayConnected: String(localized: "綁定螢幕")
+        case .whileAppRunning: String(localized: "綁定 App")
         }
     }
 
@@ -600,21 +600,21 @@ private struct KeepAwakeRow: View {
         let keepAwake = appState.keepAwake
         switch keepAwake.mode {
         case .off:
-            return "螢幕會照系統設定待機"
+            return String(localized: "螢幕會照系統設定待機")
         case .indefinite:
-            return keepAwake.alsoPreventSystemSleep ? "螢幕與系統都不會待機" : "螢幕不會待機"
+            return keepAwake.alsoPreventSystemSleep ? String(localized: "螢幕與系統都不會待機") : String(localized: "螢幕不會待機")
         case .duration:
-            guard let remaining = keepAwake.remainingSeconds else { return "計時中" }
+            guard let remaining = keepAwake.remainingSeconds else { return String(localized: "計時中") }
             let minutes = Int(remaining) / 60
             let seconds = Int(remaining) % 60
-            return String(format: "剩餘 %d:%02d", minutes, seconds)
+            return String(format: String(localized: "剩餘 %d:%02d"), minutes, seconds)
         case let .whileDisplayConnected(uuid):
             let name = appState.displayManager.displays.first { $0.uuid == uuid }?.name
-            guard let name else { return "綁定的螢幕未連接 — 暫停中" }
-            return keepAwake.isHolding ? "接著「\(name)」時不待機" : "「\(name)」未連接 — 暫停中"
+            guard let name else { return String(localized: "綁定的螢幕未連接 — 暫停中") }
+            return keepAwake.isHolding ? String(localized: "接著「\(name)」時不待機") : String(localized: "「\(name)」未連接 — 暫停中")
         case let .whileAppRunning(bundleID):
             let name = RunningApps.displayName(for: bundleID)
-            return keepAwake.isHolding ? "「\(name)」執行中不待機" : "「\(name)」未執行 — 暫停中"
+            return keepAwake.isHolding ? String(localized: "「\(name)」執行中不待機") : String(localized: "「\(name)」未執行 — 暫停中")
         }
     }
 }

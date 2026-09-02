@@ -79,9 +79,9 @@ struct PeersSection: View {
 
     private func statusLabel(_ peerID: String) -> String {
         switch appState.sessionManager.connectionStates[peerID] {
-        case .connected: "已連線"
-        case .connecting: "連線中"
-        default: "離線"
+        case .connected: String(localized: "已連線")
+        case .connecting: String(localized: "連線中")
+        default: String(localized: "離線")
         }
     }
 }

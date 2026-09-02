@@ -357,9 +357,9 @@ struct DeviceBalanceRow: View {
     }
 
     private var balanceLabel: String {
-        if device.balance == 0 { return "置中" }
+        if device.balance == 0 { return String(localized: "置中") }
         let percent = Int((abs(device.balance) * 100).rounded())
-        return device.balance < 0 ? "左 \(percent)%" : "右 \(percent)%"
+        return device.balance < 0 ? String(localized: "左 \(percent)%") : String(localized: "右 \(percent)%")
     }
 
     private var isMirrorModeVirtual: Bool {

@@ -74,31 +74,31 @@ final class AutoEqCatalog {
         guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: Self.base + encoded)
         else {
-            lastError = "無法組出下載網址"
+            lastError = String(localized: "無法組出下載網址")
             return nil
         }
         do {
             let (data, response) = try await session.data(from: url)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                lastError = "下載失敗（HTTP \(http.statusCode)）——AutoEq 可能已移動這個型號的路徑"
+                lastError = String(localized: "下載失敗（HTTP \(http.statusCode)）——AutoEq 可能已移動這個型號的路徑")
                 return nil
             }
             let text = String(decoding: data, as: UTF8.self)
             guard let parsed = AutoEqParser.parse(text, sourceName: "AutoEq · \(entry.name)") else {
-                lastError = "下載到的內容不是有效的 ParametricEQ 檔"
+                lastError = String(localized: "下載到的內容不是有效的 ParametricEQ 檔")
                 return nil
             }
             cache(text, for: entry)
             return parsed
         } catch {
-            lastError = "下載失敗：\(error.localizedDescription)"
+            lastError = String(localized: "下載失敗：\(error.localizedDescription)")
             return nil
         }
     }
 
     /// 使用者自己貼上的校正檔（離線、任何型號都適用的那條路）。
     func settings(fromPastedText text: String) -> EQSettings? {
-        AutoEqParser.parse(text, sourceName: "貼上的校正檔")
+        AutoEqParser.parse(text, sourceName: String(localized: "貼上的校正檔"))
     }
 
     // MARK: - 快取
