@@ -202,7 +202,7 @@ final class LightingAdvisor {
                     let thumb = try Self.makeThumbnail(from: photo.url, in: sandbox)
                     photos.append(LabeledPhoto(path: thumb.path, label: photo.label))
                 }
-                if photos.isEmpty { photos = [LabeledPhoto(path: "(無照片)")] }
+                if photos.isEmpty { photos = [LabeledPhoto(path: "(no photo)")] }
                 let raw = try await provider.advise(photos: photos, context: context, sandbox: sandbox)
                 guard let self, !Task.isCancelled else { return }
                 let advice = raw.sanitized(for: context)

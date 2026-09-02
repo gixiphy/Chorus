@@ -14,107 +14,139 @@ public struct LabeledPhoto: Sendable, Equatable {
     }
 }
 
+/// 顧問回覆要用的語言。**跟著 App 目前的介面語言走**：介面切到英文，
+/// 模型就用英文寫 summary／reason／warnings；prompt 本體一律是英文。
+public enum AdviceLanguage {
+    /// 目前介面語言的英文名稱（例：「Chinese (Traditional)」、「English」）。
+    /// `Bundle.main.preferredLocalizations` 已經是「使用者偏好 ∩ App 有的語言」，
+    /// 所以系統是日文但 App 只有中英時，這裡會落到 App 實際顯示的那個。
+    public static var current: String {
+        name(forLocalization: Bundle.main.preferredLocalizations.first ?? "en")
+    }
+
+    /// 語言代碼 → 英文語言名，給 prompt 用（模型看英文名最不會誤解）。
+    public static func name(forLocalization identifier: String) -> String {
+        Locale(identifier: "en_US").localizedString(forIdentifier: identifier) ?? identifier
+    }
+}
+
 /// 光環境顧問的 prompt 與結構化輸出工具 schema。
 /// 純字串組裝，輸出順序固定，可快照測試；API 呼叫本體在 app 層。
+/// prompt 是英文，只有「回覆語言」是參數——使用者輸入的標註與需求原樣夾帶。
 public enum AdvicePrompt {
     /// 強制呼叫的結構化輸出工具名（`tool_choice: {type: "tool"}`）。
     public static let toolName = "submit_lighting_advice"
 
     /// 系統提示。判讀重點與輸出紀律見設計文件 §3。
-    public static let systemPrompt = """
-    你是 Chorus（macOS 亮度／音量跨機同步 App）的顯示器調光顧問。使用者會提供一張\
-    桌面佈置照片，以及各顯示器的清單（含節點在照片上的 0–1 正規化座標、亮度 backend、\
-    目前差異值）與現行自動亮度參數。
+    public static func systemPrompt(responseLanguage: String = AdviceLanguage.current) -> String {
+        """
+        You are the display dimming advisor for Chorus, a macOS app that syncs brightness and volume \
+        across Macs. The user provides a photo of their desk setup plus a list of displays (each with \
+        its node's normalized 0–1 coordinates on the photo, its brightness backend and its current \
+        offset) and the current auto-brightness curve parameters.
 
-    判讀重點：
-    - 光源的類型與方位：窗戶、天花板燈、檯燈、螢幕掛燈，以及它們相對各螢幕的位置。
-    - 各螢幕視野背景的亮度：背景亮的螢幕需要偏正的 offset 才不顯得暗。
-    - 陰影帶與反光風險：層架遮蔭、掛燈或檯燈直射螢幕面。
-    - 環境光感測器的位置：MacBook 的 ALS 在螢幕上緣瀏海附近，判斷它會被哪些光源影響、\
-    讀值相對桌面整體是偏高或偏低。
-    - 多張照片可能拍的是不同照明情境（有標註時會寫明是白天、夜晚或開了哪些燈）：\
-    比對它們的差異，分辨哪些是恆常的擺設因素（層架遮蔭、螢幕朝向），哪些只是當下\
-    開關燈造成的。照片是自動曝光的，畫面亮度不代表絕對照度，請以標註與 lux 統計為準。
+        What to look for:
+        - Light sources, their type and direction: windows, ceiling lights, desk lamps, monitor light \
+        bars, and where each sits relative to each display.
+        - Background luminance behind each display: a display against a bright background needs a \
+        positive offset so it does not look dim.
+        - Shadow bands and glare risk: shelves casting shade, a light bar or lamp shining directly \
+        onto a panel.
+        - Where the ambient light sensor is: a MacBook's ALS sits near the notch at the top edge of \
+        its screen. Judge which light sources hit it and whether its reading runs high or low \
+        relative to the desk as a whole.
+        - Multiple photos may capture different lighting scenarios (labels state daytime, nighttime \
+        or which lights are on). Compare them to separate permanent factors (shelf shade, display \
+        orientation) from lights that merely happen to be on. Photos are auto-exposed, so image \
+        brightness is not absolute illuminance; trust the labels and the lux statistics instead.
 
-    輸出紀律（一律透過 \(toolName) 工具回報，所有文字使用繁體中文）：
-    - offset 是絕對建議值（非增量），起步幅度保守（|offset| ≤ 0.15）；使用者的手動修正\
-    會由學習機制接手微調，不需要一次到位。
-    - offset 是各螢幕之間的相對偏差，必須在所有照明情境下都成立；整體亮度隨環境變化\
-    由 maxLux／minBrightness 曲線負責，不要用 offset 去補償單一情境的明暗。
-    - backend 為 "gamma" 的螢幕只能軟體降亮、不能加亮：在 warnings 提醒使用者先用螢幕 \
-    OSD 把硬體背光設到「最亮情境下舒適」的上限。
-    - maxLux／minBrightness 只在照片與 lux 統計有明確依據時才提供；不確定的觀察寫進 \
-    warnings，不要編造數值。
-    - displayID 只能使用輸入清單中的值；同一顯示器最多一筆 offset 建議。
-    """
+        Output discipline (always report through the \(toolName) tool; write all text in \(responseLanguage)):
+        - offset is an absolute recommendation, not a delta. Start conservatively (|offset| ≤ 0.15); \
+        the learning mechanism fine-tunes from the user's manual corrections, so it need not be \
+        perfect on the first pass.
+        - offset is the relative difference between displays and must hold in every lighting \
+        scenario. Tracking the environment's overall brightness is the job of the maxLux/minBrightness \
+        curve; do not use offset to compensate for one scenario being light or dark.
+        - Displays whose backend is "gamma" can only be dimmed in software, never brightened: warn \
+        the user to first set the hardware backlight via the monitor's OSD to a level that is \
+        comfortable in the brightest scenario.
+        - Provide maxLux/minBrightness only when the photos and lux statistics clearly support them; \
+        put uncertain observations in warnings instead of inventing numbers.
+        - displayID must come from the input list; at most one offset suggestion per display.
+        """
+    }
 
     /// 工具 input_schema（JSON Schema），形狀與 `LightingAdvice` 的 Codable 對稱。
     /// 數值範圍與 `LightingAdvice` 的夾值範圍一致（schema 擋第一線，sanitized 保底）。
-    public static let toolInputSchemaJSON = """
-    {
-      "type": "object",
-      "properties": {
-        "sceneSummary": {
-          "type": "string",
-          "description": "對照片光環境的整體描述（繁體中文，2–4 句）"
-        },
-        "offsets": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "displayID": { "type": "string", "description": "必須來自輸入的顯示器清單" },
-              "offset": { "type": "number", "minimum": -0.3, "maximum": 0.3 },
-              "reason": { "type": "string", "description": "繁體中文一句話理由" }
+    public static func toolInputSchemaJSON(responseLanguage: String = AdviceLanguage.current) -> String {
+        """
+        {
+          "type": "object",
+          "properties": {
+            "sceneSummary": {
+              "type": "string",
+              "description": "Overall description of the lighting environment in the photos (\(responseLanguage), 2–4 sentences)"
             },
-            "required": ["displayID", "offset", "reason"]
-          }
-        },
-        "maxLux": { "type": "number", "minimum": 100, "maximum": 20000 },
-        "minBrightness": { "type": "number", "minimum": 0, "maximum": 0.5 },
-        "warnings": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "無套用動作的提醒（繁體中文）"
+            "offsets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "displayID": { "type": "string", "description": "Must come from the input display list" },
+                  "offset": { "type": "number", "minimum": -0.3, "maximum": 0.3 },
+                  "reason": { "type": "string", "description": "One-sentence reason in \(responseLanguage)" }
+                },
+                "required": ["displayID", "offset", "reason"]
+              }
+            },
+            "maxLux": { "type": "number", "minimum": 100, "maximum": 20000 },
+            "minBrightness": { "type": "number", "minimum": 0, "maximum": 0.5 },
+            "warnings": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Reminders that do not apply any action (\(responseLanguage))"
+            }
+          },
+          "required": ["sceneSummary", "offsets", "warnings"]
         }
-      },
-      "required": ["sceneSummary", "offsets", "warnings"]
+        """
     }
-    """
 
     /// context → user message 的文字描述（照片以外的部分）。
     /// 顯示器依輸入順序列出，數字格式固定。
     public static func contextDescription(_ context: AdviceContext) -> String {
-        var lines: [String] = ["顯示器清單："]
+        var lines: [String] = ["Displays:"]
         for display in context.displays {
             var parts = [
                 "- id=\(display.id)",
-                "名稱=「\(display.name)」",
+                "name=\"\(display.name)\"",
                 "backend=\(display.backend)"
             ]
             if let position = display.normalizedPosition, position.count == 2 {
-                parts.append("照片座標=(\(format(position[0], decimals: 2)), \(format(position[1], decimals: 2)))")
+                parts.append("photoPosition=(\(format(position[0], decimals: 2)), \(format(position[1], decimals: 2)))")
             } else {
-                parts.append("照片座標=未擺放")
+                parts.append("photoPosition=not placed")
             }
-            parts.append("目前offset=\(formatSigned(display.currentOffset))")
+            parts.append("currentOffset=\(formatSigned(display.currentOffset))")
             lines.append(parts.joined(separator: " "))
         }
         lines.append(
-            "現行曲線：minBrightness=\(format(context.curve.minBrightness, decimals: 2)) "
+            "Current curve: minBrightness=\(format(context.curve.minBrightness, decimals: 2)) "
                 + "maxLux=\(format(context.curve.maxLux, decimals: 0))"
         )
         if let lux = context.recentLux {
             lines.append(
-                "近期環境光（lux）：min=\(format(lux.minLux, decimals: 0)) "
+                "Recent ambient light (lux): min=\(format(lux.minLux, decimals: 0)) "
                     + "median=\(format(lux.medianLux, decimals: 0)) "
                     + "max=\(format(lux.maxLux, decimals: 0))"
             )
         } else {
-            lines.append("近期環境光：無資料（本機無環境光感測器）")
+            lines.append("Recent ambient light: no data (this Mac has no ambient light sensor)")
         }
         if let hasLightBar = context.hasLightBarHint {
-            lines.append(hasLightBar ? "使用者標注：桌面有螢幕掛燈" : "使用者標注：桌面沒有螢幕掛燈")
+            lines.append(hasLightBar
+                ? "User note: the desk has a monitor light bar"
+                : "User note: the desk has no monitor light bar")
         }
         return lines.joined(separator: "\n")
     }
@@ -129,20 +161,25 @@ public enum AdvicePrompt {
         context: AdviceContext,
         photos: [LabeledPhoto],
         readInstruction: String,
-        delivery: PhotoDelivery = .pathInPrompt
+        delivery: PhotoDelivery = .pathInPrompt,
+        responseLanguage: String = AdviceLanguage.current
     ) -> String {
         let photoLines = photoSection(photos: photos, readInstruction: readInstruction, delivery: delivery)
         return """
-        \(systemPrompt)
+        \(systemPrompt(responseLanguage: responseLanguage))
 
         \(contextDescription(context))
 
         \(photoLines)
 
-        只輸出一個 JSON 物件（不要 markdown fence、不要其他文字），必須符合以下 JSON Schema：
-        \(toolInputSchemaJSON)
+        \(outputInstruction)
+        \(toolInputSchemaJSON(responseLanguage: responseLanguage))
         """
     }
+
+    /// 兩位顧問共用的收尾句：只要 JSON，不要 fence。
+    public static let outputInstruction =
+        "Output exactly one JSON object (no markdown fence, no other text) that conforms to this JSON Schema:"
 
     /// 照片怎麼送到模型手上。決定 prompt 要不要講路徑與「請先讀取」。
     public enum PhotoDelivery: Sendable, Equatable {
@@ -158,25 +195,24 @@ public enum AdvicePrompt {
         readInstruction: String,
         delivery: PhotoDelivery
     ) -> String {
-        guard !photos.isEmpty else { return "桌面照片：(無)" }
+        guard !photos.isEmpty else { return "Desk photo: (none)" }
+        let ordering = "photo 1 is the layout background and display coordinates refer to it; "
+            + "the rest are supplementary views"
         switch delivery {
         case .attached:
             if photos.count == 1 {
-                let suffix = labelSuffix(photos[0].label)
-                return "桌面照片已附加於本次訊息\(suffix.isEmpty ? "" : "\(suffix)")。"
+                return "The desk photo is attached to this message\(labelSuffix(photos[0].label))."
             }
-            var lines = ["桌面照片共 \(photos.count) 張，已依序附加於本次訊息"
-                + "（第 1 張是配置圖背景照，顯示器座標以它為準，其餘為補充視角）："]
+            var lines = ["\(photos.count) desk photos are attached to this message in order (\(ordering)):"]
             for (index, photo) in photos.enumerated() {
-                let suffix = labelSuffix(photo.label)
-                lines.append("第 \(index + 1) 張\(suffix.isEmpty ? "" : suffix)")
+                lines.append("Photo \(index + 1)\(labelSuffix(photo.label))")
             }
             return lines.joined(separator: "\n")
         case .pathInPrompt:
             if photos.count == 1 {
-                return "桌面照片：\(photos[0].path)\(labelSuffix(photos[0].label))（\(readInstruction)）"
+                return "Desk photo: \(photos[0].path)\(labelSuffix(photos[0].label)) (\(readInstruction))"
             }
-            var lines = ["桌面照片共 \(photos.count) 張（\(readInstruction)；第 1 張是配置圖背景照，顯示器座標以它為準，其餘為補充視角）："]
+            var lines = ["\(photos.count) desk photos (\(readInstruction); \(ordering)):"]
             for (index, photo) in photos.enumerated() {
                 lines.append("\(index + 1). \(photo.path)\(labelSuffix(photo.label))")
             }
@@ -185,14 +221,16 @@ public enum AdvicePrompt {
     }
 
     /// 標註接在照片路徑後；未標註回空字串，輸出與未加此功能前一致。
+    /// 標註是使用者的原話，不翻譯——模型自己看得懂。
     private static func labelSuffix(_ label: String) -> String {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "" : "（照明情境：\(trimmed)）"
+        return trimmed.isEmpty ? "" : " (lighting scenario: \(trimmed))"
     }
 
     /// decode 失敗重試一次時附加的修正指示。
     public static let retryInstruction =
-        "（上次輸出無法解析為符合 schema 的 JSON。請重新輸出：只輸出一個 JSON 物件，不含任何其他文字或 fence。）"
+        "(The previous output could not be parsed as JSON matching the schema. "
+        + "Output again: exactly one JSON object, with no other text and no fences.)"
 
     /// 固定小數位、不受 locale 影響的數字格式（"12"、"0.42"、"-0.30"）。
     private static func format(_ value: Double, decimals: Int) -> String {

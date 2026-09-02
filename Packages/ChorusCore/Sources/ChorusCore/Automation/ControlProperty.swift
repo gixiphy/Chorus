@@ -79,13 +79,13 @@ public enum ControlProperty: String, Codable, Sendable, CaseIterable, Hashable {
         targetKinds
             .map { kind in
                 switch kind {
-                case .display: "顯示器"
-                case .audioDevice: "音訊裝置"
-                case .system: "system（整機）"
-                case .app: "app（逐 App 音訊）"
+                case .display: String(localized: "顯示器")
+                case .audioDevice: String(localized: "音訊裝置")
+                case .system: String(localized: "system（整機）")
+                case .app: String(localized: "app（逐 App 音訊）")
                 }
             }
             .sorted()
-            .joined(separator: "、")
+            .joined(separator: String(localized: "、"))
     }
 }

@@ -67,7 +67,7 @@ struct CLIAdviceProviderTests {
         let provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
         _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/desk-photo.jpg")], context: context, sandbox: nil)
         let prompt = try String(contentsOf: capture, encoding: .utf8)
-        #expect(prompt.contains("桌面照片：/tmp/desk-photo.jpg（用 Read 工具讀取後再分析）"))
+        #expect(prompt.contains("Desk photo: /tmp/desk-photo.jpg (read it with the Read tool before analyzing)"))
         #expect(prompt.contains("JSON Schema"))
         #expect(prompt.contains("id=display:AAA"))
         try? FileManager.default.removeItem(at: capture)
@@ -263,7 +263,7 @@ struct CLIAdviceProviderTests {
         #expect(argv.contains("read-only"))
         // 附加模式的 prompt 不該再叫模型去讀某個路徑
         let prompt = argv.last ?? ""
-        #expect(prompt.contains("附加於本次訊息"))
+        #expect(prompt.contains("attached to this message"))
         // 附加模式不該再把路徑寫進 prompt——模型已經看得到圖，
         // 叫它去讀路徑只會誘發多餘（且會被權限擋下）的工具呼叫
         #expect(!prompt.contains("/tmp/a.jpg"))
@@ -274,7 +274,7 @@ struct CLIAdviceProviderTests {
         let argv = try await captureArgv(engineID: "opencode", photos: ["/tmp/a.jpg"])
         #expect(argv.first == "run")
         guard let fileFlag = argv.firstIndex(of: "-f"),
-              let prompt = argv.firstIndex(where: { $0.contains("附加於本次訊息") })
+              let prompt = argv.firstIndex(where: { $0.contains("attached to this message") })
         else {
             Issue.record("argv 形狀不符：\(argv)")
             return

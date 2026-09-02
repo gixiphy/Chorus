@@ -136,7 +136,7 @@ public enum ControlRequestValidator {
         guard let raw = request.duration else { return nil }
         guard request.verb == .perform, request.action == .runScene else {
             throw ControlError.badValue(
-                raw, hint: "時長只能配 perform runScene（場景 ＋ 時長 ＝ 限時場景）"
+                raw, hint: String(localized: "時長只能配 perform runScene（場景 ＋ 時長 ＝ 限時場景）")
             )
         }
         // `off`（0）與 `forever`（−1）在收值規則裡都合法，但限時場景需要一個
@@ -144,7 +144,7 @@ public enum ControlRequestValidator {
         guard case let .duration(seconds) = try ControlValue.parse(raw, kind: .duration),
               seconds > 0
         else {
-            throw ControlError.badValue(raw, hint: "限時場景需要正的時長，例如 25m、1h、90s")
+            throw ControlError.badValue(raw, hint: String(localized: "限時場景需要正的時長，例如 25m、1h、90s"))
         }
         return seconds
     }

@@ -9,9 +9,9 @@ public enum BiquadKind: String, Codable, Sendable, CaseIterable {
 
     public var label: String {
         switch self {
-        case .peaking: "峰值"
-        case .lowShelf: "低頻棚"
-        case .highShelf: "高頻棚"
+        case .peaking: String(localized: "峰值")
+        case .lowShelf: String(localized: "低頻棚")
+        case .highShelf: String(localized: "高頻棚")
         }
     }
 }

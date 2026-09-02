@@ -80,10 +80,10 @@ func cliPromptAssembly() {
         photos: [LabeledPhoto(path: "/tmp/desk.jpg")],
         readInstruction: "用 Read 工具讀取後再分析"
     )
-    #expect(prompt.contains(AdvicePrompt.systemPrompt))
+    #expect(prompt.contains(AdvicePrompt.systemPrompt()))
     #expect(prompt.contains("id=display:AAA"))
-    #expect(prompt.contains("桌面照片：/tmp/desk.jpg（用 Read 工具讀取後再分析）"))
-    #expect(prompt.contains(AdvicePrompt.toolInputSchemaJSON))
+    #expect(prompt.contains("Desk photo: /tmp/desk.jpg (用 Read 工具讀取後再分析)"))
+    #expect(prompt.contains(AdvicePrompt.toolInputSchemaJSON()))
 }
 
 @Test("cliPrompt：多張照片列編號清單，標注第一張為背景照")

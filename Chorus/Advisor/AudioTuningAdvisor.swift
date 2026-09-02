@@ -18,7 +18,7 @@ struct CLIAudioAdviceProvider: AudioAdviceProviding {
     func advise(context: AudioTuningContext, sandbox: URL?) async throws -> AudioTuningAdvice {
         let run = KnownCLIEngine.RunContext(
             sandbox: sandbox,
-            schemaFile: CLIAdviceExecution.writeSchema(AudioAdvicePrompt.schemaJSON, into: sandbox),
+            schemaFile: CLIAdviceExecution.writeSchema(AudioAdvicePrompt.schemaJSON(), into: sandbox),
             model: engine.supportsModelSelection ? model : nil,
             timeout: timeout
         )
@@ -174,12 +174,12 @@ final class AudioTuningAdvisor {
             if let transport = device?.transportLabel { details.append(transport) }
             let eq = settings.deviceEQ[uid]
             if eq?.sourceName?.contains("AutoEq") == true {
-                details.append("已套 AutoEq 校正")
+                details.append("AutoEq correction applied")
             }
             return AudioTuningContext(
                 targetKind: "device",
                 targetName: device?.name ?? uid,
-                targetDetail: details.isEmpty ? "" : "（\(details.joined(separator: "、"))）",
+                targetDetail: details.isEmpty ? "" : "(\(details.joined(separator: ", ")))",
                 request: request,
                 bandFrequencies: frequencies,
                 availableEffects: options,
@@ -204,15 +204,15 @@ final class AudioTuningAdvisor {
 
     private static func describeEQ(_ eq: EQSettings?) -> String {
         guard let eq, eq.isActive else { return "" }
-        let source = eq.sourceName ?? "手動"
+        let source = eq.sourceName ?? "manual"
         let gains = eq.bands.map { String(format: "%+.1f", locale: nil, $0.gainDB) }
             .joined(separator: ", ")
-        return "\(source)（增益 dB：\(gains)）"
+        return "\(source) (gains dB: \(gains))"
     }
 
     private static func describeEffects(_ effects: [AUEffectEntry]) -> String {
         guard !effects.isEmpty else { return "" }
-        return effects.map { "\($0.name)\($0.enabled ? "" : "（關）")" }.joined(separator: " → ")
+        return effects.map { "\($0.name)\($0.enabled ? "" : " (off)")" }.joined(separator: " → ")
     }
 
     // MARK: - 套用與還原（單層、僅記憶體）

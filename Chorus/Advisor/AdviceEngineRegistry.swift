@@ -149,7 +149,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             modelHint: String(localized: "別名 opus／sonnet／fable，或完整名稱如 claude-opus-5"),
             modelListing: nil,
             suggestedModels: ["opus", "sonnet", "fable"],
-            readInstruction: "用 Read 工具讀取後再分析",
+            readInstruction: "read it with the Read tool before analyzing",
             loginCommand: "claude /login"
         ),
         KnownCLIEngine(
@@ -160,7 +160,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             modelHint: String(localized: "slug，如 gemini-3.1-pro-high、claude-sonnet-4-6"),
             modelListing: .command(arguments: ["models"], format: .tabSeparated),
             suggestedModels: [],
-            readInstruction: "請先讀取照片再分析",
+            readInstruction: "read the photo before analyzing",
             loginCommand: "agy"
         ),
         KnownCLIEngine(
@@ -171,7 +171,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             modelHint: String(localized: "模型 ID"),
             modelListing: .command(arguments: ["models"], format: .markerList),
             suggestedModels: [],
-            readInstruction: "請先讀取照片再分析",
+            readInstruction: "read the photo before analyzing",
             loginCommand: "grok"
         ),
         KnownCLIEngine(
@@ -182,7 +182,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             modelHint: String(localized: "模型名稱，如 gpt-5.6-terra"),
             modelListing: .codexModelsCache,
             suggestedModels: [],
-            readInstruction: "照片已附加",
+            readInstruction: "the photo is attached",
             loginCommand: "codex login"
         ),
         KnownCLIEngine(
@@ -193,7 +193,7 @@ struct KnownCLIEngine: Identifiable, Sendable {
             modelHint: String(localized: "provider/model 格式"),
             modelListing: .command(arguments: ["models"], format: .plainLines),
             suggestedModels: [],
-            readInstruction: "照片已附加",
+            readInstruction: "the photo is attached",
             loginCommand: "opencode auth login"
         ),
     ]

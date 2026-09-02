@@ -73,20 +73,21 @@ struct AudioTuningAdviceTests {
 
     @Test("prompt 含關鍵段：目標、需求、頻率、AU 清單、schema")
     func promptCarriesTheContext() {
-        let prompt = AudioAdvicePrompt.cliPrompt(context: context)
+        let prompt = AudioAdvicePrompt.cliPrompt(context: context, responseLanguage: "Chinese (Traditional)")
         #expect(prompt.contains("Podcast"))
-        #expect(prompt.contains("人聲清楚一點"))
+        #expect(prompt.contains("人聲清楚一點")) // 使用者需求原樣夾帶
         #expect(prompt.contains("31.5"))
         #expect(prompt.contains("aaaa-bbbb-cccc"))
         #expect(prompt.contains("componentKey"))
-        #expect(prompt.contains("繁體中文"))
+        #expect(prompt.contains("write all text in Chinese (Traditional)"))
+        #expect(!prompt.contains("繁體中文"))
     }
 
     @Test("prompt：沒有可用 AU 時明講 effects 給空陣列")
     func promptIsHonestAboutEmptyCatalog() {
         var empty = context
         empty.availableEffects = []
-        #expect(AudioAdvicePrompt.contextDescription(empty).contains("effects 請給空陣列"))
+        #expect(AudioAdvicePrompt.contextDescription(empty).contains("return an empty array for effects"))
     }
 
     @Test("codec 泛型：jsonEnvelope 解出 AudioTuningAdvice（與光源版同一條尾巴）")

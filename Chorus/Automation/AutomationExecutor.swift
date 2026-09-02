@@ -122,7 +122,7 @@ final class AutomationExecutor {
         case .endScene:
             return try endFocus()
         case .suggestOffsets:
-            throw ControlError.unsupported("suggestOffsets 尚未接上顧問管線（B4-4）")
+            throw ControlError.unsupported(String(localized: "suggestOffsets 尚未接上顧問管線（B4-4）"))
         case nil:
             throw ControlError.missingAction
         }
@@ -134,11 +134,11 @@ final class AutomationExecutor {
     /// 呼叫端一次看完「套上了什麼、什麼時候會還原、什麼不會自己回來」。
     private func startFocus(sceneName: String?, duration: Double) throws(ControlError) -> [ControlResult] {
         guard let focus else {
-            throw ControlError.unsupported("限時場景尚未就緒")
+            throw ControlError.unsupported(String(localized: "限時場景尚未就緒"))
         }
         let query = (sceneName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
-            throw ControlError.badValue("", hint: "perform runScene 需要場景名稱")
+            throw ControlError.badValue("", hint: String(localized: "perform runScene 需要場景名稱"))
         }
         var results = try focus.start(sceneName: query, duration: duration)
         guard let session = focus.session else { return results }
@@ -162,7 +162,7 @@ final class AutomationExecutor {
 
     private func endFocus() throws(ControlError) -> [ControlResult] {
         guard let focus, let session = focus.session else {
-            throw ControlError.unsupported("目前沒有限時場景")
+            throw ControlError.unsupported(String(localized: "目前沒有限時場景"))
         }
         let name = session.sceneName
         focus.end(reason: .manual)
@@ -185,12 +185,12 @@ final class AutomationExecutor {
     private func runScene(named name: String?) throws(ControlError) -> [ControlResult] {
         let query = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
-            throw ControlError.badValue("", hint: "perform runScene 需要場景名稱")
+            throw ControlError.badValue("", hint: String(localized: "perform runScene 需要場景名稱"))
         }
         guard let scene = scenes.scene(named: query) else {
             throw ControlError.targetNotFound(query, hint: scenes.scenes.isEmpty
-                ? "還沒有任何場景"
-                : "目前的場景：" + scenes.scenes.map(\.name).joined(separator: "、"))
+                ? String(localized: "還沒有任何場景")
+                : String(localized: "目前的場景：") + scenes.scenes.map(\.name).joined(separator: String(localized: "、")))
         }
         var results: [ControlResult] = []
         for request in scene.requests {
@@ -200,7 +200,7 @@ final class AutomationExecutor {
                 results.append(ControlResult(
                     target: scene.name,
                     property: "skipped",
-                    value: .string("場景內不支援 perform")
+                    value: .string(String(localized: "場景內不支援 perform"))
                 ))
                 continue
             }
@@ -299,7 +299,7 @@ final class AutomationExecutor {
 
         case .contrast:
             guard let current = display.contrast else {
-                throw ControlError.unsupported("「\(display.name)」沒有回報對比（VCP 0x12），無法控制")
+                throw ControlError.unsupported(String(localized: "「\(display.name)」沒有回報對比（VCP 0x12），無法控制"))
             }
             if request.verb == .get {
                 return result(display.name, property, .number(current))
@@ -375,7 +375,7 @@ final class AutomationExecutor {
                     continue
                 }
                 guard device.isVolumeControllable else {
-                    throw ControlError.unsupported("「\(device.name)」目前沒有可用的音量控制（無軟體音量且未橋接 DDC）")
+                    throw ControlError.unsupported(String(localized: "「\(device.name)」目前沒有可用的音量控制（無軟體音量且未橋接 DDC）"))
                 }
                 let value = try resolved(request.value, current: device.volume, range: 0...1)
                 audioManager.setVolume(value, for: device)
@@ -432,7 +432,7 @@ final class AutomationExecutor {
             // 寫要擋——設定會被收下卻永遠聽不到效果，那是陷阱不是功能
             if request.verb != .get, tapEngine.isExcluded(bundleID: bundleID) {
                 throw ControlError.unsupported(
-                    "「\(name)」已被排除於音訊處理之外——先在選單列的 App 列上取消排除"
+                    String(localized: "「\(name)」已被排除於音訊處理之外——先在選單列的 App 列上取消排除")
                 )
             }
             switch property {
@@ -515,8 +515,8 @@ final class AutomationExecutor {
             throw ControlError.targetNotFound(
                 target.stringValue,
                 hint: all.isEmpty
-                    ? "目前沒有任何有音訊的 App"
-                    : "目前有音訊的 App：" + all
+                    ? String(localized: "目前沒有任何有音訊的 App")
+                    : String(localized: "目前有音訊的 App：") + all
                         .map { tapEngine.registry.displayName(bundleID: $0) }
                         .joined(separator: "、")
             )
@@ -528,13 +528,13 @@ final class AutomationExecutor {
     private var engineHint: String {
         switch tapEngine.state {
         case .off:
-            "逐 App 音訊未啟用。請到 Chorus 設定 → 音訊開啟「App 音訊接管」"
+            String(localized: "逐 App 音訊未啟用。請到 Chorus 設定 → 音訊開啟「App 音訊接管」")
         case .probing:
-            "正在確認系統音訊錄製權限——播放任何聲音即可完成檢查"
+            String(localized: "正在確認系統音訊錄製權限——播放任何聲音即可完成檢查")
         case .denied:
-            "系統音訊錄製權限被拒。請到系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製 開啟 Chorus"
+            String(localized: "系統音訊錄製權限被拒。請到系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製 開啟 Chorus")
         case let .failed(message):
-            "逐 App 音訊目前不可用：\(message)"
+            String(localized: "逐 App 音訊目前不可用：\(message)")
         case .active:
             ""
         }
@@ -647,8 +647,8 @@ final class AutomationExecutor {
             throw ControlError.targetNotFound(
                 target.stringValue,
                 hint: all.isEmpty
-                    ? "目前沒有偵測到任何顯示器"
-                    : "目前的顯示器：" + all.map(\.name).joined(separator: "、")
+                    ? String(localized: "目前沒有偵測到任何顯示器")
+                    : String(localized: "目前的顯示器：") + all.map(\.name).joined(separator: String(localized: "、"))
             )
         }
         return matches
@@ -674,8 +674,8 @@ final class AutomationExecutor {
             throw ControlError.targetNotFound(
                 target.stringValue,
                 hint: all.isEmpty
-                    ? "目前沒有偵測到任何音訊輸出裝置"
-                    : "目前的輸出裝置：" + all.map(\.name).joined(separator: "、")
+                    ? String(localized: "目前沒有偵測到任何音訊輸出裝置")
+                    : String(localized: "目前的輸出裝置：") + all.map(\.name).joined(separator: String(localized: "、"))
             )
         }
         return matches
@@ -716,7 +716,7 @@ final class AutomationExecutor {
         case let .absolute(number): number
         case let .offset(delta): current + delta
         default: throw ControlError.badValue("\(value.map(String.init(describing:)) ?? "nil")",
-                                             hint: "這個屬性需要數值或相對增減")
+                                             hint: String(localized: "這個屬性需要數值或相對增減"))
         }
         return min(max(raw, range.lowerBound), range.upperBound)
     }
@@ -753,7 +753,7 @@ extension AutomationExecutor {
         let peerID = try resolvePeer(name)
         guard request.verb == .set else {
             throw ControlError.unsupported(
-                "跨機目前只支援 set（\(request.verb.rawValue) 需要遠端回讀，留到 B4-4）"
+                String(localized: "跨機目前只支援 set（\(request.verb.rawValue) 需要遠端回讀，留到 B4-4）")
             )
         }
         guard let property = request.property else {
@@ -775,8 +775,8 @@ extension AutomationExecutor {
             throw ControlError.peerNotFound(
                 name,
                 hint: peers.isEmpty
-                    ? "尚未配對任何裝置"
-                    : "已配對：" + peers.map(\.deviceName).joined(separator: "、")
+                    ? String(localized: "尚未配對任何裝置")
+                    : String(localized: "已配對：") + peers.map(\.deviceName).joined(separator: String(localized: "、"))
             )
         }
         guard sessionManager.connectionStates[peer.peerID] == .connected else {
@@ -813,10 +813,7 @@ extension AutomationExecutor {
         case let (.mute, .app(bundleID)): .appMute(bundleID: bundleID)
         default:
             throw ControlError.unsupported(
-                "跨機的「\(property.rawValue)」不支援「\(target.stringValue)」這種定位。"
-                    + "可用組合：allDisplays／displayUUID:<uuid> 配 brightness・power・input・contrast，"
-                    + "defaultOutput／deviceUID:<uid> 配 volume・mute，app:<bundle id> 配 volume・mute，"
-                    + "system 配 keepAwake"
+                String(localized: "跨機的「\(property.rawValue)」不支援「\(target.stringValue)」這種定位。可用組合：allDisplays／displayUUID:<uuid> 配 brightness・power・input・contrast，defaultOutput／deviceUID:<uid> 配 volume・mute，app:<bundle id> 配 volume・mute，system 配 keepAwake")
             )
         }
     }
@@ -835,7 +832,7 @@ extension AutomationExecutor {
             // 亮度／音量，覆蓋不全且可能過時——寧可誠實拒絕，也不要算錯後
             // 把對方的螢幕調到意料之外的亮度。
             throw ControlError.unsupported(
-                "跨機不支援相對增減（+10% 這種寫法）；請給絕對值"
+                String(localized: "跨機不支援相對增減（+10% 這種寫法）；請給絕對值")
             )
         case nil:
             throw ControlError.missingValue(property)
@@ -874,7 +871,7 @@ extension AutomationExecutor: FocusExecuting {
                 guard let value = peerSnapshotValue(
                     property: property, target: request.target, peerName: peer
                 ) else {
-                    unrestorable.append("\(peer)：\(property.rawValue)（原值未知）")
+                    unrestorable.append(String(localized: "\(peer)：\(property.rawValue)（原值未知）"))
                     continue
                 }
                 requests.append(ControlRequest(
@@ -895,7 +892,7 @@ extension AutomationExecutor: FocusExecuting {
 
             for entity in snapshotEntities(request.target) {
                 guard let value = snapshotValue(property, target: entity.target) else {
-                    unrestorable.append("\(entity.name) 的 \(property.rawValue)")
+                    unrestorable.append(String(localized: "\(entity.name) 的 \(property.rawValue)"))
                     continue
                 }
                 requests.append(ControlRequest(
@@ -922,7 +919,7 @@ extension AutomationExecutor: FocusExecuting {
         if let results = response.results { return results }
         return [ControlResult(
             target: name, property: "error",
-            value: .string(response.error?.message ?? "場景套用失敗")
+            value: .string(response.error?.message ?? String(localized: "場景套用失敗"))
         )]
     }
 
@@ -941,8 +938,8 @@ extension AutomationExecutor: FocusExecuting {
             if response.ok {
                 restored += 1
             } else {
-                let label = request.peer.map { "\($0)（跨機）" } ?? request.target.stringValue
-                failed.append("\(label)：\(response.error?.message ?? "未知錯誤")")
+                let label = request.peer.map { String(localized: "\($0)（跨機）") } ?? request.target.stringValue
+                failed.append("\(label)：\(response.error?.message ?? String(localized: "未知錯誤"))")
                 if response.error?.code == ControlError.peerOffline("").code {
                     retryable.append(request)
                 }

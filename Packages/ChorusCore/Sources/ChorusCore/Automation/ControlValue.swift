@@ -25,7 +25,7 @@ public extension ControlValue {
     static func parse(_ text: String, kind: ControlValueKind) throws(ControlError) -> ControlValue {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
-            throw ControlError.badValue(text, hint: "值不可為空")
+            throw ControlError.badValue(text, hint: String(localized: "值不可為空"))
         }
         return switch kind {
         case .boolean: try parseBoolean(trimmed, original: text)
@@ -64,7 +64,7 @@ public extension ControlValue {
         switch text.lowercased() {
         case "on", "true", "1", "yes", "開": .boolean(true)
         case "off", "false", "0", "no", "關": .boolean(false)
-        default: throw ControlError.badValue(original, hint: "布林值請用 on/off、true/false、1/0")
+        default: throw ControlError.badValue(original, hint: String(localized: "布林值請用 on/off、true/false、1/0"))
         }
     }
 
@@ -74,7 +74,7 @@ public extension ControlValue {
             ? UInt16(text.dropFirst(2), radix: 16)
             : UInt16(text)
         guard let value else {
-            throw ControlError.badValue(original, hint: "請給整數 MCCS 代碼（可用十進位或 0x 十六進位）")
+            throw ControlError.badValue(original, hint: String(localized: "請給整數 MCCS 代碼（可用十進位或 0x 十六進位）"))
         }
         return .rawCode(value)
     }
@@ -98,7 +98,7 @@ public extension ControlValue {
         if let amount = Double(lower), amount > 0 {
             return .duration(amount)
         }
-        throw ControlError.badValue(original, hint: "時長請用 off、30m、1h、90s 或 forever")
+        throw ControlError.badValue(original, hint: String(localized: "時長請用 off、30m、1h、90s 或 forever"))
     }
 
     private static func parseScalar(
@@ -115,7 +115,7 @@ public extension ControlValue {
         guard let raw = Double(body.trimmingCharacters(in: .whitespaces)) else {
             throw ControlError.badValue(
                 original,
-                hint: "請給 0–1 的比例、百分比（80%）或相對增減（+10%）"
+                hint: String(localized: "請給 0–1 的比例、百分比（80%）或相對增減（+10%）")
             )
         }
         // 百分比一律除以 100；裸數字則以「> 1 即百分比」判斷

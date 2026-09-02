@@ -94,13 +94,13 @@ final class FocusSessionController {
     func start(sceneName: String, duration: TimeInterval) throws(ControlError) -> [ControlResult] {
         guard duration > 0 else {
             throw ControlError.badValue(
-                "\(duration)", hint: "限時場景需要正的時長，例如 25m"
+                "\(duration)", hint: String(localized: "限時場景需要正的時長，例如 25m")
             )
         }
         guard let scene = scenes.scene(named: sceneName) else {
             throw ControlError.targetNotFound(sceneName, hint: scenes.scenes.isEmpty
-                ? "還沒有任何場景"
-                : "目前的場景：" + scenes.scenes.map(\.name).joined(separator: "、"))
+                ? String(localized: "還沒有任何場景")
+                : String(localized: "目前的場景：") + scenes.scenes.map(\.name).joined(separator: String(localized: "、")))
         }
 
         // 一次只有一個 session：先把目前這個還原掉再開新的。這條規則就是

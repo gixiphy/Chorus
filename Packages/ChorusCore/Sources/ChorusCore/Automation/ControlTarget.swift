@@ -125,10 +125,7 @@ public extension ControlTarget {
 
     /// 錯誤訊息裡列給使用者／LLM 看的可用目標語法。
     static var syntaxHint: String {
-        "display:<名稱>、displayLike:<片段>、displayUUID:<uuid>、displayWithMouse、"
-            + "displayWithFocus、builtinDisplay、allDisplays、device:<名稱>、"
-            + "deviceLike:<片段>、deviceUID:<uid>、defaultOutput、allDevices、"
-            + "app:<bundle id>、appLike:<片段>、allApps、system"
+        String(localized: "display:<名稱>、displayLike:<片段>、displayUUID:<uuid>、displayWithMouse、displayWithFocus、builtinDisplay、allDisplays、device:<名稱>、deviceLike:<片段>、deviceUID:<uid>、defaultOutput、allDevices、app:<bundle id>、appLike:<片段>、allApps、system")
     }
 }
 

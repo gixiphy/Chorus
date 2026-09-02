@@ -162,7 +162,7 @@ struct CLIAdviceProvider: LightingAdviceProvider {
         let run = KnownCLIEngine.RunContext(
             sandbox: sandbox,
             schemaFile: CLIAdviceExecution.writeSchema(
-                AdvicePrompt.toolInputSchemaJSON, into: sandbox
+                AdvicePrompt.toolInputSchemaJSON(), into: sandbox
             ),
             model: engine.supportsModelSelection ? model : nil,
             photoPaths: photos.map(\.path),
