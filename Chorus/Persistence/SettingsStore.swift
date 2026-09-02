@@ -69,6 +69,7 @@ final class SettingsStore {
         static let focusNotifyOnEnd = "chorus.focus.notifyOnEnd"
         static let focusPendingRestores = "chorus.focus.pendingPeerRestores"
         static let cloudBackup = "chorus.cloud.backupEnabled"
+        static let uiTranslationLanguage = "chorus.ui.translationLanguage"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -180,6 +181,12 @@ final class SettingsStore {
     /// 各引擎的自訂執行檔路徑（engine id → path），偵測時優先於 PATH。
     var advisorCustomPaths: [String: String] {
         didSet { defaults.set(advisorCustomPaths, forKey: Key.advisorCustomPaths) }
+    }
+
+    /// 使用者用 CLI 自翻的介面語言（DESIGN-20260902-user-cli-translation）；
+    /// nil＝用內建語言。啟動時據此把翻譯 bundle 掛上 `Bundle.main`。
+    var uiTranslationLanguage: String? {
+        didSet { defaults.set(uiTranslationLanguage, forKey: Key.uiTranslationLanguage) }
     }
 
     /// 首次分析的「照片將交給本機 CLI」確認已被記住。
@@ -430,6 +437,7 @@ final class SettingsStore {
         audioBridgeDisabled = Set(defaults.stringArray(forKey: Key.audioBridgeDisabled) ?? [])
         peerKnownControls = (defaults.dictionary(forKey: Key.peerKnownControls) as? [String: [String: Double]]) ?? [:]
         advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"
+        uiTranslationLanguage = defaults.string(forKey: Key.uiTranslationLanguage)
         advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)
         advisorModelIDs = (defaults.dictionary(forKey: Key.advisorModelIDs) as? [String: String]) ?? [:]

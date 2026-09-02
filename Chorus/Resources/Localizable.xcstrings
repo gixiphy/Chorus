@@ -21,6 +21,28 @@
         }
       }
     },
+    "%@ · %lld 條 · %@" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@ · %lld entry · %@"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%@ · %lld entries · %@"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%@ — %@" : {
       "localizations" : {
         "en" : {
@@ -361,6 +383,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chorus"
+          }
+        }
+      }
+    },
+    "Chorus 內建繁體中文與英文。其他語言可以交給本機的 AI CLI（設定 → 分析引擎裡選的那個）翻譯全部介面文字；翻好的檔只存在這台 Mac，重新啟動後生效。這是機器翻譯，翻不好的字串會退回英文。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus includes Traditional Chinese and English. For other languages, use the local AI CLI selected in Settings → Analysis Engine to translate all UI text. Translated files exist only on this Mac and take effect after restarting. This is machine translation; poorly translated strings fall back to English."
           }
         }
       }
@@ -963,6 +995,16 @@
         }
       }
     },
+    "介面語言" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interface Language"
+          }
+        }
+      }
+    },
     "以目前的亮度、音量與自動亮度狀態建立場景" : {
       "localizations" : {
         "en" : {
@@ -1029,6 +1071,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Low Shelf"
+          }
+        }
+      }
+    },
+    "使用引擎" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use Engine"
           }
         }
       }
@@ -1269,6 +1321,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Reset All"
+          }
+        }
+      }
+    },
+    "全部重翻" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retranslate All"
           }
         }
       }
@@ -2499,6 +2561,16 @@
         }
       }
     },
+    "已安裝的翻譯" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installed Translations"
+          }
+        }
+      }
+    },
     "已安裝，等待音訊服務載入" : {
       "localizations" : {
         "en" : {
@@ -2577,6 +2649,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Marked as not supporting DDC volume (right-click to re-enable)"
+          }
+        }
+      }
+    },
+    "已翻譯 %lld 條。" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Translated %lld string."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Translated %lld strings."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "已翻譯 %lld 條，%lld 條翻不好、退回英文。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Translated %1$lld; %2$lld were poor translations and fell back to English."
           }
         }
       }
@@ -3643,6 +3747,16 @@
         }
       }
     },
+    "沒有可用的分析引擎——先到「分析引擎」分頁安裝或啟用一個 CLI。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No analysis engine is available—install or enable a CLI in the \"Analysis Engine\" tab first."
+          }
+        }
+      }
+    },
     "沒有可顯示的裝置" : {
       "localizations" : {
         "en" : {
@@ -4105,6 +4219,16 @@
         }
       }
     },
+    "移除翻譯" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove Translation"
+          }
+        }
+      }
+    },
     "移除驅動…" : {
       "localizations" : {
         "en" : {
@@ -4315,6 +4439,28 @@
         }
       }
     },
+    "約 %lld 條字串，40 條一批送出，通常幾分鐘內完成。" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "About %lld string, sent in batches of 40; usually completed within minutes."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "About %lld strings, sent in batches of 40; usually completed within minutes."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "約兩打常見風格曲線，一鍵套用；套用後仍可逐段微調" : {
       "localizations" : {
         "en" : {
@@ -4433,6 +4579,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Center"
+          }
+        }
+      }
+    },
+    "翻譯中 %lld／%lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Translating %lld/%lld"
+          }
+        }
+      }
+    },
+    "翻譯已就位，但目前執行中的還是舊語言；重新啟動 Chorus 才會切換。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The translation is ready, but the running app is still using the previous language; restart Chorus to switch."
+          }
+        }
+      }
+    },
+    "翻譯成" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Translate To"
           }
         }
       }
@@ -4673,6 +4849,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Display volume (virtual output device)"
+          }
+        }
+      }
+    },
+    "補翻 %lld 條新字串" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Translate %lld new string"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Translate %lld new strings"
+                }
+              }
+            }
           }
         }
       }
@@ -5307,6 +5505,16 @@
         }
       }
     },
+    "重新啟動以套用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart to Apply"
+          }
+        }
+      }
+    },
     "重新啟用 DDC 音量橋接" : {
       "localizations" : {
         "en" : {
@@ -5543,6 +5751,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Start"
+          }
+        }
+      }
+    },
+    "開始翻譯" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Translation"
           }
         }
       }

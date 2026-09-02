@@ -195,6 +195,13 @@ final class TestHooks {
             if let name = info["value"], !name.isEmpty {
                 appState.sceneStore.save(appState.automation.captureCurrentScene(named: name))
             }
+        case "translateUI":
+            // E2E：用目前 registry 選的 CLI 把介面翻成 value 指定的語言（例 ja），
+            // 寫進這個 instance 自己的 UITranslations 目錄；重啟後生效
+            if let language = info["value"] {
+                appState.uiTranslator.targetLanguage = language
+                appState.uiTranslator.translate(onlyMissing: info["onlyMissing"] == "1")
+            }
         case "cloudBackupNow":
             appState.cloudBackup.backupNow()
         case "cloudEnabled":

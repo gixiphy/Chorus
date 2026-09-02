@@ -35,6 +35,7 @@ final class AppState {
     let auCatalog = AUEffectCatalog()
     /// 音訊調音顧問（EQ＋AU 推薦；沿用光環境顧問的引擎層）。
     let audioTuner: AudioTuningAdvisor
+    let uiTranslator: UITranslator
     let alertVolume: AlertVolumeController
     let automationEvents: AutomationEventHub
     let automationServer: ControlHTTPServer
@@ -43,6 +44,17 @@ final class AppState {
         self.instance = instance
         let settings = SettingsStore(defaults: instance.defaults)
         self.settings = settings
+        // 使用者自翻的介面語言要在**任何 View 建立前**掛上 Bundle.main
+        let translationStore = UITranslationStore(
+            directory: UITranslationStore.defaultDirectory(instance: instance, environment: ProcessInfo.processInfo.environment)
+        )
+        if let language = settings.uiTranslationLanguage {
+            if translationStore.installOverride(language: language) {
+                ChorusLog.app.notice("介面翻譯覆蓋已掛上：\(language)")
+            } else {
+                ChorusLog.app.notice("介面翻譯 \(language) 的檔不在，退回內建語言")
+            }
+        }
         displayManager = DisplayManager(settings: settings)
         audioManager = AudioDeviceManager(settings: settings, displayManager: displayManager)
         pairedPeers = PairedPeersStore(
@@ -140,6 +152,7 @@ final class AppState {
             audioManager: audioManager,
             catalog: auCatalog
         )
+        uiTranslator = UITranslator(store: translationStore, settings: settings, registry: advisor.registry)
 
         sceneStore = SceneStore(defaults: instance.defaults)
         automation = AutomationExecutor(
