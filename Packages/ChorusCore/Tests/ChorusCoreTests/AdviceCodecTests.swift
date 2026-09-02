@@ -97,8 +97,9 @@ func cliPromptMultiPhoto() {
         photos: ["/tmp/a.jpg", "/tmp/b.jpg", "/tmp/c.jpg"].map { LabeledPhoto(path: $0) },
         readInstruction: "用 Read 工具讀取後再分析"
     )
-    #expect(prompt.contains("桌面照片共 3 張"))
-    #expect(prompt.contains("第 1 張是配置圖背景照"))
+    // prompt 自 20ef44b 起全文英文——這兩條當時漏改
+    #expect(prompt.contains("3 desk photos"))
+    #expect(prompt.contains("photo 1 is the layout background"))
     #expect(prompt.contains("1. /tmp/a.jpg"))
     #expect(prompt.contains("3. /tmp/c.jpg"))
 }
