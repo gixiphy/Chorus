@@ -10,7 +10,8 @@ import ObjectiveC
 /// 引擎與條數，設定頁靠它顯示狀態、判斷升版後有沒有新字串要補。
 final class UITranslationStore: Sendable {
     /// App 內建的語言；系統語言在這裡面就不需要自翻。
-    static let builtinLanguages = ["zh-Hant", "en"]
+    /// 內建的是人工校對過的，排在自翻的前面——`installOverride` 不會用到它們。
+    static let builtinLanguages = ["zh-Hant", "zh-Hans", "en"]
 
     struct Manifest: Codable, Equatable, Sendable {
         var language: String

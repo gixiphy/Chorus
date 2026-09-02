@@ -9,6 +9,12 @@
             "value" : "Chorus needs to capture system audio to provide independent per-app volume and EQ. Audio is processed only on this Mac and is never sent anywhere."
           }
         },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus 需要捕获系统音频，才能提供各 App 独立音量与均衡器。音频仅在本机处理，不会传送到任何地方。"
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -23,6 +29,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chorus looks for your other Macs on the local network to sync brightness and volume."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus 会在局域网络中查找你的其他 Mac，以同步亮度和音量。"
           }
         },
         "zh-Hant" : {

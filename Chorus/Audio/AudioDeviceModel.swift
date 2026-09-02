@@ -73,7 +73,9 @@ final class AudioDeviceModel: Identifiable {
 
     var transportLabel: String? {
         switch transportType {
-        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE: "藍牙"
+        // 只有這個要翻——其餘幾個是原樣照寫的協定名
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+            String(localized: "藍牙")
         case kAudioDeviceTransportTypeAirPlay: "AirPlay"
         case kAudioDeviceTransportTypeHDMI: "HDMI"
         case kAudioDeviceTransportTypeDisplayPort: "DisplayPort"

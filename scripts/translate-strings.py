@@ -41,6 +41,10 @@ CJK = re.compile(r"[\u3040-\u30fa\u30fc-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\
 SPECIFIER = re.compile(r"%(?:\d+\$)?[-+0#]*\d*(?:\.\d+)?(?:ll|l|h|hh|q|z|t|j)?[@diufsxXeEgGcaAp]")
 COUNT_SPECIFIER = re.compile(r"%(?:\d+\$)?(?:ll|l|h|hh|q|z|t|j)?[diu]")
 
+# 目標語言本來就用中日韓文字時，「翻譯仍含中文」的檢查沒有意義，
+# 也不該要求複數形（中日韓沒有單複數變化）。
+CJK_TARGETS = {"zh-Hans", "zh-Hant", "ja", "ko", "yue"}
+
 LANGUAGE_NAMES = {
     "en": "English (US)",
     "ja": "Japanese",
@@ -109,31 +113,106 @@ GLOSSARY = {
     "綁機設定": "device-bound settings (settings tied to this Mac's hardware)",
 }
 
-STYLE_RULES = """\
-- Target: macOS menu bar app UI text. Follow Apple's macOS Human Interface Guidelines for English.
+SHARED_RULES = """\
+- Target: macOS menu bar app UI text. Follow Apple's macOS Human Interface Guidelines and use the
+  official names this OS uses in the target language for system features and System Settings panes.
+- Keep it compact: the menu bar popover is narrow. Short labels must stay short;
+  never pad with words that are not in the source.
+- Keep every format specifier exactly (%@, %lld, %d, %02d, …), same count and same type.
+  "%%" is a literal percent sign (e.g. "%lld%%" renders as "42%"); keep it as "%%".
+  If the target's word order requires reordering arguments, switch ALL specifiers in that string
+  to positional form (%1$@, %2$lld, …).
+- Keep untranslated: Chorus, macOS, iCloud Drive, DDC, DDC/CI, VCP, HDMI, DisplayPort, USB-C,
+  AutoEq, Audio Unit/AU, Bearer token, CLI, engine names, file paths, hex codes, URLs, and
+  anything that looks like an identifier or a command.
+- Preserve leading markers such as ▲ and ⓘ, and preserve line breaks.
+- Never add explanations or notes of your own.
+"""
+
+# 英文專屬：大小寫紀律、複數形、全形標點轉半形。
+ENGLISH_RULES = """\
 - Capitalization: Title Case ONLY for short control labels of at most four English words that are
   clearly a window title, menu item, button, tab, toggle, picker option or section header
   (e.g. "Quit Chorus", "Pair New Device", "Software Dimming").
   EVERYTHING ELSE is sentence case: any full sentence, anything containing 。，：；—— or a
   parenthetical, anything longer than about five words, and all status captions, help/tooltip
   text, footnotes and error messages. When unsure, use sentence case.
-- Keep it compact: the menu bar popover is narrow. Short labels must stay short;
-  never pad with words that are not in the source. Prefer "Auto" over "Automatic" where the source is 自動 as a badge.
-- Keep every format specifier exactly (%@, %lld, %d, %02d, …), same count and same type.
-  "%%" is a literal percent sign (e.g. "%lld%%" renders as "42%"); keep it as "%%".
-  If English word order requires reordering arguments, switch ALL specifiers in that string
-  to positional form (%1$@, %2$lld, …).
+- Prefer "Auto" over "Automatic" where the source is 自動 as a badge.
 - When a %lld / %d is a count of things and the English noun would change between 1 and many,
   return a plural object {"one": "...", "other": "..."} instead of a plain string.
   Do not do this for durations, percentages, hex values or lux readings.
 - 「」quotes become straight double quotes “%@” → "%@". Chinese full-width punctuation
   （）：、；—— becomes ASCII equivalents. Use the single-character ellipsis "…".
-- Keep untranslated: Chorus, macOS, iCloud Drive, DDC, DDC/CI, VCP, HDMI, DisplayPort, USB-C,
-  AutoEq, Audio Unit/AU, Bearer token, CLI, engine names, file paths, hex codes, URLs, and
-  anything that looks like an identifier or a command.
-- Preserve leading markers such as ▲ and ⓘ, and preserve line breaks.
-- Never add explanations, never leave anything in Chinese.
+- Never leave anything in Chinese.
 """
+
+# 簡體中文專屬：這**不是字元轉換**，術語與標點都要換成大陸慣用與 macOS 官方譯名。
+SIMPLIFIED_CHINESE_RULES = """\
+- This is NOT a character-by-character conversion. Convert vocabulary, not just glyphs: a string
+  that is merely Traditional characters rewritten as Simplified ones is wrong.
+- Keep the source's punctuation style (full-width，。：；（）is correct), but 「」becomes “”.
+  Keep the full-width ellipsis … and the em dash —— as they are.
+- Never return a plural object: Chinese has no singular/plural distinction. Always return "text".
+- Keep the tone of the source: direct, concrete, no marketing voice, no added politeness particles.
+"""
+
+LANGUAGE_RULES = {
+    "en": ENGLISH_RULES,
+    "zh-Hans": SIMPLIFIED_CHINESE_RULES,
+}
+
+# 簡中詞彙表：只列**兩岸寫法不同**的詞與 macOS 官方簡中譯名。
+# 兩邊一樣的（亮度、音量、場景、配對…）不必教，列了只是稀釋重點。
+GLOSSARY_ZH_HANS = {
+    "軟體／硬體": "软件／硬件",
+    "螢幕": "屏幕；作為硬體裝置時用「显示器」（macOS「显示器」设置面板）",
+    "顯示器": "显示器",
+    "音訊": "音频",
+    "視訊／影片": "视频",
+    "介面": "界面",
+    "設定": "设置（macOS 的「系统设置」）",
+    "預設": "默认",
+    "檔案": "文件",
+    "資料": "数据",
+    "網路": "网络",
+    "程式": "程序",
+    "視窗": "窗口",
+    "選單列": "菜单栏",
+    "滑桿": "滑块",
+    "按鈕": "按钮",
+    "支援": "支持",
+    "登入": "登录",
+    "匯入／匯出": "导入／导出",
+    "還原": "恢复",
+    "解析度": "分辨率",
+    "快取": "缓存",
+    "記憶體": "内存",
+    "品質": "质量",
+    "相容": "兼容",
+    "執行": "运行",
+    "逾時": "超时",
+    "金鑰": "密钥",
+    "紀錄（log）": "日志",
+    "診斷紀錄": "诊断日志",
+    "等化器": "均衡器",
+    "低頻棚／高頻棚": "低频搁架／高频搁架",
+    "校正檔": "校正文件",
+    "光線感測器": "光线传感器",
+    "鏡射": "镜像",
+    "轉送": "转发",
+    "待機／睡眠": "睡眠",
+    "隱私權與安全性": "隐私与安全性（系统设置面板官方名）",
+    "螢幕與系統音訊錄製": "屏幕与系统音频录制（系统设置面板官方名）",
+    "輔助使用": "辅助功能（系统设置面板官方名）",
+    "登入時啟動": "登录时启动",
+    "重新啟動": "重新启动",
+    "訂閱": "订阅",
+    "差異值（offset）": "偏移值",
+    "掛燈": "挂灯",
+    "拖曳": "拖移",
+    "存取": "访问",
+    "跨機": "跨设备",
+}
 
 
 def load_catalog(path):
@@ -174,7 +253,12 @@ def normalized_specifiers(text):
 
 def build_prompt(batch, lang):
     items = [{"id": i, "source": src, "comment": comment} for i, (src, comment) in enumerate(batch)]
-    glossary = "\n".join(f"- {k}: {v}" for k, v in GLOSSARY.items())
+    table = GLOSSARY_ZH_HANS if lang == "zh-Hans" else GLOSSARY
+    glossary = "\n".join(f"- {k}: {v}" for k, v in table.items())
+    rules = SHARED_RULES + LANGUAGE_RULES.get(lang, "")
+    reply_shape = ('{"translations": [{"id": 0, "text": "..."}]}' if lang in CJK_TARGETS
+                   else '{"translations": [{"id": 0, "text": "..."}, '
+                        '{"id": 1, "plural": {"one": "...", "other": "..."}}]}')
     return f"""You are localizing the UI of Chorus, a macOS menu bar app that controls display brightness,
 audio output volume, per-app volume/EQ, keep-awake timers and cross-machine scenes across paired Macs.
 Translate each source string from Traditional Chinese into {LANGUAGE_NAMES.get(lang, lang)}.
@@ -183,10 +267,10 @@ Glossary (source term: preferred rendering):
 {glossary}
 
 Rules:
-{STYLE_RULES}
+{rules}
 Input is a JSON array of {{"id", "source", "comment"}}. Reply with ONLY a JSON object, no prose,
 no code fences:
-{{"translations": [{{"id": 0, "text": "..."}}, {{"id": 1, "plural": {{"one": "...", "other": "..."}}}}]}}
+{reply_shape}
 
 Input:
 {json.dumps(items, ensure_ascii=False, indent=1)}
@@ -265,7 +349,7 @@ def apply_translation(entry, lang, source, item, warnings):
     if normalized_specifiers(text) != normalized_specifiers(source):
         warnings.append(f"specifier 不符：{source!r} → {text!r}")
         state = "needs_review"
-    if CJK.search(text):
+    if lang not in CJK_TARGETS and CJK.search(text):
         warnings.append(f"翻譯仍含中文：{source!r} → {text!r}")
         state = "needs_review"
     localizations[lang] = translated_unit(text, state)

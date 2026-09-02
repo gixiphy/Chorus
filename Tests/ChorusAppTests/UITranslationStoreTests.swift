@@ -77,6 +77,24 @@ struct UITranslationStoreTests {
         #expect(!FileManager.default.fileExists(atPath: store.bundleURL(for: "ko").path))
     }
 
+    @Test("候選清單不含內建語言——那三個在上面的介面語言選單裡")
+    @MainActor
+    func candidatesExcludeBuiltins() {
+        let suite = "chorus.tests.candidates.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(defaults: defaults)
+        let translator = UITranslator(
+            store: UITranslationStore(directory: FileManager.default.temporaryDirectory),
+            settings: settings,
+            registry: AdviceEngineRegistry(settings: settings, scanOnInit: false)
+        )
+        for builtin in UITranslationStore.builtinLanguages {
+            #expect(!translator.candidateLanguages.contains(builtin))
+        }
+        #expect(translator.candidateLanguages.contains("ja"))
+    }
+
     @Test("內建英文來源從 test host（Chorus.app）的 en.lproj 讀得到字串與複數形")
     func builtinSource() {
         let source = UITranslationStore.builtinSource()
@@ -116,6 +134,9 @@ struct UITranslatorTests {
     @Test("系統語言建議：跳過內建語言、正規化 region 與中文 script")
     func suggestedLanguage() {
         #expect(UITranslator.suggestedLanguage(preferred: ["zh-Hant-TW", "en-US"]) == nil)
+        // 簡中自 1.4.0 起是內建語言，不該再被建議去自翻
+        #expect(UITranslator.suggestedLanguage(preferred: ["zh-Hans-CN", "en-US"]) == nil)
+        #expect(UITranslationStore.builtinLanguages.contains("zh-Hans"))
         #expect(UITranslator.suggestedLanguage(preferred: ["en-US", "ja-JP"]) == "ja")
         #expect(UITranslator.normalize("zh-Hans-CN") == "zh-Hans")
         #expect(UITranslator.normalize("zh-CN") == "zh-Hans")

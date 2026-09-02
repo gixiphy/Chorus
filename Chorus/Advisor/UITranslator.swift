@@ -18,7 +18,7 @@ final class UITranslator {
     }
 
     private(set) var phase: Phase = .idle
-    /// 目標語言（BCP 47：ja、ko、zh-Hans、pt-BR…）。預設系統語言裡第一個非內建的。
+    /// 目標語言（BCP 47：ja、ko、pt-BR…）。預設系統語言裡第一個非內建的。
     var targetLanguage: String
 
     @ObservationIgnored private let store: UITranslationStore
@@ -102,8 +102,9 @@ final class UITranslator {
     var candidateLanguages: [String] {
         var list: [String] = []
         if let suggested = Self.suggestedLanguage(preferred: Locale.preferredLanguages) { list.append(suggested) }
-        for code in ["ja", "ko", "zh-Hans", "de", "fr", "es", "pt-BR", "it", "ru", "vi", "th", "id", "nl", "pl", "tr", "uk"]
-        where !list.contains(code) {
+        // 不列內建語言（zh-Hant／zh-Hans／en）——那幾個在上面的「介面語言」選單裡
+        for code in ["ja", "ko", "de", "fr", "es", "pt-BR", "it", "ru", "vi", "th", "id", "nl", "pl", "tr", "uk", "ar"]
+        where !list.contains(code) && !UITranslationStore.builtinLanguages.contains(code) {
             list.append(code)
         }
         if !list.contains(targetLanguage) { list.insert(targetLanguage, at: 0) }

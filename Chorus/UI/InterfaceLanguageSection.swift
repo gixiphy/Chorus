@@ -17,7 +17,7 @@ struct InterfaceLanguageSection: View {
                 get: { translator.selectedLanguage ?? Self.builtinTag },
                 set: { translator.selectedLanguage = $0 == Self.builtinTag ? nil : $0 }
             )) {
-                Text("內建（繁體中文／English，跟隨系統）").tag(Self.builtinTag)
+                Text("內建（繁體中文／简体中文／English，跟隨系統）").tag(Self.builtinTag)
                 ForEach(translator.installedLanguages, id: \.self) { code in
                     Text(UITranslator.displayName(for: code)).tag(code)
                 }
@@ -39,7 +39,7 @@ struct InterfaceLanguageSection: View {
                 }
             }
 
-            Text("Chorus 內建繁體中文與英文。其他語言可以交給本機的 AI CLI（設定 → AI 引擎裡選的那個）翻譯全部介面文字；翻好的檔只存在這台 Mac，隨時可以切回內建語言。這是機器翻譯，翻不好的字串會退回英文。")
+            Text("Chorus 內建繁體中文、简体中文與英文。其他語言可以交給本機的 AI CLI（設定 → AI 引擎裡選的那個）翻譯全部介面文字；翻好的檔只存在這台 Mac，隨時可以切回內建語言。這是機器翻譯，翻不好的字串會退回英文。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
