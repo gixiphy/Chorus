@@ -150,7 +150,9 @@ final class CloudBackup {
             try files_.write(backup)
             lastWritten = backup
             lastBackupDate = files_.lastBackupDate
-            status = .ok(String(localized: "已備份（\(Self.stamp(backup.savedAt))）"))
+            // 不帶時間戳：「上次備份」那一列已經在講同一件事，兩行重複只是
+            // 讓使用者多讀一次（截圖驗證時發現的）
+            status = .ok(String(localized: "已備份"))
             refresh()
             return true
         } catch {
@@ -233,7 +235,4 @@ final class CloudBackup {
 
     func revealInFinder() { files_.revealInFinder() }
 
-    private static func stamp(_ date: Date) -> String {
-        date.formatted(date: .abbreviated, time: .shortened)
-    }
 }
