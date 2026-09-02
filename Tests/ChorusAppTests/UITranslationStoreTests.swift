@@ -87,7 +87,8 @@ struct UITranslationStoreTests {
         let translator = UITranslator(
             store: UITranslationStore(directory: FileManager.default.temporaryDirectory),
             settings: settings,
-            registry: AdviceEngineRegistry(settings: settings, scanOnInit: false)
+            registry: AdviceEngineRegistry(settings: settings, scanOnInit: false),
+            languageDefaults: defaults
         )
         for builtin in UITranslationStore.builtinLanguages {
             #expect(!translator.candidateLanguages.contains(builtin))
@@ -159,7 +160,9 @@ struct UITranslatorTests {
             engine: KnownCLIEngine.catalog.first { $0.id == "codex" }!,
             url: URL(fileURLWithPath: "/usr/bin/true"), version: nil
         )])
-        let translator = UITranslator(store: store, settings: settings, registry: registry)
+        let translator = UITranslator(
+            store: store, settings: settings, registry: registry, languageDefaults: defaults
+        )
         translator.batchRunner = FakeRunner()
         translator.targetLanguage = "ja"
 
@@ -186,15 +189,56 @@ struct UITranslatorTests {
         #expect(translator.missingCount(for: "ja") == 0)
         #expect(translator.installedLanguages == ["ja"])
         #expect(translator.needsRelaunch)
-        // 選回內建：檔還在、設定清掉；沒有覆蓋在跑就不用重啟
-        translator.selectedLanguage = nil
+        #expect(translator.selection == .translated("ja"))
+        // 沒翻到的字串要落在英文——選定自翻語言時把 AppleLanguages 釘成 en
+        #expect(defaults.stringArray(forKey: "AppleLanguages") == ["en"])
+        // 選回跟隨系統：檔還在、設定清掉；沒有覆蓋在跑就不用重啟
+        translator.selection = .system
         #expect(settings.uiTranslationLanguage == nil)
+        // 拿掉我們寫的那筆就好——讀 defaults 會落到全域偏好（＝跟隨系統），所以查 domain
+        #expect(defaults.persistentDomain(forName: suite)?["AppleLanguages"] == nil)
         #expect(translator.installedLanguages == ["ja"])
         #expect(!translator.needsRelaunch)
-        // 移除選用中的語言會一起選回內建
-        translator.selectedLanguage = "ja"
+        // 移除選用中的語言會一起選回跟隨系統
+        translator.selection = .translated("ja")
         translator.remove(language: "ja")
         #expect(translator.installedLanguages.isEmpty)
-        #expect(translator.selectedLanguage == nil)
+        #expect(translator.selection == .system)
+    }
+
+    @Test("選內建語言：寫 AppleLanguages、清掉自翻的選擇，與執行中的不同就要重啟")
+    @MainActor
+    func builtinSelection() {
+        let suite = "chorus.tests.builtinlang.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(defaults: defaults)
+        let translator = UITranslator(
+            store: UITranslationStore(directory: FileManager.default.temporaryDirectory),
+            settings: settings,
+            registry: AdviceEngineRegistry(settings: settings, scanOnInit: false),
+            languageDefaults: defaults
+        )
+        UITranslator.runningSelection = .system
+        defer { UITranslator.runningSelection = .system }
+
+        #expect(translator.selection == .system)
+        #expect(!translator.needsRelaunch)
+
+        translator.selection = .builtin("zh-Hans")
+        #expect(settings.builtinLanguage == "zh-Hans")
+        #expect(settings.uiTranslationLanguage == nil)
+        #expect(defaults.stringArray(forKey: "AppleLanguages") == ["zh-Hans"])
+        // 這個行程還在跑跟隨系統的語言：要重啟才會換
+        #expect(translator.needsRelaunch)
+
+        // 已經是這個語言在跑就不提示
+        UITranslator.runningSelection = .builtin("zh-Hans")
+        #expect(!translator.needsRelaunch)
+
+        translator.selection = .system
+        #expect(settings.builtinLanguage == nil)
+        #expect(defaults.persistentDomain(forName: suite)?["AppleLanguages"] == nil)
+        #expect(translator.needsRelaunch)
     }
 }

@@ -24,16 +24,26 @@ final class UITranslator {
     @ObservationIgnored private let store: UITranslationStore
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private let registry: AdviceEngineRegistry
+    /// 寫 `AppleLanguages` 的 domain。見 `languageDefaults(instance:environment:)`。
+    @ObservationIgnored private let languageDefaults: UserDefaults
     @ObservationIgnored private var task: Task<Void, Never>?
     /// 測試用：換掉真的 CLI。
     @ObservationIgnored var batchRunner: (any UITranslationBatchRunning)?
 
     static let batchSize = 40
 
-    init(store: UITranslationStore, settings: SettingsStore, registry: AdviceEngineRegistry) {
+    init(
+        store: UITranslationStore,
+        settings: SettingsStore,
+        registry: AdviceEngineRegistry,
+        /// 刻意沒有預設值：測試行程的 `.standard` 就是 test host（Chorus.app 本尊）的
+        /// domain，寫錯地方會把使用者的介面語言改掉。每個呼叫端自己講清楚寫哪裡。
+        languageDefaults: UserDefaults
+    ) {
         self.store = store
         self.settings = settings
         self.registry = registry
+        self.languageDefaults = languageDefaults
         targetLanguage = settings.uiTranslationLanguage
             ?? Self.suggestedLanguage(preferred: Locale.preferredLanguages)
             ?? "ja"
@@ -41,22 +51,81 @@ final class UITranslator {
 
     // MARK: - 狀態
 
-    /// 使用者選定要用的介面語言：nil＝內建（跟隨系統的繁中／英文）。
-    /// 選回內建**不會**刪翻譯檔，之後還能再切回來。
-    var selectedLanguage: String? {
-        get { settings.uiTranslationLanguage }
-        set { settings.uiTranslationLanguage = newValue }
+    /// 介面語言的三種選法。內建語言靠 App domain 的 `AppleLanguages` 生效，
+    /// 自翻語言靠 `TranslatedBundle` 覆蓋 `Bundle.main`——兩者都要重啟才會換，
+    /// Foundation 在行程啟動時就把語言決定好了。
+    enum Selection: Hashable {
+        /// 跟隨系統：系統語言是三種內建語言之一就用它，否則由 Foundation 挑。
+        case system
+        /// 指定一種內建語言（zh-Hant／zh-Hans／en）。
+        case builtin(String)
+        /// 使用者自翻的語言；沒翻到的字串退回英文。
+        case translated(String)
     }
+
+    /// 使用者選定要用的介面語言。切走**不會**刪翻譯檔，之後還能再切回來。
+    var selection: Selection {
+        get {
+            if let language = settings.uiTranslationLanguage { return .translated(language) }
+            if let builtin = settings.builtinLanguage { return .builtin(builtin) }
+            return .system
+        }
+        set {
+            switch newValue {
+            case .system:
+                settings.uiTranslationLanguage = nil
+                settings.builtinLanguage = nil
+                applyAppleLanguages(nil)
+            case let .builtin(code):
+                settings.uiTranslationLanguage = nil
+                settings.builtinLanguage = code
+                applyAppleLanguages(code)
+            case let .translated(code):
+                settings.uiTranslationLanguage = code
+                settings.builtinLanguage = nil
+                // 覆蓋查不到的 key 會落到內建語言：釘成英文，才是翻譯的來源那份
+                // （README 與 DESIGN 講的「未翻的退回英文」）。
+                applyAppleLanguages("en")
+            }
+        }
+    }
+
+    /// 寫 App domain 的 `AppleLanguages`；nil＝拿掉，回到系統語言。
+    /// 只有下次啟動才會生效——這也是設定頁一律提示重啟的原因。
+    private func applyAppleLanguages(_ code: String?) {
+        if let code {
+            languageDefaults.set([code], forKey: "AppleLanguages")
+        } else {
+            languageDefaults.removeObject(forKey: "AppleLanguages")
+        }
+    }
+
+    /// `AppleLanguages` 要寫進 App 自己的 domain 才會生效，所以正常情境是 `.standard`。
+    /// `--instance` 與測試行程改寫各自的 suite：同一個 App bundle 只有一種語言，
+    /// 不能讓 E2E 或單元測試把使用者本尊的介面語言改掉（代價是那些情境選內建語言
+    /// 不會生效，都是開發用途，可接受）。
+    static func languageDefaults(instance: InstanceConfig, environment: [String: String]) -> UserDefaults {
+        if environment["XCTestConfigurationFilePath"] != nil || environment["XCTestBundlePath"] != nil {
+            return UserDefaults(suiteName: "com.hermes.Chorus.tests.language") ?? .standard
+        }
+        guard instance.name == nil else { return instance.defaults }
+        return .standard
+    }
+
+    /// 這個行程實際跑的是哪個語言：`AppState` 掛完覆蓋後設一次。
+    nonisolated(unsafe) static var runningSelection: Selection = .system
 
     /// 已翻好、檔還在的語言。
     var installedLanguages: [String] { store.installedLanguages() }
 
     func manifest(for language: String) -> UITranslationStore.Manifest? { store.manifest(for: language) }
 
-    /// 選定的與正在執行的不同：要重啟才會生效（含選回內建）。
+    /// 選定的與正在執行的不同：要重啟才會生效（含切回內建語言）。
     var needsRelaunch: Bool {
-        let selected = selectedLanguage.flatMap { store.manifest(for: $0) != nil ? $0 : nil }
-        return TranslatedBundle.activeLanguage != selected
+        var desired = selection
+        // 翻譯檔不在（被手動刪掉）就當作沒選——重啟也救不回來，別掛著一個假提示
+        if case let .translated(code) = desired, store.manifest(for: code) == nil { desired = .system }
+        return desired != Self.runningSelection
     }
 
     /// 某個已翻語言裡，內建字串尚未翻的條數（升版後會長出來）。
@@ -206,7 +275,7 @@ final class UITranslator {
                     self.phase = .running(done: done, total: total)
                 }
                 guard let self else { return }
-                self.settings.uiTranslationLanguage = language
+                self.selection = .translated(language)
                 self.phase = .finished(translated: strings.count + plurals.count, skipped: skipped.count)
                 ChorusLog.app.notice("介面翻譯完成：\(language) \(strings.count + plurals.count) 條、跳過 \(skipped.count)，引擎 \(engine.id)")
             } catch is CancellationError {
@@ -229,7 +298,7 @@ final class UITranslator {
     /// 刪掉某個語言的翻譯檔；若它正被選用，選回內建。覆蓋還在記憶體裡，重啟才變。
     func remove(language: String) {
         try? store.remove(language: language)
-        if settings.uiTranslationLanguage == language { settings.uiTranslationLanguage = nil }
+        if settings.uiTranslationLanguage == language { selection = .system }
         phase = .idle
     }
 

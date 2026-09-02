@@ -48,13 +48,23 @@ final class AppState {
         let translationStore = UITranslationStore(
             directory: UITranslationStore.defaultDirectory(instance: instance, environment: ProcessInfo.processInfo.environment)
         )
+        // 這個行程實際跑的語言：覆蓋掛上了就是自翻語言，否則是使用者選的內建語言
+        // （靠 AppleLanguages 生效，選定時就寫好了）或跟隨系統。設定頁靠它判斷要不要重啟。
+        UITranslator.runningSelection = settings.builtinLanguage.map { .builtin($0) } ?? .system
         if let language = settings.uiTranslationLanguage {
             if translationStore.installOverride(language: language) {
+                UITranslator.runningSelection = .translated(language)
                 ChorusLog.app.notice("介面翻譯覆蓋已掛上：\(language)")
             } else {
                 ChorusLog.app.notice("介面翻譯 \(language) 的檔不在，退回內建語言")
             }
         }
+        // 實際生效的介面語言：內建語言選了什麼靠 AppleLanguages，Foundation 早在
+        // 這行之前就決定完了，log 出來才有辦法對照使用者選的是什麼。
+        ChorusLog.app.notice(
+            "介面語言：\(Bundle.main.preferredLocalizations.first ?? "?")"
+                + "（選定 \(settings.uiTranslationLanguage ?? settings.builtinLanguage ?? "跟隨系統")）"
+        )
         displayManager = DisplayManager(settings: settings)
         audioManager = AudioDeviceManager(settings: settings, displayManager: displayManager)
         pairedPeers = PairedPeersStore(
@@ -152,7 +162,12 @@ final class AppState {
             audioManager: audioManager,
             catalog: auCatalog
         )
-        uiTranslator = UITranslator(store: translationStore, settings: settings, registry: advisor.registry)
+        uiTranslator = UITranslator(
+            store: translationStore, settings: settings, registry: advisor.registry,
+            languageDefaults: UITranslator.languageDefaults(
+                instance: instance, environment: ProcessInfo.processInfo.environment
+            )
+        )
 
         sceneStore = SceneStore(defaults: instance.defaults)
         automation = AutomationExecutor(

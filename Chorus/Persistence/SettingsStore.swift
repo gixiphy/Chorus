@@ -70,6 +70,7 @@ final class SettingsStore {
         static let focusPendingRestores = "chorus.focus.pendingPeerRestores"
         static let cloudBackup = "chorus.cloud.backupEnabled"
         static let uiTranslationLanguage = "chorus.ui.translationLanguage"
+        static let builtinLanguage = "chorus.ui.builtinLanguage"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -187,6 +188,13 @@ final class SettingsStore {
     /// nil＝用內建語言。啟動時據此把翻譯 bundle 掛上 `Bundle.main`。
     var uiTranslationLanguage: String? {
         didSet { defaults.set(uiTranslationLanguage, forKey: Key.uiTranslationLanguage) }
+    }
+
+    /// 使用者指定的內建語言（zh-Hant／zh-Hans／en）；nil＝跟隨系統。
+    /// 真正讓語言生效的是 App domain 的 `AppleLanguages`（`UITranslator` 選定時寫），
+    /// 這個鍵只是記住使用者選了什麼，好在設定頁顯示與判斷要不要重啟。
+    var builtinLanguage: String? {
+        didSet { defaults.set(builtinLanguage, forKey: Key.builtinLanguage) }
     }
 
     /// 首次分析的「照片將交給本機 CLI」確認已被記住。
@@ -438,6 +446,7 @@ final class SettingsStore {
         peerKnownControls = (defaults.dictionary(forKey: Key.peerKnownControls) as? [String: [String: Double]]) ?? [:]
         advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"
         uiTranslationLanguage = defaults.string(forKey: Key.uiTranslationLanguage)
+        builtinLanguage = defaults.string(forKey: Key.builtinLanguage)
         advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)
         advisorModelIDs = (defaults.dictionary(forKey: Key.advisorModelIDs) as? [String: String]) ?? [:]
