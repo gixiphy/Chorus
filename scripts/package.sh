@@ -20,7 +20,9 @@ done
 # P5：driver 源碼變了但 CFBundleVersion 沒 +1 → 擋下打包。
 # 忘了 +1 的話設定頁不會跳「更新驅動」，改動就靜靜地沒生效。
 DRIVER_VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' AudioDriver/Info.plist)
-DRIVER_HASH=$(find AudioDriver/Source -type f | sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1)
+# -name '.*' 排除 .DS_Store 那類：Finder 逛過一次目錄就會多出一個檔，
+# 雜湊跟著變、擋板就誤判「driver 源碼變了」（2026-09-02 真的擋過一次）。
+DRIVER_HASH=$(find AudioDriver/Source -type f -not -name '.*' | sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1)
 DRIVER_STAMP_FILE=AudioDriver/.source-version
 if [[ -f "$DRIVER_STAMP_FILE" ]]; then
   read -r STAMP_VER STAMP_HASH < "$DRIVER_STAMP_FILE"
