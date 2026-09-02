@@ -123,6 +123,7 @@ final class FocusSessionController {
         persist()
         refreshRemaining()
         startTicking()
+        ChorusLog.focus.notice("限時場景開始：\(scene.name) 時長 \(Int(duration))s 可還原 \(snapshot.restorableCount) 不可還原 \(snapshot.unrestorable) 套用 \(applied.count) 條")
         events?.publish(kind: "focus", payload: [
             "phase": "started",
             "scene": scene.name,
@@ -144,7 +145,9 @@ final class FocusSessionController {
         stopTicking()
         persist()
 
+        ChorusLog.focus.notice("限時場景結束（\(reason.rawValue)）：\(session.sceneName) → 開始還原 \(session.snapshot.restorableCount) 項")
         let outcome = executor.restore(session.snapshot)
+        ChorusLog.focus.notice("限時場景還原完成：\(session.sceneName) 已還原 \(outcome.restored) 失敗 \(outcome.failed) 待補送 \(outcome.retryable.count)")
         // 對方離線的那幾條不是壞掉，只是現在送不到——排進補送清單
         if !outcome.retryable.isEmpty {
             pendingPeerRestores += outcome.retryable
@@ -177,6 +180,7 @@ final class FocusSessionController {
     /// App 要結束了。與 B3「結束 Chorus 一定還原」同態度：使用者不該因為
     /// 關掉 Chorus 而被留在「Slack 靜音、螢幕 30%」的狀態。
     func shutdown() {
+        if session != nil { ChorusLog.focus.notice("結束 Chorus → 還原限時場景") }
         end(reason: .quit)
         stopTicking()
     }
@@ -261,7 +265,9 @@ final class FocusSessionController {
     func resumeIfNeeded() {
         guard session == nil, let stored = settings.focusSession else { return }
         session = stored
-        if FocusPlanner.isExpired(session: stored, now: currentDate) {
+        let expired = FocusPlanner.isExpired(session: stored, now: currentDate)
+        ChorusLog.focus.notice("啟動接續限時場景：\(stored.sceneName) 已過期=\(expired)")
+        if expired {
             end(reason: .relaunch)
         } else {
             refreshRemaining()
@@ -279,6 +285,7 @@ final class FocusSessionController {
     func retryPendingRestores() {
         guard !pendingPeerRestores.isEmpty else { return }
         let result = executor.retry(pendingPeerRestores)
+        ChorusLog.focus.notice("補送跨機還原：\(pendingPeerRestores.count) 條 → 成功 \(result.restored) 仍失敗 \(result.stillFailing.count)")
         guard result.restored > 0 || result.stillFailing.count != pendingPeerRestores.count else { return }
         pendingPeerRestores = result.stillFailing
         settings.focusPendingPeerRestores = pendingPeerRestores

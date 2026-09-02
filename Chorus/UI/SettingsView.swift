@@ -64,6 +64,27 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
+            LabeledContent("診斷紀錄") {
+                HStack {
+                    Text(DiagnosticLog.shared.fileURL.path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Button("在 Finder 顯示") {
+                        NSWorkspace.shared.activateFileViewerSelecting(
+                            DiagnosticLog.shared.existingFiles().isEmpty
+                                ? [DiagnosticLog.shared.directory]
+                                : [DiagnosticLog.shared.fileURL]
+                        )
+                    }
+                    .controlSize(.small)
+                }
+            }
+            Text("裝置插拔、預設輸出切換、場景套用與還原、App 音訊接管的每一步都記在這裡，2 MB 一輪、留三輪。聲音或畫面突然不對時，把這個檔連同發生時間一起回報。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Section("場景") {
                 if appState.sceneStore.scenes.isEmpty {
                     Text("尚無場景。在選單列按場景列的 ＋ 可把目前的亮度、音量與自動亮度狀態存成一組。")

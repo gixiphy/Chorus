@@ -156,6 +156,7 @@ final class AudioDeviceManager {
         // 頓點的同一課）。±0.05 遠低於可察覺的偏移，寬過一個 pixel。
         let snapped = abs(clamped) < 0.05 ? 0 : clamped
         device.balance = snapped
+        log.info("平衡 \(device.name) = \(snapped.diag2)（\(device.canSetBalance ? "原生" : "軟體")）")
         if device.canSetBalance {
             recentLocalSets["balance:" + device.uid] = (snapped, ContinuousClock.now)
             worker.setBalance(device.id, to: snapped)
@@ -234,22 +235,32 @@ final class AudioDeviceManager {
     /// 遠端同步套用到預設裝置。**不**觸發廣播。
     func applySyncedVolume(_ value: Double) {
         guard let device = defaultDevice else { return }
+        log.notice("音量（同步）\(device.name) = \(value.diag2)")
         writeVolume(min(max(value, 0), 1), to: device)
     }
 
     func applySyncedMute(_ muted: Bool) {
         guard let device = defaultDevice else { return }
+        log.notice("靜音（同步）\(device.name) = \(muted)")
         writeMute(muted, to: device)
     }
 
     /// 遙控指定裝置（UID 不存在時 no-op）。**不**觸發廣播。
     func applyVolume(_ value: Double, toUID uid: String) {
-        guard let device = devices.first(where: { $0.uid == uid }) else { return }
+        guard let device = devices.first(where: { $0.uid == uid }) else {
+            log.notice("音量（命令）找不到裝置 \(uid)")
+            return
+        }
+        log.notice("音量（命令）\(device.name) \(uid) = \(value.diag2)")
         writeVolume(min(max(value, 0), 1), to: device)
     }
 
     func applyMute(_ muted: Bool, toUID uid: String) {
-        guard let device = devices.first(where: { $0.uid == uid }) else { return }
+        guard let device = devices.first(where: { $0.uid == uid }) else {
+            log.notice("靜音（命令）找不到裝置 \(uid)")
+            return
+        }
+        log.notice("靜音（命令）\(device.name) \(uid) = \(muted)")
         writeMute(muted, to: device)
     }
 
@@ -257,6 +268,9 @@ final class AudioDeviceManager {
         device.volume = clamped
         recentLocalSets[device.uid] = (clamped, ContinuousClock.now)
         settings.setLastVolume(clamped, for: device.uid)
+        let path = device.canSetVolume ? "硬體"
+            : device.softwareVolumeActive ? "軟體" : device.bridgedDisplayID != nil ? "DDC" : "無"
+        log.info("音量寫入 \(device.name) \(device.uid) = \(clamped.diag2)（\(path)）")
 
         if device.canSetVolume {
             worker.setVolume(device.id, to: clamped)
@@ -300,6 +314,7 @@ final class AudioDeviceManager {
 
     private func writeMute(_ muted: Bool, to device: AudioDeviceModel) {
         device.muted = muted
+        log.info("靜音寫入 \(device.name) \(device.uid) = \(muted)")
         if device.hasMute {
             worker.setMute(device.id, muted: muted)
             if device.uid == VirtualAudioDriverController.deviceUID {
@@ -317,6 +332,7 @@ final class AudioDeviceManager {
     }
 
     func setAsDefault(_ device: AudioDeviceModel) {
+        log.notice("設為預設輸出（本機要求）：\(device.name) \(device.uid)")
         for model in devices {
             model.isDefault = model.id == device.id
         }
@@ -326,6 +342,7 @@ final class AudioDeviceManager {
     // MARK: - Snapshot 套用
 
     private func apply(_ snapshot: AudioWorker.Snapshot) {
+        let previousDefaultUID = devices.first(where: \.isDefault)?.uid
         var updated: [AudioDeviceModel] = []
         for info in snapshot.devices {
             let isDefault = info.id == snapshot.defaultDeviceID
@@ -387,8 +404,17 @@ final class AudioDeviceManager {
         let presentUIDs = Set(updated.map(\.uid))
         let changedSet = presentUIDs != knownUIDs
         let arrived = presentUIDs.subtracting(knownUIDs)
+        let departed = knownUIDs.subtracting(presentUIDs)
         knownUIDs = presentUIDs
         devices = updated
+        if changedSet {
+            let names = updated.map { "\($0.name)<\($0.uid)>" }.joined(separator: ", ")
+            log.notice("音訊裝置清單變更：新增 \(arrived.sorted()) 移除 \(departed.sorted()) → \(names)")
+        }
+        let newDefault = updated.first(where: \.isDefault)
+        if newDefault?.uid != previousDefaultUID {
+            log.notice("預設輸出：\(previousDefaultUID ?? "無") → \(newDefault.map { "\($0.name)<\($0.uid)>" } ?? "無")")
+        }
         refreshBridges()
         sortDevices()
         if changedSet {
@@ -449,7 +475,7 @@ final class AudioDeviceManager {
             target.volume = settings.lastVolume(for: target.uid) ?? target.volume
         }
         guard engineReady, let defaultDevice else {
-            log.debug("deviceProcessing 清空：engineReady=\(engineReady, privacy: .public) default=\(defaultDevice?.uid ?? "nil", privacy: .public)")
+            log.debug("deviceProcessing 清空：engineReady=\(engineReady) default=\(defaultDevice?.uid ?? "nil")")
             tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
             return
         }
@@ -457,7 +483,7 @@ final class AudioDeviceManager {
         // 這是裝置級處理的**唯一閘門**——判斷只放這裡，不要散到各處。
         // 設定（EQ／效果／平衡）全部保留，取消排除即恢復。
         guard !isExcluded(defaultDevice) else {
-            log.debug("deviceProcessing 排除：default=\(defaultDevice.uid, privacy: .public)")
+            log.debug("deviceProcessing 排除：default=\(defaultDevice.uid)")
             tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
             return
         }
@@ -466,15 +492,15 @@ final class AudioDeviceManager {
         let effects = effectiveDeviceEffects(for: defaultDevice.uid)
         guard volumeTarget != nil || eq != nil || balance != 0 || !effects.isEmpty else {
             // 全都不需要 → 一個 tap 都不建（DESIGN §2.3 規則 2）
-            log.debug("deviceProcessing 不需要：default=\(defaultDevice.uid, privacy: .public) 存的EQ鍵=\(Array(self.settings.deviceEQ.keys).joined(separator: ","), privacy: .public)")
+            log.debug("deviceProcessing 不需要：default=\(defaultDevice.uid) 存的EQ鍵=\(Array(self.settings.deviceEQ.keys).joined(separator: ","))")
             tapEngine?.updateDeviceProcessing(deviceUID: nil, gain: 1, muted: false, eq: nil)
             return
         }
-        log.debug("deviceProcessing 推送：default=\(defaultDevice.uid, privacy: .public) eq=\(eq != nil, privacy: .public) 軟體音量=\(volumeTarget != nil, privacy: .public) 平衡=\(balance, privacy: .public) 效果=\(effects.count, privacy: .public)")
+        log.debug("deviceProcessing 推送：default=\(defaultDevice.uid) eq=\(eq != nil) 軟體音量=\(volumeTarget != nil) 平衡=\(balance) 效果=\(effects.count)")
         pushDeviceProcessing(defaultDevice)
     }
 
-    @ObservationIgnored private let log = Logger(subsystem: "com.hermes.Chorus", category: "audio")
+    @ObservationIgnored private let log = ChorusLog(category: "audio")
 
     /// 音量只有在軟體音量後端生效時才由我們衰減——否則裝置音量歸
     /// 前兩條後端管，這裡送 1.0（責任矩陣 §3.2：一層只管一件事）。
@@ -496,6 +522,7 @@ final class AudioDeviceManager {
     }
 
     func setDeviceEffects(_ entries: [AUEffectEntry], for device: AudioDeviceModel) {
+        log.notice("裝置效果 \(device.name)：\(entries.map(\.name))")
         if entries.isEmpty {
             settings.deviceEffects.removeValue(forKey: device.uid)
         } else {

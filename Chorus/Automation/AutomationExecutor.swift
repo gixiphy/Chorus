@@ -918,6 +918,7 @@ extension AutomationExecutor: FocusExecuting {
         let response = execute(ControlRequest(
             verb: .perform, target: .system, value: name, action: .runScene
         ))
+        ChorusLog.automation.notice("套用場景 \(name)：\(response.ok ? "OK \(response.results?.count ?? 0) 條" : response.error?.message ?? "失敗")")
         if let results = response.results { return results }
         return [ControlResult(
             target: name, property: "error",
@@ -936,6 +937,7 @@ extension AutomationExecutor: FocusExecuting {
         var retryable: [ControlRequest] = []
         for request in FocusPlanner.restoreRequests(snapshot) {
             let response = execute(request)
+            ChorusLog.automation.notice("還原 \(request.diagnosticDescription) → \(response.ok ? "OK" : response.error?.message ?? "失敗")")
             if response.ok {
                 restored += 1
             } else {
@@ -959,7 +961,9 @@ extension AutomationExecutor: FocusExecuting {
         var restored = 0
         var stillFailing: [ControlRequest] = []
         for request in requests {
-            if execute(request).ok {
+            let response = execute(request)
+            ChorusLog.automation.notice("補送 \(request.diagnosticDescription) → \(response.ok ? "OK" : response.error?.message ?? "失敗")")
+            if response.ok {
                 restored += 1
             } else {
                 stillFailing.append(request)

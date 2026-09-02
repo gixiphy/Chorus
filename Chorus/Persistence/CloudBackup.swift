@@ -33,7 +33,7 @@ final class CloudBackup {
     /// 都會觸發一輪同步，而設定多數時間是不動的。
     @ObservationIgnored private var lastWritten: DeviceBackup?
     @ObservationIgnored private var tickTask: Task<Void, Never>?
-    @ObservationIgnored private static let log = Logger(subsystem: "com.hermes.Chorus", category: "backup")
+    @ObservationIgnored private static let log = ChorusLog(category: "backup")
 
     init(files: CloudBackupFiles, settings: SettingsStore, scenes: SceneStore) {
         files_ = files
@@ -157,7 +157,7 @@ final class CloudBackup {
             return true
         } catch {
             status = .failed(String(localized: "備份失敗：\(error.localizedDescription)"))
-            Self.log.error("備份寫入失敗：\(error.localizedDescription, privacy: .public)")
+            Self.log.error("備份寫入失敗：\(error.localizedDescription)")
             return false
         }
     }

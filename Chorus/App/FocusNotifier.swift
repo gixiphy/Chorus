@@ -19,7 +19,7 @@ protocol FocusNotifying: AnyObject {
 
 @MainActor
 final class FocusNotifier: FocusNotifying {
-    private static let log = Logger(subsystem: "com.hermes.Chorus", category: "focus")
+    private static let log = ChorusLog.focus
 
     /// 通知的內文。純函式，與 `UNUserNotificationCenter` 無關，
     /// 因此測試得到——文案是使用者唯一會讀到的東西。
@@ -46,7 +46,7 @@ final class FocusNotifier: FocusNotifying {
             return try await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert])
         } catch {
-            Self.log.error("通知授權失敗：\(error.localizedDescription, privacy: .public)")
+            Self.log.error("通知授權失敗：\(error.localizedDescription)")
             return false
         }
     }

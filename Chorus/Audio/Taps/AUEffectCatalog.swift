@@ -22,7 +22,7 @@ final class AUEffectCatalog {
 
     /// 過濾掉第三方外掛時記一筆——使用者裝了外掛卻沒出現在選單裡時，
     /// 這是唯一的線索（TapEngine 開頭那條紀律：不要靜靜地什麼都不做）。
-    private static let log = Logger(subsystem: "com.hermes.Chorus", category: "taps")
+    private static let log = ChorusLog(category: "taps")
 
     private(set) var items: [Item] = []
 
@@ -59,7 +59,7 @@ final class AUEffectCatalog {
                 .map { "\($0.manufacturerName)/\($0.name)" }
                 .sorted()
                 .joined(separator: "、")
-            Self.log.notice("AU 目錄略過 \(v2.count - apple.count, privacy: .public) 個第三方效果（只支援 Apple 內建）：\(names, privacy: .public)")
+            Self.log.notice("AU 目錄略過 \(v2.count - apple.count) 個第三方效果（只支援 Apple 內建）：\(names)")
         }
 
         items = apple

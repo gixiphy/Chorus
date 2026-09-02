@@ -211,5 +211,12 @@ final class AppState {
         // 裝置還沒到齊時還原會誤判「裝置已不在」，所以是延後的，不在這裡直接跑
         focus.scheduleResume()
         cloudBackup.updateActivation()
+
+        let info = Bundle.main.infoDictionary
+        ChorusLog.app.notice(
+            "啟動 \(info?["CFBundleShortVersionString"] ?? "?") (build \(info?["CFBundleVersion"] ?? "?")) "
+            + "instance=\(instance.name ?? "default") macOS \(ProcessInfo.processInfo.operatingSystemVersionString) "
+            + "log=\(DiagnosticLog.shared.fileURL.path)"
+        )
     }
 }

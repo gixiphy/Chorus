@@ -36,12 +36,12 @@ final class TapEngine {
 
     /// Release 版唯一的觀測窗口：`log stream --predicate 'subsystem == "com.hermes.Chorus"'`。
     /// 2026-08-30 的教訓：引擎在使用者機器上靜靜死掉，黑箱查了一小時。
-    @ObservationIgnored private let log = Logger(subsystem: "com.hermes.Chorus", category: "taps")
+    @ObservationIgnored private let log = ChorusLog(category: "taps")
 
     private(set) var state: State = .off {
         didSet {
             guard state != oldValue else { return }
-            log.notice("state: \(String(describing: oldValue), privacy: .public) → \(String(describing: self.state), privacy: .public)")
+            log.notice("state: \(String(describing: oldValue)) → \(String(describing: self.state))")
             // AudioDeviceManager 要重算三後端矩陣：軟體音量只有在引擎
             // 拿到權限後才成立，狀態一變滑桿的可用性就跟著變
             stateChangedHandler?()
@@ -190,7 +190,7 @@ final class TapEngine {
         if excluded { apps.insert(bundleID) } else { apps.remove(bundleID) }
         guard apps != settings.excludedApps else { return }
         settings.excludedApps = apps
-        log.notice("排除清單\(excluded ? "加入" : "移除", privacy: .public)：\(bundleID, privacy: .public)")
+        log.notice("排除清單\(excluded ? "加入" : "移除")：\(bundleID)")
         reconcileSessions()
     }
 
@@ -201,6 +201,7 @@ final class TapEngine {
         mutate(&entry)
         all[bundleID] = entry
         settings.appAudio = all
+        log.info("App 設定 \(bundleID)：gain=\(entry.gain) muted=\(entry.muted) route=\(entry.outputDeviceUID ?? "預設") eq=\(entry.eq?.isEnabled ?? false) effects=\(entry.effects.count)")
         // 快路徑：只有 gain／mute 在動（滑桿拖動每秒 30–60 個 tick），
         // session 存在且組成、路由、EQ 都沒變 → 推 atomic 就好。全量對帳
         // 一次要列舉兩輪 HAL 裝置清單，在拖動路徑上是主執行緒的大宗浪費。
@@ -271,6 +272,7 @@ final class TapEngine {
         deviceEQ = eq
         deviceBalance = balance
         deviceEffects = effects
+        log.notice("裝置級處理：target=\(deviceUID ?? "無") gain=\(gain) muted=\(muted) eq=\(eq != nil) balance=\(balance) effects=\(effects.count)")
         reconcileGlobalSession()
         // per-app session 的音訊已從全域 tap 排除——裝置級處理不在這裡
         // 一併推，被接管的 App 就永遠套不到裝置 EQ／軟體音量
@@ -377,7 +379,10 @@ final class TapEngine {
         // 時**完全不碰 HAL**。這條路每個 AudioWorker snapshot 都會走到，
         // 沒開 taps 的使用者不該為它付每秒數十次的裝置列舉。
         guard state == .active, let target = deviceTarget else {
-            log.debug("global session 不成立：state=\(String(describing: self.state), privacy: .public) target=\(self.deviceTarget ?? "nil", privacy: .public)")
+            log.debug("global session 不成立：state=\(String(describing: self.state)) target=\(self.deviceTarget ?? "nil")")
+            if globalSession != nil {
+                log.notice("global session 收掉：state=\(String(describing: self.state)) target=\(self.deviceTarget ?? "無")")
+            }
             stopGlobalSession()
             globalError = nil // 不再需要全域 session，舊錯誤跟著清
             refreshErrorDisplay()
@@ -385,7 +390,10 @@ final class TapEngine {
         }
         let available = knownAvailable ?? backend.outputDeviceUIDs()
         guard available.contains(target) else {
-            log.debug("global session 不成立：target=\(target, privacy: .public) 不在裝置清單")
+            log.debug("global session 不成立：target=\(target) 不在裝置清單")
+            if globalSession != nil {
+                log.notice("global session 收掉：target=\(target) 不在裝置清單")
+            }
             stopGlobalSession()
             globalError = nil
             refreshErrorDisplay()
@@ -417,16 +425,16 @@ final class TapEngine {
             deviceTapUID = target
             globalSession?.onDeviceReconfigured = { [weak self] in
                 guard let self, self.globalSession != nil else { return }
-                self.log.notice("global session 的裝置重新配置 → \(self.rebuildDelay.components.seconds, privacy: .public)s 後重建")
+                self.log.notice("global session 的裝置重新配置 → \(self.rebuildDelay.components.seconds)s 後重建")
                 self.stopGlobalSession()
                 self.scheduleRebuild(after: self.rebuildDelay)
             }
             pushDeviceProcessing()
             rebuildRetries = 0
             globalError = nil
-            log.notice("global session 建立：target=\(target, privacy: .public) 排除 \(excluded.count, privacy: .public) 個行程")
+            log.notice("global session 建立：target=\(target) 排除 \(excluded.count) 個行程")
         } catch {
-            log.error("global session 失敗（第 \(self.rebuildRetries + 1, privacy: .public) 次）：target=\(target, privacy: .public) \(String(describing: error), privacy: .public)")
+            log.error("global session 失敗（第 \(self.rebuildRetries + 1) 次）：target=\(target) \(String(describing: error))")
             stopGlobalSession()
             globalError = "裝置級處理啟動失敗：\(error)"
             scheduleRetry()
@@ -558,19 +566,21 @@ final class TapEngine {
                     sessions[bundleID].map { wireEffectLatch($0) }
                     sessionOutputUIDs[bundleID] = outputUID
                     sessionMemberBundles[bundleID] = members
+                    log.notice("per-app session 建立：\(bundleID) → \(outputUID) 成員 \(members.count) 個")
                     // 裝置中途改取樣率（藍牙耳機切降噪）→ 這條 session 的
                     // aggregate 格式已經過期。立刻收掉（別讓過期格式繼續出
                     // 雜音），但**延遲重建**——鏈路還在重新協商時建 aggregate
                     // 幾乎必失敗（AirPods 實測，2026-08-30）
                     sessions[bundleID]?.onDeviceReconfigured = { [weak self] in
                         guard let self, self.sessions[bundleID] != nil else { return }
+                        self.log.notice("per-app session 的裝置重新配置：\(bundleID) → 收掉、\(self.rebuildDelay.components.seconds)s 後重建")
                         self.stopSession(bundleID)
                         self.scheduleRebuild(after: self.rebuildDelay)
                     }
                 } catch {
                     // 單一 App 失敗不拖垮引擎：記錄並繼續，其他 session 與
                     // 裝置音量／亮度／同步完全不受影響（DESIGN §6 降級表）
-                    log.error("per-app session 失敗：\(bundleID, privacy: .public) → \(outputUID, privacy: .public) \(String(describing: error), privacy: .public)")
+                    log.error("per-app session 失敗：\(bundleID) → \(outputUID) \(String(describing: error))")
                     notice = "無法接管 \(bundleID)：\(error)"
                     hadSessionFailure = true
                     scheduleRetry()
@@ -603,6 +613,9 @@ final class TapEngine {
     }
 
     private func stopSession(_ bundleID: String) {
+        if sessions[bundleID] != nil {
+            log.notice("per-app session 收掉：\(bundleID)（原本 → \(sessionOutputUIDs[bundleID] ?? "?")）")
+        }
         sessions.removeValue(forKey: bundleID)?.stop()
         sessionOutputUIDs.removeValue(forKey: bundleID)
         sessionMemberBundles.removeValue(forKey: bundleID)
@@ -635,7 +648,7 @@ final class TapEngine {
             // 只標 hold 不夠——格式過期的 probe 等 hold 過完照樣全零。
             probeSession?.onDeviceReconfigured = { [weak self] in
                 guard let self, self.state == .probing else { return }
-                self.log.notice("probe 的裝置重新配置 → \(self.rebuildDelay.components.seconds, privacy: .public)s 後重新探測")
+                self.log.notice("probe 的裝置重新配置 → \(self.rebuildDelay.components.seconds)s 後重新探測")
                 self.stopProbe()
                 self.scheduleRebuild(after: self.rebuildDelay) { engine in
                     guard engine.state == .probing else { return }
@@ -699,7 +712,7 @@ final class TapEngine {
         // （`audioDevicesChanged` 只在裝置**清單**變動時才叫，接不到這條。）
         // 只 hold 不夠：吸著過期裝置的 probe 永遠等不到非零，得重建。
         if state == .probing {
-            log.notice("探測中預設輸出變更 → \(self.rebuildDelay.components.seconds, privacy: .public)s 後重新探測")
+            log.notice("探測中預設輸出變更 → \(self.rebuildDelay.components.seconds)s 後重新探測")
             stopProbe()
             scheduleRebuild(after: rebuildDelay) { engine in
                 guard engine.state == .probing else { return }

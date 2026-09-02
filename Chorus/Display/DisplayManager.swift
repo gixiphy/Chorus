@@ -64,6 +64,7 @@ final class DisplayManager {
             queue: .main
         ) { _ in
             MainActor.assumeIsolated {
+                ChorusLog.display.notice("螢幕參數變更（didChangeScreenParameters）→ 重新列舉")
                 AppStateRegistry.displayManager?.scheduleRefresh()
             }
         }
@@ -82,6 +83,7 @@ final class DisplayManager {
     /// 螢幕喚醒：DDC 寫入延後、重新分類也等靜置期過後才做
     /// （太早探測會把還沒醒的螢幕誤判成不支援 DDC）。
     private func handleScreensWake() {
+        ChorusLog.display.notice("螢幕喚醒 → DDC 延後 \(Self.wakeSettleDelay)s")
         ddc.deferWrites(for: Self.wakeSettleDelay)
         scheduleRefresh(after: Self.wakeSettleDelay)
     }
@@ -221,6 +223,13 @@ final class DisplayManager {
         for old in displays where !newIDs.contains(old.id) && poweredOffModels[old.uuid] == nil {
             gamma.forget(old.id)
         }
+        let before = Set(displays.map(\.uuid))
+        let after = Set(models.map(\.uuid))
+        if before != after {
+            let added = models.filter { !before.contains($0.uuid) }.map(\.name)
+            let removed = displays.filter { !after.contains($0.uuid) }.map(\.name)
+            ChorusLog.display.notice("顯示器清單變更：新增 \(added) 移除 \(removed) → \(models.map(\.name))")
+        }
         displays = models
         reapplySoftwareDimming()
         audioManager?.refreshBridges()
@@ -235,6 +244,7 @@ final class DisplayManager {
     /// 自動亮度管理中的顯示器：改為差異值學習，不廣播（auto 受管顯示器不發 .brightness）。
     func setBrightness(_ value: Double, for model: DisplayModel) {
         let clamped = min(max(value, 0), 1)
+        ChorusLog.display.info("亮度（使用者）\(model.name) = \(clamped.diag2)")
         model.brightness = clamped
         settings.setLastBrightness(clamped, for: model.uuid)
         apply(model)
@@ -249,6 +259,7 @@ final class DisplayManager {
     /// 自動亮度管理中的顯示器不套用（auto 受管顯示器不收 .brightness）。
     func applySyncedBrightness(_ value: Double) {
         let clamped = min(max(value, 0), 1)
+        ChorusLog.display.notice("亮度（同步）全部 = \(clamped.diag2)")
         for model in displays {
             if let autoController, autoController.isAutoActive(for: model.uuid) { continue }
             model.brightness = clamped
@@ -262,6 +273,7 @@ final class DisplayManager {
     /// 非受管顯示器直接套用並廣播。
     func applyCommandBrightness(_ value: Double) {
         let clamped = min(max(value, 0), 1)
+        ChorusLog.display.notice("亮度（命令）全部 = \(clamped.diag2)")
         var appliedNonAuto = false
         for model in displays {
             model.brightness = clamped
@@ -280,8 +292,12 @@ final class DisplayManager {
 
     /// 遙控指定顯示器（UUID 不存在時 no-op）。**不**觸發廣播。
     func applyBrightness(_ value: Double, toUUID uuid: String) {
-        guard let model = displays.first(where: { $0.uuid == uuid }) else { return }
+        guard let model = displays.first(where: { $0.uuid == uuid }) else {
+            ChorusLog.display.notice("亮度（命令）找不到顯示器 \(uuid)")
+            return
+        }
         let clamped = min(max(value, 0), 1)
+        ChorusLog.display.notice("亮度（命令）\(model.name) = \(clamped.diag2)")
         model.brightness = clamped
         settings.setLastBrightness(clamped, for: model.uuid)
         apply(model)
@@ -463,6 +479,7 @@ final class DisplayManager {
         // 已經是目標狀態就不重複動作。要「開」時必須現在是關的、
         // 要「關」時必須現在是開的——兩者都等價於 isPoweredOff == on。
         guard model.isPoweredOff == on else { return }
+        ChorusLog.display.notice("螢幕電源 \(on ? "開" : "關")：\(model.name) layer=\(model.powerLayer)")
         if on { powerOn(model) } else { powerOff(model) }
     }
 
@@ -498,6 +515,7 @@ final class DisplayManager {
             powerOn(model)
             restored += 1
         }
+        if restored > 0 { ChorusLog.display.notice("全部螢幕復原電源：\(restored) 台") }
         return restored
     }
 

@@ -58,6 +58,7 @@ struct ChorusApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
+        ChorusLog.app.notice("結束（applicationWillTerminate）")
         MainActor.assumeIsolated {
             AppStateRegistry.scenarioStore?.saveOnTerminate()
             // 結束 Chorus 一定還原限時場景（與 B3 的螢幕電源同態度）：

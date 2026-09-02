@@ -205,7 +205,7 @@ enum AUChainBuilder {
     /// 但那要使用者剛好打開那個 target 的面板才看得到；事後從 log 診斷
     /// 「效果為什麼沒回來」時，這裡原本一行痕跡都沒有。成功路徑也要記，
     /// 否則裝置重建後「鏈有沒有帶著參數回來」無從對帳。
-    private static let log = Logger(subsystem: "com.hermes.Chorus", category: "taps")
+    private static let log = ChorusLog(category: "taps")
 
     struct BuildResult {
         var block: UnsafeMutableRawPointer?
@@ -269,7 +269,7 @@ enum AUChainBuilder {
             )
             guard let component = AudioComponentFindNext(nil, &description) else {
                 result.failures.append("找不到「\(entry.name)」——外掛可能已移除")
-                Self.log.error("AU 找不到元件：\(entry.name, privacy: .public) key=\(entry.component.key, privacy: .public)")
+                Self.log.error("AU 找不到元件：\(entry.name) key=\(entry.component.key)")
                 continue
             }
 
@@ -279,7 +279,7 @@ enum AUChainBuilder {
             guard status == noErr, let unit = maybeUnit else {
                 latch(nil)
                 result.failures.append("「\(entry.name)」實例化失敗（\(status)）")
-                Self.log.error("AU 實例化失敗：\(entry.name, privacy: .public) key=\(entry.component.key, privacy: .public) status=\(status, privacy: .public)")
+                Self.log.error("AU 實例化失敗：\(entry.name) key=\(entry.component.key) status=\(status)")
                 continue
             }
 
@@ -321,7 +321,7 @@ enum AUChainBuilder {
                 latch(nil)
                 AudioComponentInstanceDispose(unit)
                 result.failures.append("「\(entry.name)」初始化失敗（\(status)）")
-                Self.log.error("AU 初始化失敗：\(entry.name, privacy: .public) key=\(entry.component.key, privacy: .public) status=\(status, privacy: .public)")
+                Self.log.error("AU 初始化失敗：\(entry.name) key=\(entry.component.key) status=\(status)")
                 continue
             }
 
@@ -336,10 +336,10 @@ enum AUChainBuilder {
                         &classInfo, UInt32(MemoryLayout<CFPropertyList?>.size)
                     )
                     if restoreStatus != noErr {
-                        Self.log.notice("AU 參數還原被拒：\(entry.name, privacy: .public) status=\(restoreStatus, privacy: .public)——該格回到預設值")
+                        Self.log.notice("AU 參數還原被拒：\(entry.name) status=\(restoreStatus)——該格回到預設值")
                     }
                 } else {
-                    Self.log.notice("AU 參數存檔解析失敗：\(entry.name, privacy: .public)——該格回到預設值")
+                    Self.log.notice("AU 參數存檔解析失敗：\(entry.name)——該格回到預設值")
                 }
             }
             latch(nil)
@@ -349,7 +349,7 @@ enum AUChainBuilder {
 
         guard !units.isEmpty else {
             block.deallocate() // 只有空槽，沒有任何實例——不用走 dispose
-            log.error("AU 鏈全數建不起來：要求 \(active.count, privacy: .public) 格、失敗 \(result.failures.count, privacy: .public) 格")
+            log.error("AU 鏈全數建不起來：要求 \(active.count) 格、失敗 \(result.failures.count) 格")
             return result
         }
         // 回填實際實例數與內容
@@ -364,7 +364,7 @@ enum AUChainBuilder {
             .filter { result.builtIDs.contains($0.id) }
             .map(\.name)
             .joined(separator: " → ")
-        log.notice("AU 鏈建立：\(names, privacy: .public)（\(units.count, privacy: .public)/\(active.count, privacy: .public) 格，\(Int(sampleRate), privacy: .public) Hz）")
+        log.notice("AU 鏈建立：\(names)（\(units.count)/\(active.count) 格，\(Int(sampleRate)) Hz）")
         return result
     }
 }
