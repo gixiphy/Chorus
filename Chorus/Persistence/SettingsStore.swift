@@ -64,6 +64,7 @@ final class SettingsStore {
         static let virtualTargetUID = "chorus.audio.virtualTargetUID"
         static let automationServer = "chorus.automation.serverEnabled"
         static let automationPort = "chorus.automation.serverPort"
+        static let focusSession = "chorus.focus.session"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -347,6 +348,23 @@ final class SettingsStore {
 
     /// 自動化介面的 port。預設 55780——BetterDisplay 用 55777，刻意避開，
     /// 兩個都裝的人才不會撞。
+    /// 進行中的限時場景（B7）。**一開始就寫檔**：崩潰或強制結束之後，
+    /// 下次啟動要能接續倒數或立即還原——只活在記憶體裡的話，那條路就斷了。
+    ///
+    /// 與 `effectPendingLoad` 同一個理由付 `synchronize()` 的代價：
+    /// defaults 平常是先送 cfprefsd 再非同步寫檔，而我們防的正是「App 被
+    /// 帶走」。start 是使用者手動觸發的低頻事件，一次同步寫很划算。
+    var focusSession: FocusSession? {
+        didSet {
+            if let focusSession, let data = try? JSONEncoder().encode(focusSession) {
+                defaults.set(data, forKey: Key.focusSession)
+                defaults.synchronize()
+            } else {
+                defaults.removeObject(forKey: Key.focusSession)
+            }
+        }
+    }
+
     var automationServerPort: UInt16 {
         didSet { defaults.set(Int(automationServerPort), forKey: Key.automationPort) }
     }
@@ -420,6 +438,11 @@ final class SettingsStore {
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)
+        if let data = defaults.data(forKey: Key.focusSession) {
+            // 解不開就當作沒有——舊格式的殘留不該讓 App 起不來，
+            // 而還原一份讀不懂的快照比不還原更危險
+            focusSession = try? JSONDecoder().decode(FocusSession.self, from: data)
+        }
     }
 
     func lastBrightness(for uuid: String) -> Double? {

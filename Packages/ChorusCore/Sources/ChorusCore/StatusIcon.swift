@@ -54,7 +54,26 @@ public enum StatusIcon {
     /// `∞` 這格是刻意的：無限期與「接著這台螢幕時」都沒有數字可報，
     /// 但選單列上得看得出來「我現在不會睡」——否則使用者只能點開選單確認。
     public static func keepAwakeBadge(remainingSeconds: Double?, isHolding: Bool) -> String? {
-        if let remainingSeconds { return countdownText(remainingSeconds: remainingSeconds) }
-        return isHolding ? "∞" : nil
+        badge(keepAwakeRemaining: remainingSeconds, keepAwakeHolding: isHolding, focusRemaining: nil)
+    }
+
+    /// 選單列右側那格文字，把所有在跑的倒數收成一格（B7-1）。
+    ///
+    /// **同時有防睡眠與專注倒數時顯示較早到期的那個**：兩者都在回答
+    /// 「什麼時候會有事發生」，先發生的那件更值得占用這一格。
+    /// 圖示上不新增第四格資訊——選單列的空間是使用者的，不是我們的。
+    ///
+    /// `∞` 只在**沒有任何數字**時出現：有具體倒數卻讓一個沒有數字的符號
+    /// 蓋住它，是拿資訊少的蓋掉資訊多的。
+    public static func badge(
+        keepAwakeRemaining: Double?,
+        keepAwakeHolding: Bool,
+        focusRemaining: Double?
+    ) -> String? {
+        let countdowns = [keepAwakeRemaining, focusRemaining].compactMap { $0 }
+        if let soonest = countdowns.min() {
+            return countdownText(remainingSeconds: soonest)
+        }
+        return keepAwakeHolding ? "∞" : nil
     }
 }

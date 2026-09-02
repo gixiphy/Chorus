@@ -23,6 +23,8 @@ final class AppState {
     let emergencyRestore: EmergencyRestoreMonitor
     let automation: AutomationExecutor
     let sceneStore: SceneStore
+    /// 限時場景（B7）：套用場景 → 倒數 → 結束時原樣放回去。
+    let focus: FocusSessionController
     let tapEngine: TapEngine
     let autoEq: AutoEqCatalog
     /// 可用的 AU effect 清單（AU-3；只掃描不實例化，永遠安全）。
@@ -150,6 +152,9 @@ final class AppState {
             scenes: sceneStore
         )
 
+        focus = FocusSessionController(settings: settings, executor: automation, scenes: sceneStore)
+        AppStateRegistry.focus = focus
+
         automationEvents = AutomationEventHub()
         automationServer = ControlHTTPServer(
             settings: settings,
@@ -176,5 +181,8 @@ final class AppState {
         virtualDriver.refreshStatus()
         automationServer.updateActivation()
         tapEngine.start()
+        // 上次沒正常結束時把限時場景接回來。**要等列舉完**——顯示器與音訊
+        // 裝置還沒到齊時還原會誤判「裝置已不在」，所以是延後的，不在這裡直接跑
+        focus.scheduleResume()
     }
 }

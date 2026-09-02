@@ -44,6 +44,22 @@ public extension ControlValue {
         }
     }
 
+    /// 把一個現值寫成「還原時解得回同一個數」的值字串（B7 限時場景的快照）。
+    ///
+    /// 兩條路是收值規則逼出來的，不是風格選擇：
+    ///
+    /// - **|值| ≤ 1 寫小數**。`"0.437000"` 解回來與原值逐位元相同；
+    ///   走百分比的話要多一次除以 100，`43.7 / 100` 與 `0.437` 差一個 ulp。
+    /// - **|值| > 1 寫百分比**。`> 1 的裸數字一律視為百分比`——per-app 增益
+    ///   2.0 寫成 `"2.0"` 會被讀回 **0.02**，還原完音量剩下五十分之一。
+    ///
+    /// `1` 是兩條路的交界，而它在兩種讀法下同值（見上方收值規則），無歧義。
+    static func snapshotString(_ number: Double) -> String {
+        abs(number) > 1
+            ? String(format: "%.4f%%", number * 100)
+            : String(format: "%.6f", number)
+    }
+
     private static func parseBoolean(_ text: String, original: String) throws(ControlError) -> ControlValue {
         switch text.lowercased() {
         case "on", "true", "1", "yes", "開": .boolean(true)

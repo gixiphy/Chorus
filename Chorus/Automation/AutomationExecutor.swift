@@ -746,3 +746,143 @@ extension AutomationExecutor {
         }
     }
 }
+
+// MARK: - 限時場景的快照與還原（B7-1）
+
+extension AutomationExecutor: FocusExecuting {
+    /// 套用場景前，把它**會動到的每一個值**的現況擷取成一份快照。
+    ///
+    /// 與 `captureCurrentScene` 的差別：那個擷取的是「畫面與聲音現在長什麼樣」
+    /// （固定的一組屬性），這個擷取的是「**這個場景會碰到什麼**」——涵蓋範圍
+    /// 由場景內容決定。理由見 `FocusSnapshot` 的註解。
+    ///
+    /// 讀現值一律走 `execute(get)`，也就是與套用**完全同一條路**。這讓
+    /// 「不可還原」自動浮現而不必特判：`input` 的 `allowedVerbs` 沒有 `get`，
+    /// 送進去就回 `verbNotAllowed`，我們照實記進 `unrestorable`。
+    func snapshot(forScene scene: ControlScene) -> FocusSnapshot {
+        var requests: [ControlRequest] = []
+        var unrestorable: [String] = []
+        var keepAwakeMode: KeepAwakeMode?
+        var keepAwakeRemaining: Double?
+
+        for request in scene.requests {
+            // 場景內不執行 perform（runScene 已擋），快照也不看它
+            guard request.verb == .set || request.verb == .toggle,
+                  let property = request.property
+            else { continue }
+
+            // 跨機項目要等 B7-4：`forward` 只支援 set，沒有遠端 get，
+            // 拿不到原值。照常套用，但誠實說它不會自己回來。
+            if let peer = request.peer {
+                unrestorable.append("\(peer)：\(property.rawValue)（跨機還原要等 B7-4）")
+                continue
+            }
+
+            // 防睡眠是唯一不走 request 的一條，理由見 FocusSnapshot.keepAwake
+            if property == .keepAwake {
+                if keepAwakeMode == nil {
+                    keepAwakeMode = keepAwake.mode
+                    keepAwakeRemaining = keepAwake.remainingSeconds
+                }
+                continue
+            }
+
+            for entity in snapshotEntities(request.target) {
+                guard let value = snapshotValue(property, target: entity.target) else {
+                    unrestorable.append("\(entity.name) 的 \(property.rawValue)")
+                    continue
+                }
+                requests.append(ControlRequest(
+                    verb: .set, target: entity.target, property: property, value: value
+                ))
+            }
+        }
+
+        return FocusSnapshot(
+            requests: FocusPlanner.deduplicated(requests),
+            keepAwake: keepAwakeMode,
+            keepAwakeRemainingSeconds: keepAwakeRemaining,
+            unrestorable: unrestorable
+        )
+    }
+
+    /// 套用具名場景。走 `perform runScene` 這條**公開**路徑，不另開後門——
+    /// 限時場景與一般場景套用的是同一段程式碼，逐條獨立、一條失敗不放棄其餘。
+    func applyScene(named name: String) -> [ControlResult] {
+        let response = execute(ControlRequest(
+            verb: .perform, target: .system, value: name, action: .runScene
+        ))
+        if let results = response.results { return results }
+        return [ControlResult(
+            target: name, property: "error",
+            value: .string(response.error?.message ?? "場景套用失敗")
+        )]
+    }
+
+    /// 把快照放回去。同樣逐條獨立——某台螢幕這 25 分鐘內被拔掉了，
+    /// 不該讓其餘項目跟著不還原。
+    func restore(_ snapshot: FocusSnapshot) -> (restored: Int, failed: [String]) {
+        var restored = 0
+        var failed: [String] = []
+        for request in FocusPlanner.restoreRequests(snapshot) {
+            let response = execute(request)
+            if response.ok {
+                restored += 1
+            } else {
+                failed.append("\(request.target.stringValue)：\(response.error?.message ?? "未知錯誤")")
+            }
+        }
+        if let mode = snapshot.keepAwake {
+            restoreKeepAwake(mode: mode, remaining: snapshot.keepAwakeRemainingSeconds)
+            restored += 1
+        }
+        return (restored, failed)
+    }
+
+    /// 防睡眠的還原。`.duration` 以**剩餘秒數**重新起算：存的是原始秒數，
+    /// 照著 activate 會把一個早該結束的長亮重新開滿 30 分鐘。
+    /// 剩餘已歸零就是關掉——那正是它在快照當下的下一秒會走到的狀態。
+    private func restoreKeepAwake(mode: KeepAwakeMode, remaining: Double?) {
+        if case .duration = mode {
+            guard let remaining, remaining > 0 else { return keepAwake.activate(.off) }
+            return keepAwake.activate(.duration(seconds: remaining))
+        }
+        keepAwake.activate(mode)
+    }
+
+    /// 把目標展開成**實體定位**（UUID／UID／bundle id）。
+    ///
+    /// 快照不能存 `allDisplays` 或 `displayWithMouse` 這種意圖：25 分鐘後
+    /// 滑鼠早就在別台螢幕上了，還原會寫到錯的地方。名稱只拿來寫給人看的
+    /// 「哪一項不可還原」，定位一律用穩定識別碼。
+    private func snapshotEntities(_ target: ControlTarget) -> [(target: ControlTarget, name: String)] {
+        switch target.kind {
+        case .display:
+            ((try? resolveDisplays(target)) ?? []).map { (.displayUUID($0.uuid), $0.name) }
+        case .audioDevice:
+            ((try? resolveDevices(target)) ?? []).map { (.deviceUID($0.uid), $0.name) }
+        case .app:
+            ((try? resolveApps(target)) ?? []).map {
+                (.app(bundleID: $0), tapEngine.registry.displayName(bundleID: $0))
+            }
+        case .system:
+            [(.system, "system")]
+        }
+    }
+
+    /// 讀一個實體的現值，寫成**還原時解得回同一個數**的值字串。
+    ///
+    /// 數值的寫法由 `ControlValue.snapshotString` 決定——那裡有收值規則
+    /// 逼出來的兩條路（|值| > 1 必須寫成百分比，否則 per-app 增益 2.0
+    /// 會被讀回 0.02）。
+    private func snapshotValue(_ property: ControlProperty, target: ControlTarget) -> String? {
+        let response = execute(ControlRequest(verb: .get, target: target, property: property))
+        guard let value = response.results?.first?.value else { return nil }
+        switch value {
+        case let .number(number): return ControlValue.snapshotString(number)
+        case let .bool(flag): return flag ? "on" : "off"
+        case let .string(text): return text
+        case .null: return nil
+        }
+    }
+}

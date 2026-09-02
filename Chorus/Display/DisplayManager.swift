@@ -594,4 +594,8 @@ enum AppStateRegistry {
     static var displayManager: DisplayManager?
     static var scenarioStore: DeskScenarioStore?
     static var keepAwake: KeepAwakeController?
+    /// 限時場景（B7）。睡醒通知的 observer 靠它回到 controller——
+    /// closure 直接捕獲 self 在 Swift 6 的嚴格併發下不合法（non-Sendable
+    /// 的 @MainActor 型別），與 keepAwake 的 App observer 同一個理由。
+    static var focus: FocusSessionController?
 }

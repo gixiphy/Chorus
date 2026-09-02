@@ -42,3 +42,51 @@ struct StatusIconTests {
         #expect(StatusIcon.keepAwakeBadge(remainingSeconds: nil, isHolding: false) == nil)
     }
 }
+
+@Suite("選單列 badge：多個倒數（B7-1）")
+struct StatusIconBadgeTests {
+    @Test("兩個倒數同時在跑時顯示較早到期的那個")
+    func soonestWins() {
+        #expect(StatusIcon.badge(
+            keepAwakeRemaining: 3_600, keepAwakeHolding: true, focusRemaining: 1_500
+        ) == "25:00")
+        #expect(StatusIcon.badge(
+            keepAwakeRemaining: 60, keepAwakeHolding: true, focusRemaining: 1_500
+        ) == "1:00")
+    }
+
+    @Test("只有一個倒數時就是它")
+    func singleCountdown() {
+        #expect(StatusIcon.badge(
+            keepAwakeRemaining: nil, keepAwakeHolding: false, focusRemaining: 90
+        ) == "1:30")
+        #expect(StatusIcon.badge(
+            keepAwakeRemaining: 90, keepAwakeHolding: true, focusRemaining: nil
+        ) == "1:30")
+    }
+
+    @Test("∞ 讓位給數字——有具體倒數時不該被沒有數字的符號蓋掉")
+    func infinityYieldsToNumber() {
+        // 無限期防睡眠（沒有剩餘秒數）＋專注倒數
+        #expect(StatusIcon.badge(
+            keepAwakeRemaining: nil, keepAwakeHolding: true, focusRemaining: 300
+        ) == "5:00")
+    }
+
+    @Test("沒有任何倒數：持有中回 ∞，否則不畫這一格")
+    func infinityAndEmpty() {
+        #expect(StatusIcon.badge(
+            keepAwakeRemaining: nil, keepAwakeHolding: true, focusRemaining: nil
+        ) == "∞")
+        #expect(StatusIcon.badge(
+            keepAwakeRemaining: nil, keepAwakeHolding: false, focusRemaining: nil
+        ) == nil)
+    }
+
+    @Test("既有的 keepAwakeBadge 語意不變（委派給新的三參數版）")
+    func legacyBadgeUnchanged() {
+        #expect(StatusIcon.keepAwakeBadge(remainingSeconds: 1_500, isHolding: true) == "25:00")
+        #expect(StatusIcon.keepAwakeBadge(remainingSeconds: nil, isHolding: true) == "∞")
+        #expect(StatusIcon.keepAwakeBadge(remainingSeconds: nil, isHolding: false) == nil)
+    }
+}

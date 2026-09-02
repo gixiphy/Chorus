@@ -195,6 +195,13 @@ final class TestHooks {
             if let name = info["value"], !name.isEmpty {
                 appState.sceneStore.save(appState.automation.captureCurrentScene(named: name))
             }
+        case "saveScene":
+            // value = ControlScene JSON。captureScene 只擷取「現況」，
+            // 測不出「套用後會變成什麼」——而限時場景的還原要驗的正是那個差別
+            if let json = info["value"], let data = json.data(using: .utf8),
+               let scene = try? JSONDecoder().decode(ControlScene.self, from: data) {
+                appState.sceneStore.save(scene)
+            }
         case "deleteScene":
             if let name = info["value"], let scene = appState.sceneStore.scene(named: name) {
                 appState.sceneStore.delete(id: scene.id)
@@ -397,6 +404,28 @@ final class TestHooks {
                     appState.keepAwake.activate(KeepAwakePlanner.decode(value))
                 }
             }
+        case "focusStart":
+            // value = "場景名|秒數"。走與選單、CLI 完全同一條路（B7-1）
+            if let raw = info["value"] {
+                let parts = raw.split(separator: "|", maxSplits: 1).map(String.init)
+                let seconds = parts.count > 1 ? (Double(parts[1]) ?? 0) : 0
+                do {
+                    lastControlResponse = .success(
+                        try appState.focus.start(sceneName: parts.first ?? "", duration: seconds)
+                    )
+                } catch {
+                    lastControlResponse = .failure(error)
+                }
+            }
+        case "focusEnd":
+            appState.focus.end(reason: .manual)
+        case "focusAdvance":
+            // 推進測試時鐘並立刻結算——沒有人需要真的等 25 分鐘
+            if let seconds = info["value"].flatMap(Double.init) {
+                appState.focus.advanceClock(by: seconds)
+            }
+        case "focusRelaunch":
+            appState.focus.simulateRelaunchForTesting()
         case "setAdvisorModel":
             // value = "<engineID>:<模型>"；空模型＝清掉（用 CLI 預設）
             if let raw = info["value"] {
@@ -629,6 +658,21 @@ final class TestHooks {
                 "holding": appState.keepAwake.isHolding,
                 "remaining": appState.keepAwake.remainingSeconds.map { $0 as Any } ?? NSNull(),
                 "preventsSystemSleep": appState.keepAwake.alsoPreventSystemSleep,
+            ] as [String: Any],
+            "focus": [
+                "scene": appState.focus.session?.sceneName as Any? ?? NSNull(),
+                "remaining": appState.focus.remainingSeconds as Any? ?? NSNull(),
+                "snapshotCount": appState.focus.session?.snapshot.restorableCount ?? 0,
+                "unrestorable": appState.focus.session?.snapshot.unrestorable ?? [],
+                "lastOutcome": appState.focus.lastOutcome.map { outcome in
+                    [
+                        "scene": outcome.sceneName,
+                        "reason": outcome.reason.rawValue,
+                        "restored": outcome.restored,
+                        "failed": outcome.failed,
+                        "unrestorable": outcome.unrestorable,
+                    ] as [String: Any]
+                } as Any? ?? NSNull(),
             ] as [String: Any],
             "scenes": appState.sceneStore.scenes.map { scene in
                 ["name": scene.name, "requests": scene.requests.count] as [String: Any]
