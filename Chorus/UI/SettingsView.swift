@@ -68,7 +68,7 @@ private struct GeneralSettingsTab: View {
             }
             LabeledContent("診斷紀錄") {
                 HStack {
-                    Text(DiagnosticLog.shared.fileURL.path)
+                    Text((DiagnosticLog.shared.fileURL.path as NSString).abbreviatingWithTildeInPath)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
