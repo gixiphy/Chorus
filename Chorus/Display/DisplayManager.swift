@@ -598,4 +598,6 @@ enum AppStateRegistry {
     /// closure 直接捕獲 self 在 Swift 6 的嚴格併發下不合法（non-Sendable
     /// 的 @MainActor 型別），與 keepAwake 的 App observer 同一個理由。
     static var focus: FocusSessionController?
+    /// 設定備份（B8）。結束 App 時補寫最後一分鐘的變更。
+    static var cloudBackup: CloudBackup?
 }

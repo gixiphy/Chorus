@@ -68,6 +68,7 @@ final class SettingsStore {
         static let focusLastDuration = "chorus.focus.lastDuration"
         static let focusNotifyOnEnd = "chorus.focus.notifyOnEnd"
         static let focusPendingRestores = "chorus.focus.pendingPeerRestores"
+        static let cloudBackup = "chorus.cloud.backupEnabled"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -374,6 +375,12 @@ final class SettingsStore {
     ///
     /// 與 session 分開存：session 結束後這些請求還活著，等 peer 下次連上
     /// 補送。跨重啟保留——關掉 Chorus 不該讓對方的 Slack 永遠靜音。
+    /// 自動把設定備份到 iCloud Drive（B8）。**預設關**——會把資料寫出本機的
+    /// 功能要使用者親手開（與權限功能同一條紀律）。
+    var cloudBackupEnabled: Bool {
+        didSet { defaults.set(cloudBackupEnabled, forKey: Key.cloudBackup) }
+    }
+
     var focusPendingPeerRestores: [ControlRequest] {
         didSet {
             if focusPendingPeerRestores.isEmpty {
@@ -468,6 +475,7 @@ final class SettingsStore {
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)
+        cloudBackupEnabled = defaults.bool(forKey: Key.cloudBackup)
         focusLastDuration = defaults.object(forKey: Key.focusLastDuration) as? Double ?? 1_500
         focusPendingPeerRestores = (defaults.data(forKey: Key.focusPendingRestores)
             .flatMap { try? JSONDecoder().decode([ControlRequest].self, from: $0) }) ?? []

@@ -27,6 +27,8 @@ final class AppState {
     let focus: FocusSessionController
     /// 限時場景結束時的系統通知（B7-3）。預設關。
     let focusNotifier: any FocusNotifying
+    /// 設定備份到 iCloud Drive（B8）。只寫不讀；預設關。
+    let cloudBackup: CloudBackup
     let tapEngine: TapEngine
     let autoEq: AutoEqCatalog
     /// 可用的 AU effect 清單（AU-3；只掃描不實例化，永遠安全）。
@@ -164,6 +166,20 @@ final class AppState {
             MainActor.assumeIsolated { AppStateRegistry.focus?.retryPendingRestores() }
         }
 
+        cloudBackup = CloudBackup(
+            files: CloudBackupFiles(
+                // `--cloud-root` 是 E2E 的覆寫：同機雙實例不該把東西寫進
+                // 使用者真的 iCloud Drive
+                root: instance.cloudRoot.map { URL(fileURLWithPath: $0) }
+                    ?? CloudBackupFiles.defaultRoot(),
+                deviceName: instance.deviceDisplayName,
+                deviceID: instance.peerID
+            ),
+            settings: settings,
+            scenes: sceneStore
+        )
+        AppStateRegistry.cloudBackup = cloudBackup
+
         automationEvents = AutomationEventHub()
         automationServer = ControlHTTPServer(
             settings: settings,
@@ -194,5 +210,6 @@ final class AppState {
         // 上次沒正常結束時把限時場景接回來。**要等列舉完**——顯示器與音訊
         // 裝置還沒到齊時還原會誤判「裝置已不在」，所以是延後的，不在這裡直接跑
         focus.scheduleResume()
+        cloudBackup.updateActivation()
     }
 }

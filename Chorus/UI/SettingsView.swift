@@ -22,6 +22,9 @@ struct SettingsView: View {
             Tab("分析引擎", systemImage: "brain") {
                 AdvisorSettingsTab()
             }
+            Tab("備份", systemImage: "icloud") {
+                BackupSettingsTab()
+            }
         }
         .frame(width: 460, height: 420)
         .environment(appState)
@@ -1124,4 +1127,135 @@ private struct SyncSettingsTab: View {
 #Preview {
     SettingsView()
         .environment(AppState())
+}
+
+// MARK: - 備份（B8）
+
+/// 設定備份到 iCloud Drive。
+///
+/// 這一頁刻意**從頭到尾不用「同步」兩個字**：使用者看到那兩個字會預期
+/// 「兩台全部一樣」，而這裡是「這台寫出去、要用再手動挑一份匯入」。
+/// 講錯一次，之後每一個沒被搬過去的設定都會被當成壞掉。
+private struct BackupSettingsTab: View {
+    @Environment(AppState.self) private var appState
+    /// 挑好要匯入哪一台，按下去才真的蓋。
+    @State private var pendingImport: BackupFile?
+
+    var body: some View {
+        @Bindable var settings = appState.settings
+        Form {
+            if !appState.cloudBackup.isAvailable {
+                Label("這台沒有啟用 iCloud Drive，備份功能停用。",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Text("""
+                備份的是**這台**的設定：場景、等化器與效果鏈、排除清單、\
+                各種偏好。寫進你的 iCloud Drive，**不會自動套到別台**——\
+                要用得在下面挑一份匯入。
+                """)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+                HStack {
+                    Button("立即備份") {
+                        appState.cloudBackup.backupNow()
+                    }
+                    Button("在 Finder 顯示") {
+                        appState.cloudBackup.revealInFinder()
+                    }
+                    Spacer()
+                }
+
+                Toggle("自動備份（每分鐘檢查一次）", isOn: $settings.cloudBackupEnabled)
+                    .onChange(of: settings.cloudBackupEnabled) { _, _ in
+                        appState.cloudBackup.updateActivation()
+                    }
+
+                if let date = appState.cloudBackup.lastBackupDate {
+                    LabeledContent("上次備份") {
+                        Text(date, format: .dateTime.month().day().hour().minute())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                switch appState.cloudBackup.status {
+                case .idle:
+                    EmptyView()
+                case let .ok(message):
+                    Label(message, systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                case let .failed(message):
+                    Label(message, systemImage: "exclamationmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                Text(appState.cloudBackup.displayPath)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            .disabled(!appState.cloudBackup.isAvailable)
+
+            Section("各台的設定") {
+                if appState.cloudBackup.files.isEmpty {
+                    Text("iCloud 上還沒有任何備份。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(appState.cloudBackup.files) { file in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(file.deviceName + (file.isSelf ? "（這台）" : ""))
+                                Text(file.savedAt, format: .dateTime.month().day().hour().minute())
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button(file.isSelf ? "還原" : "匯入") { pendingImport = file }
+                                .controlSize(.small)
+                        }
+                    }
+                }
+                Text("""
+                從**別台**匯入時會跳過綁在機器上的設定：顯示器與音訊裝置的\
+                個別調整、防睡眠綁定、效果隔離名單，以及要各台自己開的權限\
+                （App 音訊接管、自動化介面、自動備份）。從**這台**自己的\
+                備份還原則是全套。
+                """)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("不會備份的") {
+                Text("""
+                配對資訊與自動化介面的 token（存在鑰匙串，備份是明文 JSON）、\
+                亮度與音量的當下值、進行中的限時場景。換機器後配對要重做一次。
+                """)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { appState.cloudBackup.refresh() }
+        .confirmationDialog(
+            pendingImport.map { "要套用「\($0.deviceName)」的設定嗎？" } ?? "",
+            isPresented: Binding(get: { pendingImport != nil },
+                                 set: { if !$0 { pendingImport = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("套用", role: .destructive) {
+                if let file = pendingImport { appState.cloudBackup.importBackup(file) }
+                pendingImport = nil
+            }
+            Button("取消", role: .cancel) { pendingImport = nil }
+        } message: {
+            Text("這會蓋掉目前的設定。匯入前會先把現況另存一份，檔名帶「-before-import」。")
+        }
+    }
 }

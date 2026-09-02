@@ -19,6 +19,9 @@ struct InstanceConfig: Sendable {
     let disableALS: Bool
     /// tap 引擎用 FakeTapBackend（僅 DEBUG；E2E 不需權限與真硬體）。
     let fakeTaps: Bool
+    /// 設定備份的根目錄覆寫（B8 的 E2E 用）。給了就不碰真的 iCloud Drive
+    /// ——同機雙實例測試不該把東西寫進使用者的雲端硬碟。
+    let cloudRoot: String?
 
     init(arguments: [String]) {
         func value(after flag: String) -> String? {
@@ -31,6 +34,7 @@ struct InstanceConfig: Sendable {
         fakeALS = arguments.contains("--fake-als")
         disableALS = arguments.contains("--no-als")
         fakeTaps = arguments.contains("--fake-taps")
+        cloudRoot = value(after: "--cloud-root")
     }
 
     private static let baseIdentifier = Bundle.main.bundleIdentifier ?? "com.hermes.Chorus"

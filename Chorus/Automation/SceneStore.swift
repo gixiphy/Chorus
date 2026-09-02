@@ -41,6 +41,17 @@ final class SceneStore {
         persist()
     }
 
+    /// 整份換掉（B8 匯入備份用）。名稱去頭尾空白後為空的條目一併丟掉，
+    /// 與 `save` 同一條規則。
+    func replaceAll(_ incoming: [ControlScene]) {
+        scenes = incoming.compactMap { scene in
+            var copy = scene
+            copy.name = scene.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return copy.name.isEmpty ? nil : copy
+        }
+        persist()
+    }
+
     func delete(id: UUID) {
         scenes.removeAll { $0.id == id }
         persist()

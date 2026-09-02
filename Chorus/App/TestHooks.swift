@@ -195,6 +195,20 @@ final class TestHooks {
             if let name = info["value"], !name.isEmpty {
                 appState.sceneStore.save(appState.automation.captureCurrentScene(named: name))
             }
+        case "cloudBackupNow":
+            appState.cloudBackup.backupNow()
+        case "cloudEnabled":
+            appState.settings.cloudBackupEnabled = info["value"] == "1"
+            appState.cloudBackup.updateActivation()
+        case "cloudTick":
+            appState.cloudBackup.tick()
+        case "cloudImport":
+            // value = 要匯入哪一台的 deviceName
+            appState.cloudBackup.refresh()
+            if let name = info["value"],
+               let file = appState.cloudBackup.files.first(where: { $0.deviceName == name }) {
+                appState.cloudBackup.importBackup(file)
+            }
         case "saveScene":
             // value = ControlScene JSON。captureScene 只擷取「現況」，
             // 測不出「套用後會變成什麼」——而限時場景的還原要驗的正是那個差別
@@ -680,6 +694,15 @@ final class TestHooks {
                         "unrestorable": outcome.unrestorable,
                     ] as [String: Any]
                 } as Any? ?? NSNull(),
+            ] as [String: Any],
+            "cloudBackup": [
+                "available": appState.cloudBackup.isAvailable,
+                "enabled": appState.settings.cloudBackupEnabled,
+                "files": appState.cloudBackup.files.map { file in
+                    ["device": file.deviceName, "isSelf": file.isSelf] as [String: Any]
+                },
+                "lastBackup": appState.cloudBackup.lastBackupDate
+                    .map { $0.timeIntervalSince1970 as Any } ?? NSNull(),
             ] as [String: Any],
             "scenes": appState.sceneStore.scenes.map { scene in
                 ["name": scene.name, "requests": scene.requests.count] as [String: Any]
