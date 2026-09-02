@@ -21,6 +21,9 @@ final class AutomationExecutor {
     private unowned let pairedPeers: PairedPeersStore
     private unowned let sessionManager: SyncSessionManager
     private unowned let scenes: SceneStore
+    /// 限時場景（B7-2）。**weak**：controller 反過來 unowned 持有 executor，
+    /// 兩邊都強持有就是一個環。組裝順序上 controller 也比 executor 晚建立。
+    weak var focus: FocusSessionController?
 
     init(
         settings: SettingsStore,
@@ -88,12 +91,68 @@ final class AutomationExecutor {
             audioManager.refreshBridges()
             return [ControlResult(target: "system", property: "refresh", value: .bool(true))]
         case .runScene:
+            // 帶時長＝限時場景（B7）：套用前先快照，時間到自動還原。
+            // 沒帶就是一般場景，行為與 B4-5 完全一樣
+            if let seconds = request.durationSeconds {
+                return try startFocus(sceneName: request.actionArgument, duration: seconds)
+            }
             return try runScene(named: request.actionArgument)
+        case .endScene:
+            return try endFocus()
         case .suggestOffsets:
             throw ControlError.unsupported("suggestOffsets 尚未接上顧問管線（B4-4）")
         case nil:
             throw ControlError.missingAction
         }
+    }
+
+    // MARK: - 限時場景（B7-2）
+
+    /// `perform runScene` ＋ 時長。回傳的是**套用結果 ＋ 這次限時的資訊**：
+    /// 呼叫端一次看完「套上了什麼、什麼時候會還原、什麼不會自己回來」。
+    private func startFocus(sceneName: String?, duration: Double) throws(ControlError) -> [ControlResult] {
+        guard let focus else {
+            throw ControlError.unsupported("限時場景尚未就緒")
+        }
+        let query = (sceneName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            throw ControlError.badValue("", hint: "perform runScene 需要場景名稱")
+        }
+        var results = try focus.start(sceneName: query, duration: duration)
+        guard let session = focus.session else { return results }
+        results.append(ControlResult(
+            target: "focus", property: "deadline",
+            value: .string(session.deadline.formatted(.iso8601))
+        ))
+        results.append(ControlResult(
+            target: "focus", property: "restorable",
+            value: .number(Double(session.snapshot.restorableCount))
+        ))
+        // 不可還原的項目逐條列出而不是給個數字：使用者要知道**哪一項**
+        // 不會自己回來，才決定要不要手動處理
+        for item in session.snapshot.unrestorable {
+            results.append(ControlResult(
+                target: "focus", property: "unrestorable", value: .string(item)
+            ))
+        }
+        return results
+    }
+
+    private func endFocus() throws(ControlError) -> [ControlResult] {
+        guard let focus, let session = focus.session else {
+            throw ControlError.unsupported("目前沒有限時場景")
+        }
+        let name = session.sceneName
+        focus.end(reason: .manual)
+        var results = [
+            ControlResult(target: "focus", property: "ended", value: .string(name)),
+            ControlResult(target: "focus", property: "restored",
+                          value: .number(Double(focus.lastOutcome?.restored ?? 0))),
+        ]
+        for item in focus.lastOutcome?.failed ?? [] {
+            results.append(ControlResult(target: "focus", property: "failed", value: .string(item)))
+        }
+        return results
     }
 
     // MARK: - 場景
@@ -470,7 +529,7 @@ final class AutomationExecutor {
                 result("system", .alertVolume, .number(alertVolume.volume)),
                 ControlResult(target: "system", property: "keepAwakeHolding",
                               value: .bool(keepAwake.isHolding)),
-            ]
+            ] + focusState()
         }
         switch property {
         case .keepAwake:
@@ -522,6 +581,21 @@ final class AutomationExecutor {
         default:
             throw ControlError.targetKindMismatch(property: property, target: "system")
         }
+    }
+
+    /// 進行中的限時場景，附在 `get system` 的列舉尾端（`/v1/state` 因此自動
+    /// 帶上）。**沒有 session 時一筆都不回**——回一串 null 只是讓呼叫端多寫
+    /// 一組判斷。
+    private func focusState() -> [ControlResult] {
+        guard let session = focus?.session else { return [] }
+        return [
+            ControlResult(target: "system", property: "focusScene",
+                          value: .string(session.sceneName)),
+            ControlResult(target: "system", property: "focusRemaining",
+                          value: .number((focus?.remainingSeconds ?? 0).rounded())),
+            ControlResult(target: "system", property: "focusDeadline",
+                          value: .string(session.deadline.formatted(.iso8601))),
+        ]
     }
 
     // MARK: - 目標解析

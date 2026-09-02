@@ -36,11 +36,29 @@ struct ChorusCLI {
             case "listen":
                 try await Client(config: config).listen()
             case "scene":
+                // `--end` 提前結束進行中的限時場景（等同 perform endScene）
+                if arguments.removeFlag("--end") {
+                    try await send(
+                        ControlRequest(verb: .perform, target: .system, action: .endScene),
+                        config: config, json: jsonOutput
+                    )
+                    break
+                }
+                // `--for <時長>` ＝ 限時場景：套用前先快照，時間到自動還原
+                var duration: String?
+                if let index = arguments.firstIndex(of: "--for") {
+                    guard index + 1 < arguments.count else {
+                        fail("「--for」少了時長，例如 25m")
+                    }
+                    duration = arguments[index + 1]
+                    arguments.removeSubrange(index...(index + 1))
+                }
                 guard let name = arguments.first else {
-                    fail("用法：chorus scene <名稱>")
+                    fail("用法：chorus scene <名稱> [--for 25m]，或 chorus scene --end")
                 }
                 try await send(
-                    ControlRequest(verb: .perform, target: .system, value: name, action: .runScene),
+                    ControlRequest(verb: .perform, target: .system, value: name,
+                                   action: .runScene, duration: duration),
                     config: config, json: jsonOutput
                 )
             case "get", "set", "toggle":
@@ -223,7 +241,8 @@ struct ChorusCLI {
           chorus get    [目標] [--<屬性>]
           chorus toggle [目標] --<屬性>
           chorus perform <動作> [引數]
-          chorus scene  <名稱>
+          chorus scene  <名稱> [--for 25m]
+          chorus scene  --end
           chorus scenes
           chorus state
           chorus listen
@@ -255,6 +274,12 @@ struct ChorusCLI {
           chorus toggle --app-like Music --mute
           chorus set --peer 客廳 --app com.spotify.client --mute on
           chorus listen
+          chorus scene 工作 --for 25m
+          chorus scene --end
+
+        限時場景（`--for`）：套用前先記住場景會動到的每一個值，時間到
+        自動放回去。提前結束（`--end`）與結束 Chorus 走同一條還原路。
+        `chorus state` 會列出 focusScene／focusRemaining／focusDeadline。
 
         介面需在 Chorus 設定頁「自動化介面」開啟。token 由 App 寫入
         ~/.config/chorus/config.json（權限 600），亦可用 CHORUS_TOKEN 覆寫。

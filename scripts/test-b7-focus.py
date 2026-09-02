@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""B7-1（限時場景：快照 → 套用 → 自動還原）自動化回歸，單機段。
+"""B7 限時場景（專注模式）自動化回歸，單機段。
+
+涵蓋 B7-1（快照 → 套用 → 自動還原、崩潰後接續）與 B7-2（動詞層的時長與
+endScene、`get system` 的三筆、SSE 事件、CLI 的 --for／--end）。
 
 走 `--fake-taps`：不需要權限、不碰真硬體，也**不動使用者的螢幕或音訊路由**。
 驗的是 executor 那條真路徑（讀現值 → 展開實體 → 還原），controller 的生命
@@ -12,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -20,9 +24,14 @@ DERIVED = os.path.expanduser("~/Library/Developer/Xcode/DerivedData")
 WORK = os.path.join(REPO, ".b7-work")
 NOTIFY = os.path.join(WORK, "notify")
 BUNDLE = "com.apple.Music"
+PORT = 55783  # 錯開正式的 55780 與 B4 的 55781
+# CLI 設定檔**不分 instance**（ControlHTTPServer.configURL 是固定路徑），
+# 開 server 會覆蓋、關 server 會刪掉——測試不該弄丟使用者自己的那份
+CLI_CONFIG = os.path.expanduser("~/.config/chorus/config.json")
 
 proc = None
 results = []
+saved_cli_config = None
 
 
 def find_debug_app():
@@ -90,6 +99,17 @@ def gain_is(data, expected):
     return value is not None and abs(value - expected) < 1e-6
 
 
+def control(request):
+    """送出一個 ControlRequest 走完整動詞層（驗證 → 執行），回 lastControl。"""
+    notify("control", json.dumps(request, ensure_ascii=False, sort_keys=True))
+    time.sleep(1.6)  # state dump 每秒寫一次
+    return (dump() or {}).get("lastControl")
+
+
+def result_properties(response):
+    return {r.get("property") for r in (response or {}).get("results") or []}
+
+
 def save_scene(name, requests):
     notify("saveScene", json.dumps(
         {"id": str(uuid.uuid4()), "name": name, "requests": requests},
@@ -98,6 +118,11 @@ def save_scene(name, requests):
 
 
 def cleanup():
+    if saved_cli_config is not None:
+        os.makedirs(os.path.dirname(CLI_CONFIG), exist_ok=True)
+        with open(CLI_CONFIG, "w") as handle:
+            handle.write(saved_cli_config)
+        os.chmod(CLI_CONFIG, 0o600)
     if proc:
         proc.terminate()
         try:
@@ -118,7 +143,7 @@ def main():
     time.sleep(1)
 
     app = find_debug_app()
-    print("\n=== B7-1：限時場景（快照 → 套用 → 自動還原，--fake-taps）===\n", flush=True)
+    print("\n=== B7 限時場景：快照 → 套用 → 自動還原（--fake-taps）===\n", flush=True)
     proc = subprocess.Popen(
         [app, "--instance", "A", "--fake-als", "--fake-taps",
          "--state-dump", os.path.join(WORK, "dump-A.json")],
@@ -210,6 +235,119 @@ def main():
     time.sleep(1.6)
     error = ((dump() or {}).get("lastControl") or {}).get("error") or {}
     record("時長為 0 → badValue", error.get("code") == "badValue", f"{error.get('code')}")
+
+    print("\n[5] 動詞層：runScene ＋ 時長／endScene／get system", flush=True)
+    response = control({"verb": "perform", "target": "system", "action": "runScene",
+                        "value": "專注", "duration": "25m"})
+    props = result_properties(response)
+    record("perform runScene ＋ duration → 限時場景啟動",
+           bool(response and response.get("ok")) and {"deadline", "restorable"} <= props,
+           f"回傳欄位 {sorted(p for p in props if p)}")
+
+    response = control({"verb": "get", "target": "system"})
+    values = {r.get("property"): r.get("value") for r in (response or {}).get("results") or []}
+    record("get system 帶出 focusScene／focusRemaining／focusDeadline",
+           {"focusScene", "focusRemaining", "focusDeadline"} <= set(values),
+           f"scene={values.get('focusScene')} remaining={values.get('focusRemaining')}")
+
+    response = control({"verb": "perform", "target": "system", "action": "endScene"})
+    record("perform endScene → 提前結束", bool(response and response.get("ok")))
+    ok, _ = wait_for(lambda d: gain_is(d, 2.0), 10)
+    record("endScene 走的是同一條還原路", ok)
+
+    response = control({"verb": "get", "target": "system"})
+    values = {r.get("property") for r in (response or {}).get("results") or []}
+    record("沒有 session 時 get system 不回 focus 三筆（不回一串 null）",
+           "focusScene" not in values)
+
+    response = control({"verb": "perform", "target": "system", "action": "endScene"})
+    record("沒有進行中的限時場景時 endScene → unsupported",
+           ((response or {}).get("error") or {}).get("code") == "unsupported",
+           ((response or {}).get("error") or {}).get("message", ""))
+
+    response = control({"verb": "set", "target": "allDisplays", "property": "brightness",
+                        "value": "50%", "duration": "25m"})
+    record("時長帶在 set 上 → badValue（不靜靜忽略，也沒真的去設亮度）",
+           ((response or {}).get("error") or {}).get("code") == "badValue")
+
+    print("\n[6] HTTP／SSE 與 CLI", flush=True)
+    global saved_cli_config
+    if os.path.exists(CLI_CONFIG):
+        with open(CLI_CONFIG) as handle:
+            saved_cli_config = handle.read()
+    notify("automationServer", f"1:{PORT}")
+    ok, state = wait_for(lambda d: d.get("automationServer", {}).get("running") is True, 15)
+    token = (state or {}).get("automationServer", {}).get("token")
+    record("HTTP server 啟動", ok and bool(token),
+           (state or {}).get("automationServer", {}).get("lastError") or "")
+
+    if ok and token:
+        base = f"http://127.0.0.1:{PORT}"
+        auth = ["-H", f"Authorization: Bearer {token}"]
+
+        # SSE：先訂閱再觸發，收到 focus 事件才算
+        sse = subprocess.Popen(["curl", "-sN", "--max-time", "25"] + auth + [f"{base}/v1/events"],
+                               stdout=subprocess.PIPE, text=True)
+        chunks = []
+
+        def drain(pipe):
+            for line in iter(pipe.readline, ""):
+                chunks.append(line)
+
+        threading.Thread(target=drain, args=(sse.stdout,), daemon=True).start()
+        time.sleep(1.5)
+
+        def saw(phase, timeout=10):
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if any('"kind":"focus"' in c and f'"phase":"{phase}"' in c for c in chunks):
+                    return True
+                time.sleep(0.3)
+            return False
+
+        notify("focusStart", "專注|600")
+        record("SSE 收到 focus started", saw("started"))
+        notify("focusEnd")
+        record("SSE 收到 focus ended（帶 reason 與還原項數）",
+               saw("ended") and any('"reason":"manual"' in c for c in chunks))
+        sse.terminate()
+
+        cli = os.path.join(os.path.dirname(os.path.dirname(app)), "SharedSupport", "chorus")
+        env = dict(os.environ, CHORUS_TOKEN=token, CHORUS_PORT=str(PORT))
+
+        def run_cli(args):
+            return subprocess.run([cli] + args, capture_output=True, text=True, env=env, timeout=15)
+
+        if os.path.exists(cli):
+            out = run_cli(["scene", "專注", "--for", "25m"])
+            record("chorus scene 專注 --for 25m",
+                   out.returncode == 0 and "deadline" in out.stdout,
+                   (out.stdout.strip() or out.stderr.strip())[:70])
+            ok, _ = wait_for(lambda d: gain_is(d, 0.2), 10)
+            record("CLI 觸發的限時場景真的套用了", ok)
+
+            out = run_cli(["state"])
+            record("chorus state 看得到 focusScene",
+                   out.returncode == 0 and "focusScene" in out.stdout)
+
+            out = run_cli(["scene", "--end"])
+            record("chorus scene --end 提前結束", out.returncode == 0,
+                   (out.stdout.strip() or out.stderr.strip())[:70])
+            ok, _ = wait_for(lambda d: gain_is(d, 2.0), 10)
+            record("CLI 結束後還原回 2.0", ok)
+
+            out = run_cli(["scene", "--end"])
+            record("沒有限時場景時 chorus scene --end → 非零結束碼",
+                   out.returncode != 0, out.stderr.strip()[:60])
+
+            out = run_cli(["help"])
+            record("chorus help 說明 --for 與 --end",
+                   out.returncode == 0 and "--for" in out.stdout and "--end" in out.stdout)
+        else:
+            record("找得到內嵌 CLI", False, cli)
+
+    notify("automationServer", "0")
+    time.sleep(1.5)
 
     notify("appReset", BUNDLE)
     notify("tapEngine", "0")

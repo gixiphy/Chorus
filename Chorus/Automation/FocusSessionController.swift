@@ -47,6 +47,10 @@ final class FocusSessionController {
     /// 上一次結束的結果，供 UI 顯示「已還原 N 項」。
     private(set) var lastOutcome: FocusOutcome?
 
+    /// SSE 事件流（`GET /v1/events` 與 `chorus listen`）。組裝順序上 hub 比
+    /// controller 晚建立，所以是後設的——沒接上時只是不發事件，不影響還原。
+    @ObservationIgnored var events: AutomationEventHub?
+
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private unowned let executor: any FocusExecuting
     @ObservationIgnored private unowned let scenes: SceneStore
@@ -110,6 +114,12 @@ final class FocusSessionController {
         persist()
         refreshRemaining()
         startTicking()
+        events?.publish(kind: "focus", payload: [
+            "phase": "started",
+            "scene": scene.name,
+            "deadline": session?.deadline.formatted(.iso8601) ?? "",
+            "restorable": snapshot.restorableCount,
+        ])
         return applied
     }
 
@@ -134,6 +144,15 @@ final class FocusSessionController {
             unrestorable: session.snapshot.unrestorable,
             endedAt: currentDate
         )
+        // `unrestored` 把兩種「沒回來」合成一份：訂閱者要的是「哪些東西
+        // 現在還停在場景狀態」，不需要分辨那是還原失敗還是從一開始就還不回來
+        events?.publish(kind: "focus", payload: [
+            "phase": "ended",
+            "scene": session.sceneName,
+            "reason": reason.rawValue,
+            "restored": outcome.restored,
+            "unrestored": outcome.failed + session.snapshot.unrestorable,
+        ])
     }
 
     /// App 要結束了。與 B3「結束 Chorus 一定還原」同態度：使用者不該因為

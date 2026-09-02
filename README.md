@@ -153,11 +153,18 @@ chorus set --brightness 50%
 chorus set --display-like DELL --brightness +10%
 chorus set --app com.apple.Music --volume 40%
 chorus scene 電影
+chorus scene 工作 --for 25m # 限時場景：時間到自動還原
+chorus scene --end          # 提前結束並還原
 chorus listen | jq          # 狀態變動的事件流
 ```
 
 **場景**：一組具名的動作（「電影」＝全部螢幕 30% ＋ 輸出音量 20%）。
 選單列、`chorus scene <名稱>` 與 HTTP 觸發的是同一份。
+
+**限時場景**（`--for`）：套用前先記住這個場景會動到的每一個值，時間到
+自動放回去；提前結束與結束 Chorus 走同一條還原路。涵蓋範圍由場景內容
+決定，所以「只還原我們動過的」——這 25 分鐘內你手動調的其他東西不會被
+碰。輸入源切換讀不回原值（動作型 VCP），會誠實列在「不會自動還原」裡。
 
 ---
 

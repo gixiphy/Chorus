@@ -165,3 +165,84 @@ struct FocusSessionTests {
         #expect(try roundTrip(0.0, .unitInterval) == .absolute(0.0))
     }
 }
+
+@Suite("限時場景的動詞層（B7-2）")
+struct FocusVerbLayerTests {
+    private func runScene(_ name: String, duration: String?) -> ControlRequest {
+        ControlRequest(verb: .perform, target: .system, value: name,
+                       action: .runScene, duration: duration)
+    }
+
+    @Test("時長解析成秒：25m／1h／90s／裸數字")
+    func parsesDuration() throws {
+        #expect(try ControlRequestValidator.validate(runScene("工作", duration: "25m"))
+            .durationSeconds == 1_500)
+        #expect(try ControlRequestValidator.validate(runScene("工作", duration: "1h"))
+            .durationSeconds == 3_600)
+        #expect(try ControlRequestValidator.validate(runScene("工作", duration: "90s"))
+            .durationSeconds == 90)
+        #expect(try ControlRequestValidator.validate(runScene("工作", duration: "600"))
+            .durationSeconds == 600)
+    }
+
+    @Test("沒帶時長＝一般場景，套用後不會自動還原")
+    func noDurationIsPlainScene() throws {
+        #expect(try ControlRequestValidator.validate(runScene("工作", duration: nil))
+            .durationSeconds == nil)
+    }
+
+    @Test("off／forever／0 都不是限時場景——要一個會到期的時刻")
+    func rejectsNonExpiringDurations() {
+        for raw in ["off", "forever", "0", "∞", "無限期"] {
+            #expect(throws: ControlError.self) {
+                try ControlRequestValidator.validate(runScene("工作", duration: raw))
+            }
+        }
+    }
+
+    @Test("看不懂的時長報錯，不當成沒帶")
+    func rejectsGarbage() {
+        #expect(throws: ControlError.self) {
+            try ControlRequestValidator.validate(runScene("工作", duration: "下午"))
+        }
+    }
+
+    @Test("時長只配 perform runScene——帶錯地方一律報錯而不是靜靜忽略")
+    func durationOnlyOnRunScene() {
+        // 使用者以為設了 25 分鐘、實際上沒有，是最糟的失敗形狀
+        #expect(throws: ControlError.self) {
+            try ControlRequestValidator.validate(ControlRequest(
+                verb: .set, target: .allDisplays, property: .brightness,
+                value: "50%", duration: "25m"
+            ))
+        }
+        #expect(throws: ControlError.self) {
+            try ControlRequestValidator.validate(ControlRequest(
+                verb: .perform, target: .system, action: .restoreAllPower, duration: "25m"
+            ))
+        }
+    }
+
+    @Test("endScene 是合法動作，不需要引數")
+    func endSceneValidates() throws {
+        let validated = try ControlRequestValidator.validate(
+            ControlRequest(verb: .perform, target: .system, action: .endScene)
+        )
+        #expect(validated.action == .endScene)
+        #expect(validated.durationSeconds == nil)
+    }
+
+    @Test("JSON 往返含時長；舊 client 沒有這個欄位仍解得開（wire 相容）")
+    func codableRoundTrip() throws {
+        let original = runScene("工作", duration: "25m")
+        let data = try JSONEncoder().encode(original)
+        #expect(try JSONDecoder().decode(ControlRequest.self, from: data) == original)
+
+        let legacy = """
+        {"verb":"perform","target":"system","action":"runScene","value":"工作"}
+        """
+        let decoded = try JSONDecoder().decode(ControlRequest.self, from: Data(legacy.utf8))
+        #expect(decoded.duration == nil)
+        #expect(try ControlRequestValidator.validate(decoded).durationSeconds == nil)
+    }
+}

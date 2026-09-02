@@ -24,4 +24,6 @@ public enum ControlAction: String, Codable, Sendable, CaseIterable, Hashable {
     case refresh
     /// 跑光環境顧問管線，回建議的 per-display offset。
     case suggestOffsets
+    /// 提前結束進行中的限時場景並還原（B7）。走的是與倒數走完完全同一條路。
+    case endScene
 }

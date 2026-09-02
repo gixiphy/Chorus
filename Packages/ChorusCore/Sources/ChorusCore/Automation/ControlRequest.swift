@@ -12,6 +12,17 @@ public struct ControlRequest: Codable, Sendable, Equatable, Hashable {
     public var action: ControlAction?
     /// 已配對裝置的名稱（片段比對）。
     public var peer: String?
+    /// 限時場景的時長（B7）：`25m`／`1h`／`90s`／裸秒數。
+    ///
+    /// **只有 `perform runScene` 可帶**——場景 ＋ 時長 ＝ 專注模式；省略就是
+    /// 一般場景，套用後不會自動還原。
+    ///
+    /// 為什麼是 `runScene` 的修飾語而不是另一個 action：時長修飾的是「怎麼
+    /// 套用這個場景」，不是另一件事。第二步的 Focus Filter 也要走同一條，
+    /// 一個 action 兩種 shape 比兩個 action 好維護。
+    ///
+    /// Optional 且加在尾端，舊的 client 不送這個欄位——wire 相容。
+    public var duration: String?
 
     public init(
         verb: ControlVerb,
@@ -19,7 +30,8 @@ public struct ControlRequest: Codable, Sendable, Equatable, Hashable {
         property: ControlProperty? = nil,
         value: String? = nil,
         action: ControlAction? = nil,
-        peer: String? = nil
+        peer: String? = nil,
+        duration: String? = nil
     ) {
         self.verb = verb
         self.target = target
@@ -27,6 +39,7 @@ public struct ControlRequest: Codable, Sendable, Equatable, Hashable {
         self.value = value
         self.action = action
         self.peer = peer
+        self.duration = duration
     }
 }
 
@@ -40,12 +53,15 @@ public struct ValidatedControlRequest: Sendable, Equatable {
     public let action: ControlAction?
     public let actionArgument: String?
     public let peer: String?
+    /// 已解析的限時場景時長（秒，恆 > 0）。`nil` ＝ 一般場景。
+    public let durationSeconds: Double?
 }
 
 public enum ControlRequestValidator {
     /// 純驗證：只看語法與相容性矩陣，**不碰任何硬體、不解析成實體**。
     /// `displayWithMouse` 在這裡永遠合法——它找不找得到螢幕是執行期的事。
     public static func validate(_ request: ControlRequest) throws(ControlError) -> ValidatedControlRequest {
+        let duration = try validateDuration(request)
         switch request.verb {
         case .perform:
             guard let action = request.action else { throw ControlError.missingAction }
@@ -56,7 +72,8 @@ public enum ControlRequestValidator {
                 value: nil,
                 action: action,
                 actionArgument: request.value,
-                peer: request.peer
+                peer: request.peer,
+                durationSeconds: duration
             )
 
         case .get:
@@ -71,7 +88,8 @@ public enum ControlRequestValidator {
                 value: nil,
                 action: nil,
                 actionArgument: nil,
-                peer: request.peer
+                peer: request.peer,
+                durationSeconds: nil
             )
 
         case .toggle:
@@ -86,7 +104,8 @@ public enum ControlRequestValidator {
                 value: nil,
                 action: nil,
                 actionArgument: nil,
-                peer: request.peer
+                peer: request.peer,
+                durationSeconds: nil
             )
 
         case .set:
@@ -105,9 +124,29 @@ public enum ControlRequestValidator {
                 value: value,
                 action: nil,
                 actionArgument: nil,
-                peer: request.peer
+                peer: request.peer,
+                durationSeconds: nil
             )
         }
+    }
+
+    /// 時長的驗證。**時長只配 `perform runScene`**——帶在別的地方一律報錯
+    /// 而不是靜靜忽略：使用者以為設了 25 分鐘、實際上沒有，是最糟的失敗形狀。
+    private static func validateDuration(_ request: ControlRequest) throws(ControlError) -> Double? {
+        guard let raw = request.duration else { return nil }
+        guard request.verb == .perform, request.action == .runScene else {
+            throw ControlError.badValue(
+                raw, hint: "時長只能配 perform runScene（場景 ＋ 時長 ＝ 限時場景）"
+            )
+        }
+        // `off`（0）與 `forever`（−1）在收值規則裡都合法，但限時場景需要一個
+        // 會到期的時刻——「永遠不還原」就是一般場景，不該用時長表達
+        guard case let .duration(seconds) = try ControlValue.parse(raw, kind: .duration),
+              seconds > 0
+        else {
+            throw ControlError.badValue(raw, hint: "限時場景需要正的時長，例如 25m、1h、90s")
+        }
+        return seconds
     }
 
     private static func check(

@@ -154,6 +154,7 @@ final class AppState {
 
         focus = FocusSessionController(settings: settings, executor: automation, scenes: sceneStore)
         AppStateRegistry.focus = focus
+        automation.focus = focus
 
         automationEvents = AutomationEventHub()
         automationServer = ControlHTTPServer(
@@ -165,6 +166,7 @@ final class AppState {
         )
         coordinator.automationEvents = automationEvents
         displayManager.automationEvents = automationEvents
+        focus.events = automationEvents
 
         // 綁定型的兩個模式是唯一跨重啟保留的（設定上互斥，螢幕優先）
         if let uuid = settings.keepAwakeDisplayUUID {
