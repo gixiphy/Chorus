@@ -42,12 +42,21 @@ struct FocusSessionControllerTests {
         func resetLog() { calls.removeAll() }
     }
 
+    @MainActor
+    final class FakeNotifier: FocusNotifying {
+        var authorizationResult = true
+        private(set) var notified: [FocusOutcome] = []
+        func requestAuthorization() async -> Bool { authorizationResult }
+        func notifyEnded(_ outcome: FocusOutcome) { notified.append(outcome) }
+    }
+
     private struct Fixture {
         let controller: FocusSessionController
         let executor: FakeExecutor
         let scenes: SceneStore
         let settings: SettingsStore
         let defaults: UserDefaults
+        let notifier: FakeNotifier
     }
 
     private func makeFixture(sceneNames: [String] = ["工作"]) -> Fixture {
@@ -65,8 +74,11 @@ struct FocusSessionControllerTests {
             settings: settings, executor: executor, scenes: scenes,
             now: { Date(timeIntervalSince1970: 1_000) }
         )
+        let notifier = FakeNotifier()
+        controller.notifier = notifier
         return Fixture(controller: controller, executor: executor,
-                       scenes: scenes, settings: settings, defaults: defaults)
+                       scenes: scenes, settings: settings, defaults: defaults,
+                       notifier: notifier)
     }
 
     // MARK: - 開始
@@ -250,6 +262,82 @@ struct FocusSessionControllerTests {
 
         #expect(f.controller.lastOutcome?.unrestorable == ["ASUS VS207 的 input"])
         #expect(f.controller.lastOutcome?.restored == 0)
+    }
+
+    // MARK: - 通知與記憶（B7-3）
+
+    @Test("通知開關預設關：到期不發")
+    func noNotificationByDefault() throws {
+        let f = makeFixture()
+        #expect(!f.settings.focusNotifyOnEnd)
+        try f.controller.start(sceneName: "工作", duration: 60)
+        f.controller.advanceClock(by: 60)
+        #expect(f.notifier.notified.isEmpty)
+    }
+
+    @Test("開了通知：倒數走完會發")
+    func notifiesOnElapsed() throws {
+        let f = makeFixture()
+        f.settings.focusNotifyOnEnd = true
+        try f.controller.start(sceneName: "工作", duration: 60)
+        f.controller.advanceClock(by: 60)
+        #expect(f.notifier.notified.count == 1)
+        #expect(f.notifier.notified.first?.reason == .elapsed)
+    }
+
+    @Test("手動結束與被取代不發通知——那是使用者當下的動作，選單就看得到")
+    func doesNotNotifyOnUserDrivenEnds() throws {
+        let f = makeFixture(sceneNames: ["工作", "會議"])
+        f.settings.focusNotifyOnEnd = true
+
+        try f.controller.start(sceneName: "工作", duration: 600)
+        f.controller.end(reason: .manual)
+        #expect(f.notifier.notified.isEmpty)
+
+        try f.controller.start(sceneName: "工作", duration: 600)
+        try f.controller.start(sceneName: "會議", duration: 600)  // replaced
+        #expect(f.notifier.notified.isEmpty)
+
+        f.controller.shutdown()  // quit
+        #expect(f.notifier.notified.isEmpty)
+    }
+
+    @Test("啟動時才還原的那一則會通知——使用者不在場時發生的事要講一次")
+    func notifiesOnRelaunch() throws {
+        let f = makeFixture()
+        f.settings.focusNotifyOnEnd = true
+        f.settings.focusSession = FocusSession(
+            sceneName: "工作",
+            startedAt: Date(timeIntervalSince1970: 0),
+            deadline: Date(timeIntervalSince1970: 500),
+            snapshot: f.executor.snapshotToReturn
+        )
+        f.controller.resumeIfNeeded()
+        #expect(f.notifier.notified.first?.reason == .relaunch)
+    }
+
+    @Test("記住上次用過的時長（選單子選單的打勾靠它）")
+    func remembersLastDuration() throws {
+        let f = makeFixture()
+        try f.controller.start(sceneName: "工作", duration: 2_700)
+        #expect(f.settings.focusLastDuration == 2_700)
+        // 跨 store 重建仍在
+        #expect(SettingsStore(defaults: f.defaults).focusLastDuration == 2_700)
+    }
+
+    @Test("通知文案：全部還原 vs 有項目沒回來")
+    func notificationCopy() {
+        let clean = FocusOutcome(sceneName: "工作", reason: .elapsed, restored: 6,
+                                 failed: [], unrestorable: [], endedAt: .now)
+        #expect(FocusNotifier.body(for: clean) == "已還原 6 項")
+        #expect(FocusNotifier.title(for: clean) == "「工作」結束")
+
+        // 兩種「沒回來」在通知裡合成一個數字（選單那一行才分開講）
+        let partial = FocusOutcome(sceneName: "工作", reason: .relaunch, restored: 5,
+                                   failed: ["deviceUID:X：找不到"],
+                                   unrestorable: ["ASUS 的 input"], endedAt: .now)
+        #expect(FocusNotifier.body(for: partial) == "已還原 5 項，2 項未還原")
+        #expect(FocusNotifier.title(for: partial) == "「工作」已於啟動時還原")
     }
 
     @Test("還原失敗的項目照實列出（裝置這 25 分鐘內被拔掉了）")

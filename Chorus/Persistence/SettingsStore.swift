@@ -65,6 +65,8 @@ final class SettingsStore {
         static let automationServer = "chorus.automation.serverEnabled"
         static let automationPort = "chorus.automation.serverPort"
         static let focusSession = "chorus.focus.session"
+        static let focusLastDuration = "chorus.focus.lastDuration"
+        static let focusNotifyOnEnd = "chorus.focus.notifyOnEnd"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -354,6 +356,19 @@ final class SettingsStore {
     /// 與 `effectPendingLoad` 同一個理由付 `synchronize()` 的代價：
     /// defaults 平常是先送 cfprefsd 再非同步寫檔，而我們防的正是「App 被
     /// 帶走」。start 是使用者手動觸發的低頻事件，一次同步寫很划算。
+    /// 上次用過的限時場景時長（秒）。**全域一個，不逐場景**——逐場景的預設
+    /// 時長是「有需求再加」的東西；一個記憶已經足以讓子選單的打勾對上直覺。
+    var focusLastDuration: Double {
+        didSet { defaults.set(focusLastDuration, forKey: Key.focusLastDuration) }
+    }
+
+    /// 限時場景結束時發系統通知。**預設關**（PLAN §8-6 的權限功能紀律：
+    /// 要用才問權限）。關著時結束仍看得出來——選單列徽章、選單那一行、
+    /// SSE 事件三處都會講。
+    var focusNotifyOnEnd: Bool {
+        didSet { defaults.set(focusNotifyOnEnd, forKey: Key.focusNotifyOnEnd) }
+    }
+
     var focusSession: FocusSession? {
         didSet {
             if let focusSession, let data = try? JSONEncoder().encode(focusSession) {
@@ -438,6 +453,8 @@ final class SettingsStore {
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)
+        focusLastDuration = defaults.object(forKey: Key.focusLastDuration) as? Double ?? 1_500
+        focusNotifyOnEnd = defaults.bool(forKey: Key.focusNotifyOnEnd)
         if let data = defaults.data(forKey: Key.focusSession) {
             // 解不開就當作沒有——舊格式的殘留不該讓 App 起不來，
             // 而還原一份讀不懂的快照比不還原更危險

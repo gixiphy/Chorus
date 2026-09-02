@@ -45,39 +45,47 @@ struct StatusIconTests {
 
 @Suite("選單列 badge：多個倒數（B7-1）")
 struct StatusIconBadgeTests {
-    @Test("兩個倒數同時在跑時顯示較早到期的那個")
+    @Test("兩個倒數同時在跑時顯示較早到期的那個，且說得出那是誰的時間")
     func soonestWins() {
         #expect(StatusIcon.badge(
             keepAwakeRemaining: 3_600, keepAwakeHolding: true, focusRemaining: 1_500
-        ) == "25:00")
+        ) == StatusBadge(text: "25:00", kind: .focus))
         #expect(StatusIcon.badge(
             keepAwakeRemaining: 60, keepAwakeHolding: true, focusRemaining: 1_500
-        ) == "1:00")
+        ) == StatusBadge(text: "1:00", kind: .keepAwake))
+    }
+
+    @Test("同時到期算防睡眠的——它是先存在的那個功能")
+    func tieGoesToKeepAwake() {
+        #expect(StatusIcon.badge(
+            keepAwakeRemaining: 600, keepAwakeHolding: true, focusRemaining: 600
+        )?.kind == .keepAwake)
     }
 
     @Test("只有一個倒數時就是它")
     func singleCountdown() {
         #expect(StatusIcon.badge(
             keepAwakeRemaining: nil, keepAwakeHolding: false, focusRemaining: 90
-        ) == "1:30")
+        ) == StatusBadge(text: "1:30", kind: .focus))
         #expect(StatusIcon.badge(
             keepAwakeRemaining: 90, keepAwakeHolding: true, focusRemaining: nil
-        ) == "1:30")
+        ) == StatusBadge(text: "1:30", kind: .keepAwake))
     }
 
     @Test("∞ 讓位給數字——有具體倒數時不該被沒有數字的符號蓋掉")
     func infinityYieldsToNumber() {
-        // 無限期防睡眠（沒有剩餘秒數）＋專注倒數
+        // 無限期防睡眠（沒有剩餘秒數）＋專注倒數：畫的是專注的數字，
+        // 而 kind 必須跟著改，否則無障礙標籤會把它唸成「螢幕長亮剩餘」
         #expect(StatusIcon.badge(
             keepAwakeRemaining: nil, keepAwakeHolding: true, focusRemaining: 300
-        ) == "5:00")
+        ) == StatusBadge(text: "5:00", kind: .focus))
     }
 
     @Test("沒有任何倒數：持有中回 ∞，否則不畫這一格")
     func infinityAndEmpty() {
         #expect(StatusIcon.badge(
             keepAwakeRemaining: nil, keepAwakeHolding: true, focusRemaining: nil
-        ) == "∞")
+        ) == StatusBadge(text: "∞", kind: .keepAwake))
         #expect(StatusIcon.badge(
             keepAwakeRemaining: nil, keepAwakeHolding: false, focusRemaining: nil
         ) == nil)

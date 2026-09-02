@@ -14,6 +14,16 @@ public enum FocusEndReason: String, Codable, Sendable, Equatable, CaseIterable {
     case relaunch
 }
 
+public extension FocusEndReason {
+    /// 值得發系統通知的只有「使用者可能不在看」的兩種。
+    ///
+    /// 手動結束與被另一個限時場景取代都是使用者**當下的動作**，選單上立刻
+    /// 看得到，再跳一則通知只是吵；結束 Chorus 更不必——App 正在關。
+    var deservesNotification: Bool {
+        self == .elapsed || self == .relaunch
+    }
+}
+
 /// 套用限時場景**之前**的原值。
 ///
 /// 涵蓋範圍由**場景內容**決定，不是固定清單。固定清單會漏——場景可以含

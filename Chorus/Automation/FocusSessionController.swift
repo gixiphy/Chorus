@@ -51,6 +51,9 @@ final class FocusSessionController {
     /// controller 晚建立，所以是後設的——沒接上時只是不發事件，不影響還原。
     @ObservationIgnored var events: AutomationEventHub?
 
+    /// 結束時的系統通知（B7-3）。預設關，開了才發——見 `settings.focusNotifyOnEnd`。
+    @ObservationIgnored var notifier: (any FocusNotifying)?
+
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private unowned let executor: any FocusExecuting
     @ObservationIgnored private unowned let scenes: SceneStore
@@ -111,6 +114,7 @@ final class FocusSessionController {
             snapshot: snapshot,
             applied: applied
         )
+        settings.focusLastDuration = duration
         persist()
         refreshRemaining()
         startTicking()
@@ -146,6 +150,11 @@ final class FocusSessionController {
         )
         // `unrestored` 把兩種「沒回來」合成一份：訂閱者要的是「哪些東西
         // 現在還停在場景狀態」，不需要分辨那是還原失敗還是從一開始就還不回來
+        // 通知只發「使用者可能不在看」的那兩種結束（見 deservesNotification）。
+        // 開關預設關；關著時選單列徽章、選單那一行與 SSE 事件仍看得出來
+        if settings.focusNotifyOnEnd, reason.deservesNotification, let lastOutcome {
+            notifier?.notifyEnded(lastOutcome)
+        }
         events?.publish(kind: "focus", payload: [
             "phase": "ended",
             "scene": session.sceneName,
@@ -248,6 +257,11 @@ final class FocusSessionController {
             refreshRemaining()
             startTicking()
         }
+    }
+
+    /// 收掉「上次結束」那一行（選單上的 ✕）。
+    func dismissLastOutcome() {
+        lastOutcome = nil
     }
 
     #if DEBUG

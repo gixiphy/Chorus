@@ -8,8 +8,8 @@ import ChorusCore
 /// 不必自己追蹤 appearance。
 ///
 /// 版面：外環（開口朝下的 270° gauge）＝主要顯示器亮度；中心三根聲波柱
-/// ＝預設輸出音量，靜音時塌成一條橫線；右側文字＝防睡眠倒數
-/// （沒在防睡眠就不畫，圖示也就窄一格）。
+/// ＝預設輸出音量，靜音時塌成一條橫線；右側文字＝防睡眠或限時場景的倒數
+/// （兩個都沒在跑就不畫，圖示也就窄一格）。
 enum StatusIconRenderer {
     /// 選單列圖示的標準邊長。NSStatusItem 高 22pt，18pt 是留白後的可用範圍。
     static let side: CGFloat = 18
@@ -33,7 +33,7 @@ enum StatusIconRenderer {
     }
 
     private static func render(_ state: StatusIconState) -> NSImage {
-        let badgeWidth = state.badge.map { reservedWidth(forBadge: $0) } ?? 0
+        let badgeWidth = state.badge.map { reservedWidth(forBadge: $0.text) } ?? 0
         let totalWidth = side + (badgeWidth > 0 ? badgeGap + badgeWidth : 0)
         // drawingHandler 會在每個 scale 各呼叫一次，換螢幕（1x↔2x）時自動重畫
         let image = NSImage(size: NSSize(width: totalWidth, height: side), flipped: false) { _ in
@@ -57,7 +57,7 @@ enum StatusIconRenderer {
         drawVolumeBars(state.volume, muted: state.isMuted, center: center, in: context)
 
         if let badge = state.badge, badgeWidth > 0 {
-            draw(badge: badge, in: CGRect(x: side + badgeGap, y: 0, width: badgeWidth, height: side))
+            draw(badge: badge.text, in: CGRect(x: side + badgeGap, y: 0, width: badgeWidth, height: side))
         }
     }
 
@@ -147,7 +147,13 @@ enum StatusIconRenderer {
             parts.append("音量 \(Int((volume * 100).rounded()))%")
         }
         if let badge = state.badge {
-            parts.append(badge == "∞" ? "螢幕長亮中" : "螢幕長亮剩餘 \(badge)")
+            // 唸出來要說對是誰的時間：同一串數字，防睡眠與限時場景的意思差很多
+            switch badge.kind {
+            case .keepAwake:
+                parts.append(badge.text == "∞" ? "螢幕長亮中" : "螢幕長亮剩餘 \(badge.text)")
+            case .focus:
+                parts.append("專注剩餘 \(badge.text)")
+            }
         }
         return parts.isEmpty ? "Chorus" : "Chorus — " + parts.joined(separator: "、")
     }

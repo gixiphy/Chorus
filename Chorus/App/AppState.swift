@@ -25,6 +25,8 @@ final class AppState {
     let sceneStore: SceneStore
     /// 限時場景（B7）：套用場景 → 倒數 → 結束時原樣放回去。
     let focus: FocusSessionController
+    /// 限時場景結束時的系統通知（B7-3）。預設關。
+    let focusNotifier: any FocusNotifying
     let tapEngine: TapEngine
     let autoEq: AutoEqCatalog
     /// 可用的 AU effect 清單（AU-3；只掃描不實例化，永遠安全）。
@@ -155,6 +157,8 @@ final class AppState {
         focus = FocusSessionController(settings: settings, executor: automation, scenes: sceneStore)
         AppStateRegistry.focus = focus
         automation.focus = focus
+        focusNotifier = FocusNotifier()
+        focus.notifier = focusNotifier
 
         automationEvents = AutomationEventHub()
         automationServer = ControlHTTPServer(

@@ -96,6 +96,7 @@ struct MenuBarView: View {
 
         AutoBrightnessRow()
         KeepAwakeRow()
+        FocusRow()
         ScenesRow()
         if appState.displayManager.hasPoweredOffDisplay {
             Button {
@@ -214,14 +215,87 @@ private struct AutoBrightnessRow: View {
     }
 }
 
+/// 進行中的限時場景（B7-3）。
+///
+/// **沒有 session 時整列不佔位**——選單已經夠長，一個「目前沒有專注中」的
+/// 空狀態不值得那幾十點高度。唯一的例外是上次沒正常結束、啟動時才還原的
+/// 那一則：使用者不在場時發生的事要講一次，而且可以按掉。
+private struct FocusRow: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        if let session = appState.focus.session {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Label("專注中：「\(session.sceneName)」", systemImage: "timer")
+                        .font(.callout)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(countdown)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Button("提前結束") {
+                        appState.focus.end(reason: .manual)
+                    }
+                    .controlSize(.small)
+                }
+                Text(caption(session))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 2)
+                    .help(session.snapshot.unrestorable.joined(separator: "、"))
+            }
+        } else if let outcome = appState.focus.lastOutcome, outcome.reason == .relaunch {
+            HStack(spacing: 6) {
+                Label("上次的「\(outcome.sceneName)」已於啟動時還原",
+                      systemImage: "clock.arrow.circlepath")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Button {
+                    appState.focus.dismissLastOutcome()
+                } label: {
+                    Image(systemName: "xmark.circle")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// 與選單列圖示上那格是同一份文字——兩處對不上的話，使用者會以為
+    /// 其中一個壞了。
+    private var countdown: String {
+        guard let remaining = appState.focus.remainingSeconds else { return "" }
+        return StatusIcon.countdownText(remainingSeconds: remaining)
+    }
+
+    private func caption(_ session: FocusSession) -> String {
+        var text = "結束時還原 \(session.snapshot.restorableCount) 項"
+        if !session.snapshot.unrestorable.isEmpty {
+            // 數字之外還要能看到是哪幾項——滑上去有 tooltip
+            text += "；\(session.snapshot.unrestorable.count) 項不會自動還原"
+        }
+        return text
+    }
+}
+
 /// 場景（B4-5）：具名的狀態組合，一鍵套用。與 CLI `chorus scene <名稱>`
 /// 和 HTTP `perform runScene` 觸發的是同一份。
 private struct ScenesRow: View {
     @Environment(AppState.self) private var appState
     @State private var naming = false
     @State private var draftName = ""
+    /// 正在為哪個場景輸入自訂時長（B7-3）。contextMenu 裡放不了文字欄，
+    /// 所以「自訂…」是把輸入列展開到場景列下方。
+    @State private var customScene: ControlScene?
+    @State private var draftDuration = ""
     /// 套用結果的短暫提示（哪幾項沒套上）。
     @State private var note: String?
+
+    /// 子選單的預設檔位。25 分鐘擺第二個不是因為蕃茄鐘——那個定位裁決
+    /// 已經排除了；純粹是「一段不被打擾的工作」最常見的長度。
+    private static let presetMinutes = [15, 25, 45, 60]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -253,6 +327,25 @@ private struct ScenesRow: View {
                 }
             }
 
+            if let scene = customScene {
+                HStack(spacing: 6) {
+                    TextField("時長（25m／1h／90s）", text: $draftDuration)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                        .onSubmit { start(scene, duration: draftDuration) }
+                    Button("開始") { start(scene, duration: draftDuration) }
+                        .controlSize(.small)
+                        .disabled(draftDuration.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button {
+                        customScene = nil
+                    } label: {
+                        Image(systemName: "xmark.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
             if appState.sceneStore.scenes.isEmpty {
                 Text("尚無場景——按 ＋ 把目前的亮度與音量存成一組")
                     .font(.caption2)
@@ -264,6 +357,28 @@ private struct ScenesRow: View {
                         Button(scene.name) { run(scene) }
                             .controlSize(.small)
                             .contextMenu {
+                                Menu("限時套用") {
+                                    ForEach(Self.presetMinutes, id: \.self) { minutes in
+                                        Button {
+                                            start(scene, duration: "\(minutes)m")
+                                        } label: {
+                                            // 上次用過的打勾——多數人每次都用同一個長度
+                                            if lastDurationMinutes == minutes {
+                                                Label("\(minutes) 分鐘", systemImage: "checkmark")
+                                            } else {
+                                                Text("\(minutes) 分鐘")
+                                            }
+                                        }
+                                    }
+                                    Divider()
+                                    Button("自訂…") {
+                                        customScene = scene
+                                        draftDuration = "\(lastDurationMinutes)m"
+                                    }
+                                    Divider()
+                                    Toggle("結束時通知我", isOn: notifyBinding)
+                                }
+                                Divider()
                                 Button("刪除「\(scene.name)」", role: .destructive) {
                                     appState.sceneStore.delete(id: scene.id)
                                 }
@@ -287,6 +402,49 @@ private struct ScenesRow: View {
         naming = false
         draftName = ""
         note = "已建立「\(name)」"
+    }
+
+    private var lastDurationMinutes: Int {
+        Int((appState.settings.focusLastDuration / 60).rounded())
+    }
+
+    /// 通知開關。**打開才要權限**（PLAN §8-6）；被拒時開關自動彈回去——
+    /// 留一個開著卻不會響的設定，比沒有這個開關更糟。
+    private var notifyBinding: Binding<Bool> {
+        Binding(
+            get: { appState.settings.focusNotifyOnEnd },
+            set: { wanted in
+                guard wanted else {
+                    appState.settings.focusNotifyOnEnd = false
+                    return
+                }
+                Task { @MainActor in
+                    let granted = await appState.focusNotifier.requestAuthorization()
+                    appState.settings.focusNotifyOnEnd = granted
+                    if !granted {
+                        note = "系統設定裡未允許 Chorus 通知"
+                    }
+                }
+            }
+        )
+    }
+
+    /// 限時套用。走**動詞層**而不是直接呼叫 controller——時長的解析、錯誤
+    /// 與 hint 全部與 CLI／HTTP 共用同一份，選單不會長出自己的規則。
+    private func start(_ scene: ControlScene, duration: String) {
+        let response = appState.automation.execute(ControlRequest(
+            verb: .perform, target: .system, value: scene.name,
+            action: .runScene, duration: duration
+        ))
+        customScene = nil
+        if let error = response.error {
+            note = error.message
+            return
+        }
+        let failed = (response.results ?? []).filter { $0.property == "error" }.count
+        note = failed == 0
+            ? "「\(scene.name)」限時套用中"
+            : "已套用「\(scene.name)」，\(failed) 項未生效（裝置已不在）"
     }
 
     private func run(_ scene: ControlScene) {

@@ -10,13 +10,35 @@ public struct StatusIconState: Equatable, Sendable {
     /// 靜音（或音量被壓到 0 的 mute 狀態）——聲波柱改畫成一條橫線。
     public var isMuted: Bool
     /// 圖示右側的附加文字（倒數 `29:59`／無限期 `∞`）。nil ＝ 只畫圖示。
-    public var badge: String?
+    ///
+    /// 帶 `kind` 而不是只帶字串：畫出來兩者一樣，但**唸出來不一樣**。
+    /// 無障礙標籤把限時場景的倒數唸成「螢幕長亮剩餘」，是說謊。
+    public var badge: StatusBadge?
 
-    public init(brightness: Double?, volume: Double?, isMuted: Bool, badge: String?) {
+    public init(brightness: Double?, volume: Double?, isMuted: Bool, badge: StatusBadge?) {
         self.brightness = brightness
         self.volume = volume
         self.isMuted = isMuted
         self.badge = badge
+    }
+}
+
+/// 徽章那一格在講誰的時間。
+public enum StatusBadgeKind: Sendable, Equatable, Hashable {
+    /// 防睡眠——可能是倒數，也可能是無限期的 `∞`。
+    case keepAwake
+    /// 限時場景（B7）的倒數。
+    case focus
+}
+
+/// 選單列圖示右側那一格。
+public struct StatusBadge: Sendable, Equatable, Hashable {
+    public var text: String
+    public var kind: StatusBadgeKind
+
+    public init(text: String, kind: StatusBadgeKind) {
+        self.text = text
+        self.kind = kind
     }
 }
 
@@ -54,7 +76,7 @@ public enum StatusIcon {
     /// `∞` 這格是刻意的：無限期與「接著這台螢幕時」都沒有數字可報，
     /// 但選單列上得看得出來「我現在不會睡」——否則使用者只能點開選單確認。
     public static func keepAwakeBadge(remainingSeconds: Double?, isHolding: Bool) -> String? {
-        badge(keepAwakeRemaining: remainingSeconds, keepAwakeHolding: isHolding, focusRemaining: nil)
+        badge(keepAwakeRemaining: remainingSeconds, keepAwakeHolding: isHolding, focusRemaining: nil)?.text
     }
 
     /// 選單列右側那格文字，把所有在跑的倒數收成一格（B7-1）。
@@ -69,11 +91,20 @@ public enum StatusIcon {
         keepAwakeRemaining: Double?,
         keepAwakeHolding: Bool,
         focusRemaining: Double?
-    ) -> String? {
-        let countdowns = [keepAwakeRemaining, focusRemaining].compactMap { $0 }
-        if let soonest = countdowns.min() {
-            return countdownText(remainingSeconds: soonest)
+    ) -> StatusBadge? {
+        switch (keepAwakeRemaining, focusRemaining) {
+        case let (keep?, focus?):
+            // 同時到期時算防睡眠的：它是先存在的那個功能，換掉會讓已經
+            // 習慣這格的人以為壞了
+            return keep <= focus
+                ? StatusBadge(text: countdownText(remainingSeconds: keep), kind: .keepAwake)
+                : StatusBadge(text: countdownText(remainingSeconds: focus), kind: .focus)
+        case let (keep?, nil):
+            return StatusBadge(text: countdownText(remainingSeconds: keep), kind: .keepAwake)
+        case let (nil, focus?):
+            return StatusBadge(text: countdownText(remainingSeconds: focus), kind: .focus)
+        case (nil, nil):
+            return keepAwakeHolding ? StatusBadge(text: "∞", kind: .keepAwake) : nil
         }
-        return keepAwakeHolding ? "∞" : nil
     }
 }

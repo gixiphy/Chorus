@@ -246,3 +246,17 @@ struct FocusVerbLayerTests {
         #expect(try ControlRequestValidator.validate(decoded).durationSeconds == nil)
     }
 }
+
+@Suite("限時場景結束後要不要通知（B7-3）")
+struct FocusNotificationRuleTests {
+    @Test("只有「使用者可能不在看」的兩種值得通知")
+    func onlyUnattendedEndsNotify() {
+        #expect(FocusEndReason.elapsed.deservesNotification)
+        #expect(FocusEndReason.relaunch.deservesNotification)
+        // 手動與被取代是使用者當下的動作，選單上立刻看得到；
+        // 結束 Chorus 更不必——App 正在關
+        #expect(!FocusEndReason.manual.deservesNotification)
+        #expect(!FocusEndReason.replaced.deservesNotification)
+        #expect(!FocusEndReason.quit.deservesNotification)
+    }
+}
