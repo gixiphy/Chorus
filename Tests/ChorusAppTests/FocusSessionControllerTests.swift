@@ -18,9 +18,12 @@ struct FocusSessionControllerTests {
         var snapshotToReturn = FocusSnapshot(requests: [
             ControlRequest(verb: .set, target: .system, property: .autoBrightness, value: "on"),
         ])
-        var restoreResult: (restored: Int, failed: [String]) = (1, [])
+        var restoreResult: (restored: Int, failed: [String], retryable: [ControlRequest]) = (1, [], [])
+        /// 補送時仍然失敗的那些（模擬 peer 又斷了）。
+        var retryStillFailing: [ControlRequest] = []
         private(set) var calls: [String] = []
         private(set) var restored: [FocusSnapshot] = []
+        private(set) var retried: [[ControlRequest]] = []
 
         func snapshot(forScene scene: ControlScene) -> FocusSnapshot {
             calls.append("snapshot:\(scene.name)")
@@ -32,10 +35,16 @@ struct FocusSessionControllerTests {
             return [ControlResult(target: name, property: "autoBrightness", value: .bool(false))]
         }
 
-        func restore(_ snapshot: FocusSnapshot) -> (restored: Int, failed: [String]) {
+        func restore(_ snapshot: FocusSnapshot) -> (restored: Int, failed: [String], retryable: [ControlRequest]) {
             calls.append("restore")
             restored.append(snapshot)
             return restoreResult
+        }
+
+        func retry(_ requests: [ControlRequest]) -> (restored: Int, stillFailing: [ControlRequest]) {
+            calls.append("retry")
+            retried.append(requests)
+            return (requests.count - retryStillFailing.count, retryStillFailing)
         }
 
         /// 只看「這一步之後」發生了什麼時用。
@@ -256,7 +265,7 @@ struct FocusSessionControllerTests {
             requests: [],
             unrestorable: ["ASUS VS207 的 input"]
         )
-        f.executor.restoreResult = (0, [])
+        f.executor.restoreResult = (0, [], [])
         try f.controller.start(sceneName: "工作", duration: 60)
         f.controller.end(reason: .manual)
 
@@ -340,10 +349,90 @@ struct FocusSessionControllerTests {
         #expect(FocusNotifier.title(for: partial) == "「工作」已於啟動時還原")
     }
 
+    // MARK: - 跨機補送（B7-4）
+
+    private var peerRestore: ControlRequest {
+        ControlRequest(verb: .set, target: .app(bundleID: "com.tinyspeck.slackmacgap"),
+                       property: .mute, value: "off", peer: "客廳")
+    }
+
+    @Test("對方離線的還原排進補送清單，並跨重啟保留")
+    func offlinePeerRestoresQueue() throws {
+        let f = makeFixture()
+        f.executor.restoreResult = (1, ["客廳（跨機）：「客廳」目前沒有連線"], [peerRestore])
+        try f.controller.start(sceneName: "工作", duration: 60)
+        f.controller.end(reason: .manual)
+
+        #expect(f.controller.pendingPeerRestores.count == 1)
+        // 關掉 Chorus 不該讓對方的 Slack 永遠靜音
+        #expect(SettingsStore(defaults: f.defaults).focusPendingPeerRestores.count == 1)
+    }
+
+    @Test("peer 連上就補送一次，成功後清單清空")
+    func retryOnReconnect() throws {
+        let f = makeFixture()
+        f.executor.restoreResult = (1, ["客廳（跨機）：離線"], [peerRestore])
+        try f.controller.start(sceneName: "工作", duration: 60)
+        f.controller.end(reason: .manual)
+        f.executor.resetLog()
+
+        f.controller.retryPendingRestores()
+        #expect(f.executor.retried.first?.count == 1)
+        #expect(f.controller.pendingPeerRestores.isEmpty)
+        #expect(SettingsStore(defaults: f.defaults).focusPendingPeerRestores.isEmpty)
+    }
+
+    @Test("補送又失敗就留著等下一次——不做無限重試，也不丟掉")
+    func retryKeepsFailing() throws {
+        let f = makeFixture()
+        f.executor.restoreResult = (1, ["離線"], [peerRestore])
+        try f.controller.start(sceneName: "工作", duration: 60)
+        f.controller.end(reason: .manual)
+        f.executor.retryStillFailing = [peerRestore]
+
+        f.controller.retryPendingRestores()
+        #expect(f.controller.pendingPeerRestores.count == 1)
+    }
+
+    @Test("沒有待補送時 retry 是 no-op（每次 peer 連上都會呼叫到）")
+    func retryWithoutPendingIsNoOp() {
+        let f = makeFixture()
+        f.controller.retryPendingRestores()
+        #expect(f.executor.calls.isEmpty)
+    }
+
+    @Test("使用者按放棄：清單清空，之後不再補送")
+    func abandonPending() throws {
+        let f = makeFixture()
+        f.executor.restoreResult = (1, ["離線"], [peerRestore])
+        try f.controller.start(sceneName: "工作", duration: 60)
+        f.controller.end(reason: .manual)
+        f.executor.resetLog()
+
+        f.controller.abandonPendingRestores()
+        #expect(f.controller.pendingPeerRestores.isEmpty)
+        f.controller.retryPendingRestores()
+        #expect(f.executor.calls.isEmpty)
+    }
+
+    @Test("啟動時把上次沒送成的補送清單讀回來")
+    func pendingSurvivesRestart() throws {
+        let f = makeFixture()
+        f.executor.restoreResult = (1, ["離線"], [peerRestore])
+        try f.controller.start(sceneName: "工作", duration: 60)
+        f.controller.end(reason: .manual)
+
+        let reloaded = FocusSessionController(
+            settings: SettingsStore(defaults: f.defaults),
+            executor: f.executor, scenes: f.scenes
+        )
+        #expect(reloaded.pendingPeerRestores.count == 1)
+    }
+
     @Test("還原失敗的項目照實列出（裝置這 25 分鐘內被拔掉了）")
     func outcomeCarriesFailures() throws {
         let f = makeFixture()
-        f.executor.restoreResult = (0, ["deviceUID:X：找不到符合的裝置"])
+        f.executor.restoreResult = (0, ["deviceUID:X：找不到符合的裝置"], [])
         try f.controller.start(sceneName: "工作", duration: 60)
         f.controller.end(reason: .manual)
 

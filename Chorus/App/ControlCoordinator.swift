@@ -100,15 +100,11 @@ final class ControlCoordinator {
         recordPeerKnown(peerID: peerID, key: key, value: value)
     }
 
-    /// 記住 peer 最後已知的語意層數值（遙控滑桿初始位置用；跨重啟保留）。
+    /// 記住 peer 最後已知的數值（遙控滑桿初始位置、B7-4 的跨機還原原值；
+    /// 跨重啟保留）。欄位映射在 `ControlKey.peerKnownField`——與讀的那一端
+    /// 共用同一份。
     private func recordPeerKnown(peerID: String, key: ControlKey, value: Double) {
-        let field: String
-        switch key {
-        case .brightness(nil): field = "brightness"
-        case .volume(nil): field = "volume"
-        case .mute(nil): field = "muted"
-        default: return
-        }
+        guard let field = key.peerKnownField else { return }
         var known = settings.peerKnownControls[peerID] ?? [:]
         guard known[field] != value else { return }
         known[field] = value
@@ -146,6 +142,9 @@ final class ControlCoordinator {
         }
     }
 
+    /// peer 連上時通知（B7-4：限時場景把還原失敗的跨機項目排在這裡補送）。
+    var peerConnectedHandler: ((String) -> Void)?
+
     private func sessionEstablished(_ peerID: String) {
         let snapshot = engine.fullStateSnapshot()
         if !snapshot.entries.isEmpty {
@@ -158,6 +157,7 @@ final class ControlCoordinator {
         // 現值回報：對方的遙控滑桿要畫在正確的位置。fullState 幫不上忙——
         // 它只含「本次啟動後改過的 key」，而且會被 LWW 當成狀態套進硬體。
         sessionManager?.send(Envelope(msg: .stateReport(currentStateReport())), to: peerID)
+        peerConnectedHandler?(peerID)
     }
 
     // MARK: - 現值回報（遙控滑桿的顯示值）
@@ -168,7 +168,13 @@ final class ControlCoordinator {
         sessionManager?.send(Envelope(msg: .stateQuery(StateQuery())), to: peerID)
     }
 
-    /// 本機現在的語意層亮度／音量。回報用，不進 SyncEngineCore。
+    /// 本機現在的值。回報用，不進 SyncEngineCore。
+    ///
+    /// **B7-4 擴充**：加了防睡眠、螢幕電源與逐 App 音量／靜音。理由是限時
+    /// 場景要還原跨機項目，就得先知道對方的原值，而 `forward` 只支援 set、
+    /// 沒有遠端 get。這些 `ControlKey` 自 M9／B6-6 起就存在，舊版 peer 解得開；
+    /// `stateReport` 的語意（**純資訊、永不套用到硬體、不進 LWW**）也沒變
+    /// ——所以是 wire 相容的，零協定改動。
     private func currentStateReport() -> StateReport {
         var entries: [StateReport.Entry] = []
         if let brightness = displayManager?.displays.first?.brightness {
@@ -177,6 +183,25 @@ final class ControlCoordinator {
         if let device = audioManager?.defaultDevice {
             entries.append(StateReport.Entry(key: .volume(deviceUID: nil), value: device.volume))
             entries.append(StateReport.Entry(key: .mute(deviceUID: nil), value: device.muted ? 1 : 0))
+        }
+        entries.append(StateReport.Entry(
+            key: .keepAwake(displayUUID: nil),
+            value: KeepAwakePlanner.encode(keepAwake?.mode ?? .off)
+        ))
+        if let displays = displayManager?.displays, !displays.isEmpty {
+            entries.append(StateReport.Entry(
+                key: .displayPower(displayUUID: nil),
+                value: displays.contains { !$0.isPoweredOff } ? 1 : 0
+            ))
+        }
+        // 只回**被調整過的** App。沒被調整過的不必列——對方查不到欄位時
+        // 推的就是預設值（gain 1、不靜音），那正是「沒被調整過」的意思。
+        for bundleID in settings.appAudio.adjustedBundleIDs.sorted() {
+            let setting = settings.appAudio[bundleID]
+            entries.append(StateReport.Entry(key: .appVolume(bundleID: bundleID),
+                                             value: Double(setting.gain)))
+            entries.append(StateReport.Entry(key: .appMute(bundleID: bundleID),
+                                             value: setting.muted ? 1 : 0))
         }
         return StateReport(entries: entries)
     }

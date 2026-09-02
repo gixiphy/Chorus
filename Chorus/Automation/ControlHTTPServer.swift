@@ -293,13 +293,21 @@ final class ControlHTTPServer {
         let decoder = JSONDecoder()
         // 單筆或陣列都收——場景與批次操作要能一次送完
         if let requests = try? decoder.decode([ControlRequest].self, from: body) {
-            let responses = requests.map { executor.execute($0) }
-            respondJSON(connection, encodable: responses)
+            // executeAsync：限時場景要先把 peer 現值問回來，其餘請求原樣同步
+            Task { @MainActor in
+                var responses: [ControlResponse] = []
+                for request in requests {
+                    responses.append(await executor.executeAsync(request))
+                }
+                respondJSON(connection, encodable: responses)
+            }
             return
         }
         do {
             let request = try decoder.decode(ControlRequest.self, from: body)
-            respondJSON(connection, encodable: executor.execute(request))
+            Task { @MainActor in
+                respondJSON(connection, encodable: await executor.executeAsync(request))
+            }
         } catch {
             respond(connection, status: 400, json: Self.errorJSON(
                 "badRequest",

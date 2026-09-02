@@ -16,7 +16,7 @@ final class TestHooks {
     private var dumpTask: Task<Void, Never>?
     private var observer: (any NSObjectProtocol)?
     /// 最近一次 `control` 動作的回應，寫進 state dump 供斷言。
-    private var lastControlResponse: ControlResponse?
+    fileprivate var lastControlResponse: ControlResponse?
     /// tapProbe 的結果（B6-1 權限驗證：spike 從終端機跑不算數，
     /// TCC 歸屬的是負責行程，要在 Chorus.app 內實測）。
     private var tapProbeResult: [String: Any]?
@@ -370,7 +370,11 @@ final class TestHooks {
             // 不需要開 HTTP server 也不需要 token——B4-1 的 E2E 入口。
             if let json = info["value"], let data = json.data(using: .utf8),
                let request = try? JSONDecoder().decode(ControlRequest.self, from: data) {
-                lastControlResponse = appState.automation.execute(request)
+                // executeAsync：限時場景要先問 peer 現值，其餘請求原樣同步
+                Task { @MainActor in
+                    TestSupport.hooks?.lastControlResponse =
+                        await self.appState.automation.executeAsync(request)
+                }
             } else {
                 lastControlResponse = .failure(.badValue(
                     info["value"] ?? "",
@@ -424,6 +428,8 @@ final class TestHooks {
             if let seconds = info["value"].flatMap(Double.init) {
                 appState.focus.advanceClock(by: seconds)
             }
+        case "focusRetryPending":
+            appState.focus.retryPendingRestores()
         case "focusRelaunch":
             appState.focus.simulateRelaunchForTesting()
         case "setAdvisorModel":
@@ -663,6 +669,7 @@ final class TestHooks {
                 "scene": appState.focus.session?.sceneName as Any? ?? NSNull(),
                 "remaining": appState.focus.remainingSeconds as Any? ?? NSNull(),
                 "snapshotCount": appState.focus.session?.snapshot.restorableCount ?? 0,
+                "pendingRestores": appState.focus.pendingPeerRestores.count,
                 "unrestorable": appState.focus.session?.snapshot.unrestorable ?? [],
                 "lastOutcome": appState.focus.lastOutcome.map { outcome in
                     [

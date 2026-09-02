@@ -249,6 +249,18 @@ private struct FocusRow: View {
                     .padding(.leading, 2)
                     .help(session.snapshot.unrestorable.joined(separator: "、"))
             }
+        } else if !appState.focus.pendingPeerRestores.isEmpty {
+            // 對方離線時還原不了的跨機項目。**不做無限重試**——peer 一連上
+            // 就自動補送，使用者也可以直接放棄；兩個出口都在這一行上
+            HStack(spacing: 6) {
+                Label(pendingSummary, systemImage: "exclamationmark.arrow.circlepath")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Button("放棄") { appState.focus.abandonPendingRestores() }
+                    .controlSize(.small)
+            }
         } else if let outcome = appState.focus.lastOutcome, outcome.reason == .relaunch {
             HStack(spacing: 6) {
                 Label("上次的「\(outcome.sceneName)」已於啟動時還原",
@@ -265,6 +277,14 @@ private struct FocusRow: View {
                 .foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// 「2 項未還原（客廳、書房離線）」。名字列出來才知道要去開哪一台。
+    private var pendingSummary: String {
+        let pending = appState.focus.pendingPeerRestores
+        let peers = Set(pending.compactMap(\.peer)).sorted()
+        let names = peers.isEmpty ? "對方" : peers.joined(separator: "、")
+        return "\(pending.count) 項未還原（\(names)離線）"
     }
 
     /// 與選單列圖示上那格是同一份文字——兩處對不上的話，使用者會以為
@@ -436,19 +456,24 @@ private struct ScenesRow: View {
     /// 限時套用。走**動詞層**而不是直接呼叫 controller——時長的解析、錯誤
     /// 與 hint 全部與 CLI／HTTP 共用同一份，選單不會長出自己的規則。
     private func start(_ scene: ControlScene, duration: String) {
-        let response = appState.automation.execute(ControlRequest(
-            verb: .perform, target: .system, value: scene.name,
-            action: .runScene, duration: duration
-        ))
         customScene = nil
-        if let error = response.error {
-            note = error.message
-            return
+        note = "正在套用「\(scene.name)」…"
+        Task { @MainActor in
+            // executeAsync：場景含跨機項目時要先把對方的現值問回來，
+            // 否則還原時沒有原值可放。最多一秒
+            let response = await appState.automation.executeAsync(ControlRequest(
+                verb: .perform, target: .system, value: scene.name,
+                action: .runScene, duration: duration
+            ))
+            if let error = response.error {
+                note = error.message
+                return
+            }
+            let failed = (response.results ?? []).filter { $0.property == "error" }.count
+            note = failed == 0
+                ? "「\(scene.name)」限時套用中"
+                : "已套用「\(scene.name)」，\(failed) 項未生效（裝置已不在）"
         }
-        let failed = (response.results ?? []).filter { $0.property == "error" }.count
-        note = failed == 0
-            ? "「\(scene.name)」限時套用中"
-            : "已套用「\(scene.name)」，\(failed) 項未生效（裝置已不在）"
     }
 
     private func run(_ scene: ControlScene) {

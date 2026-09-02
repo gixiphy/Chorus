@@ -29,3 +29,26 @@ public enum ControlKey: Codable, Sendable, Hashable {
     /// 逐 App 靜音。value：1 = 靜音、0 = 取消靜音。
     case appMute(bundleID: String)
 }
+
+public extension ControlKey {
+    /// 在「peer 最後已知的值」那份表裡的欄位名。`nil` ＝ 不記
+    /// （逐顯示器／逐裝置的值沒有語意層意義，記了也對不回是哪一台）。
+    ///
+    /// 前三個名字**不可改**：它們是跨重啟保留的既有資料的鍵。
+    ///
+    /// 這份映射有兩個使用者：`ControlCoordinator` 收到回報時往裡寫，
+    /// B7-4 的限時場景快照從裡面讀跨機項目的原值。兩邊共用同一份，
+    /// 才不會出現「記進去了卻查不到」。
+    var peerKnownField: String? {
+        switch self {
+        case .brightness(nil): "brightness"
+        case .volume(nil): "volume"
+        case .mute(nil): "muted"
+        case .keepAwake: "keepAwake"
+        case .displayPower(nil): "power"
+        case let .appVolume(bundleID): "appVolume:\(bundleID)"
+        case let .appMute(bundleID): "appMute:\(bundleID)"
+        default: nil
+        }
+    }
+}

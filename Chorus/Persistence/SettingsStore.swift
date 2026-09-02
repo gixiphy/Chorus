@@ -67,6 +67,7 @@ final class SettingsStore {
         static let focusSession = "chorus.focus.session"
         static let focusLastDuration = "chorus.focus.lastDuration"
         static let focusNotifyOnEnd = "chorus.focus.notifyOnEnd"
+        static let focusPendingRestores = "chorus.focus.pendingPeerRestores"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -369,6 +370,20 @@ final class SettingsStore {
         didSet { defaults.set(focusNotifyOnEnd, forKey: Key.focusNotifyOnEnd) }
     }
 
+    /// 因為對方離線而還沒送出去的跨機還原（B7-4）。
+    ///
+    /// 與 session 分開存：session 結束後這些請求還活著，等 peer 下次連上
+    /// 補送。跨重啟保留——關掉 Chorus 不該讓對方的 Slack 永遠靜音。
+    var focusPendingPeerRestores: [ControlRequest] {
+        didSet {
+            if focusPendingPeerRestores.isEmpty {
+                defaults.removeObject(forKey: Key.focusPendingRestores)
+            } else if let data = try? JSONEncoder().encode(focusPendingPeerRestores) {
+                defaults.set(data, forKey: Key.focusPendingRestores)
+            }
+        }
+    }
+
     var focusSession: FocusSession? {
         didSet {
             if let focusSession, let data = try? JSONEncoder().encode(focusSession) {
@@ -454,6 +469,8 @@ final class SettingsStore {
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)
         focusLastDuration = defaults.object(forKey: Key.focusLastDuration) as? Double ?? 1_500
+        focusPendingPeerRestores = (defaults.data(forKey: Key.focusPendingRestores)
+            .flatMap { try? JSONDecoder().decode([ControlRequest].self, from: $0) }) ?? []
         focusNotifyOnEnd = defaults.bool(forKey: Key.focusNotifyOnEnd)
         if let data = defaults.data(forKey: Key.focusSession) {
             // 解不開就當作沒有——舊格式的殘留不該讓 App 起不來，

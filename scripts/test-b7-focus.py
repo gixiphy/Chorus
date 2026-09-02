@@ -29,7 +29,7 @@ PORT = 55783  # 錯開正式的 55780 與 B4 的 55781
 # 開 server 會覆蓋、關 server 會刪掉——測試不該弄丟使用者自己的那份
 CLI_CONFIG = os.path.expanduser("~/.config/chorus/config.json")
 
-proc = None
+procs = {}
 results = []
 saved_cli_config = None
 
@@ -47,24 +47,24 @@ def find_debug_app():
     return newest
 
 
-def notify(action, value=None):
-    subprocess.run([NOTIFY, "A", action] + ([value] if value is not None else []),
+def notify(action, value=None, inst="A"):
+    subprocess.run([NOTIFY, inst, action] + ([value] if value is not None else []),
                    capture_output=True)
 
 
-def dump():
+def dump(inst="A"):
     try:
-        with open(os.path.join(WORK, "dump-A.json")) as handle:
+        with open(os.path.join(WORK, f"dump-{inst}.json")) as handle:
             return json.load(handle)
     except Exception:
         return None
 
 
-def wait_for(pred, timeout=15):
+def wait_for(pred, timeout=15, inst="A"):
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
-        data = dump()
+        data = dump(inst)
         if data:
             last = data
             try:
@@ -89,8 +89,35 @@ def focus(data):
     return (data or {}).get("focus", {})
 
 
-def app_setting(data, key):
-    return ((data or {}).get("tapEngine", {}).get("appSettings", {}).get(BUNDLE) or {}).get(key)
+def launch(inst, app, extra=None):
+    procs[inst] = subprocess.Popen(
+        [app, "--instance", inst, "--fake-als", "--fake-taps",
+         "--state-dump", os.path.join(WORK, f"dump-{inst}.json")] + (extra or []),
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def stop(inst):
+    proc = procs.pop(inst, None)
+    if not proc:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        proc.kill()
+
+
+def engine_ready(inst, app_bundle=BUNDLE):
+    notify("tapFakeMode", "audio", inst=inst)
+    notify("fakeAudioProcesses", f"Music|{app_bundle}|1", inst=inst)
+    notify("tapEngine", "1", inst=inst)
+    notify("tapTick", inst=inst)
+    return wait_for(lambda d: tap_state(d) == "active", 15, inst=inst)[0]
+
+
+def app_setting(data, key, inst_bundle=BUNDLE):
+    return ((data or {}).get("tapEngine", {}).get("appSettings", {}).get(inst_bundle) or {}).get(key)
 
 
 def gain_is(data, expected):
@@ -99,11 +126,12 @@ def gain_is(data, expected):
     return value is not None and abs(value - expected) < 1e-6
 
 
-def control(request):
+def control(request, inst="A"):
     """送出一個 ControlRequest 走完整動詞層（驗證 → 執行），回 lastControl。"""
-    notify("control", json.dumps(request, ensure_ascii=False, sort_keys=True))
-    time.sleep(1.6)  # state dump 每秒寫一次
-    return (dump() or {}).get("lastControl")
+    notify("control", json.dumps(request, ensure_ascii=False, sort_keys=True), inst=inst)
+    # 限時場景會先問 peer 現值（上限 1 秒），所以等得比 dump 週期久一點
+    time.sleep(2.8)
+    return (dump(inst) or {}).get("lastControl")
 
 
 def result_properties(response):
@@ -123,42 +151,33 @@ def cleanup():
         with open(CLI_CONFIG, "w") as handle:
             handle.write(saved_cli_config)
         os.chmod(CLI_CONFIG, 0o600)
-    if proc:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
-    subprocess.run(["defaults", "delete", "com.hermes.Chorus.instance-A"], capture_output=True)
-    subprocess.run(["rm", "-rf", os.path.expanduser("~/Library/Application Support/Chorus/instance-A")],
-                   capture_output=True)
+    for inst in list(procs):
+        stop(inst)
+    for inst in ("A", "B"):
+        subprocess.run(["defaults", "delete", f"com.hermes.Chorus.instance-{inst}"], capture_output=True)
+        subprocess.run(["rm", "-rf",
+                        os.path.expanduser(f"~/Library/Application Support/Chorus/instance-{inst}")],
+                       capture_output=True)
+        subprocess.run(["security", "delete-generic-password",
+                        "-s", f"com.hermes.Chorus.instance-{inst}"], capture_output=True)
     subprocess.run(["rm", "-rf", WORK], capture_output=True)
 
 
 def main():
-    global proc
     os.makedirs(WORK, exist_ok=True)
     subprocess.run(["swiftc", "-o", NOTIFY, os.path.join(REPO, "scripts", "notify.swift")], check=True)
     subprocess.run(["pkill", "-f", "instance A"], capture_output=True)
+    subprocess.run(["pkill", "-f", "instance B"], capture_output=True)
     time.sleep(1)
 
     app = find_debug_app()
     print("\n=== B7 限時場景：快照 → 套用 → 自動還原（--fake-taps）===\n", flush=True)
-    proc = subprocess.Popen(
-        [app, "--instance", "A", "--fake-als", "--fake-taps",
-         "--state-dump", os.path.join(WORK, "dump-A.json")],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    launch("A", app, ["--listen-port", "47811", "--pair-port", "47812"])
     ok, _ = wait_for(lambda d: tap_state(d) == "off", 30)
     record("啟動：引擎預設關閉", ok)
 
     # 引擎到 active，per-app 目標才可用（動詞層對 app 目標會擋非 active）
-    notify("tapFakeMode", "audio")
-    notify("fakeAudioProcesses", f"Music|{BUNDLE}|1")
-    notify("tapEngine", "1")
-    notify("tapTick")
-    ok, _ = wait_for(lambda d: tap_state(d) == "active", 15)
-    record("引擎就緒", ok, f"實得 {tap_state(dump())}")
+    record("引擎就緒", engine_ready("A"), f"實得 {tap_state(dump())}")
 
     print("\n[1] 快照 → 套用 → 到期還原", flush=True)
     # 原始狀態刻意用 **2.0 倍增益**：值 > 1 會走 snapshotString 的百分比路徑，
@@ -348,6 +367,84 @@ def main():
 
     notify("automationServer", "0")
     time.sleep(1.5)
+
+    print("\n[7] 跨機：peer 的原值、離線與重連補送（B7-4）", flush=True)
+    launch("B", app, ["--listen-port", "47821", "--pair-port", "47822"])
+    ok, _ = wait_for(lambda d: tap_state(d) == "off", 30, inst="B")
+    record("B 實例啟動", ok)
+    record("B 引擎就緒", engine_ready("B"))
+
+    # B 先把 Music 調整過：A 的快照要從 B 主動回報的 stateReport 拿原值
+    notify("appGain", f"{BUNDLE}|0.6", inst="B")
+    ok, _ = wait_for(lambda d: gain_is(d, 0.6), 10, inst="B")
+    record("B 的原始狀態：增益 0.6、未靜音", ok and app_setting(dump("B"), "muted") is False)
+
+    notify("beginPairing")
+    notify("beginPairing", inst="B")
+    time.sleep(2)
+    notify("requestPairLoopback", "47822")
+    ok, _ = wait_for(lambda d: d.get("pairingPhase") == "incomingRequest", 20, inst="B")
+    if not ok:
+        record("loopback 配對", False)
+    else:
+        notify("acceptIncoming", inst="B")
+        wait_for(lambda d: d.get("pairingPhase", "").startswith("showingSAS"), 15)
+        wait_for(lambda d: d.get("pairingPhase", "").startswith("showingSAS"), 15, inst="B")
+        notify("confirmSAS")
+        notify("confirmSAS", inst="B")
+        connected = lambda d: "connected" in d.get("connectionStates", {}).values()
+        ok_a, _ = wait_for(connected, 30)
+        ok_b, _ = wait_for(connected, 30, inst="B")
+        record("配對並連線", ok_a and ok_b)
+
+        save_scene("跨機專注", [
+            {"verb": "set", "target": f"app:{BUNDLE}", "property": "mute",
+             "value": "on", "peer": "(B)"},
+        ])
+        time.sleep(1)
+
+        response = control({"verb": "perform", "target": "system", "action": "runScene",
+                            "value": "跨機專注", "duration": "25m"})
+        record("跨機限時場景啟動", bool(response and response.get("ok")),
+               ((response or {}).get("error") or {}).get("message", ""))
+        record("問到了對方的原值——不可還原清單是空的",
+               focus(dump()).get("unrestorable") == [],
+               str(focus(dump()).get("unrestorable")))
+        ok, _ = wait_for(lambda d: app_setting(d, "muted") is True, 15, inst="B")
+        record("B 的 Music 被靜音（招牌情境：兩台同時靜音）", ok)
+
+        notify("focusEnd")
+        ok, _ = wait_for(lambda d: app_setting(d, "muted") is False, 15, inst="B")
+        record("結束後跨機還原：B 的 Music 解除靜音", ok)
+        record("沒有待補送的項目", focus(dump()).get("pendingRestores") == 0)
+
+        # 離線情境：套用時 B 在線（被靜音），結束時 B 已經關掉
+        response = control({"verb": "perform", "target": "system", "action": "runScene",
+                            "value": "跨機專注", "duration": "25m"})
+        ok, _ = wait_for(lambda d: app_setting(d, "muted") is True, 15, inst="B")
+        record("再次套用：B 又被靜音", ok)
+
+        stop("B")
+        time.sleep(2)
+        notify("focusEnd")
+        time.sleep(2)
+        record("對方離線時結束 → 那一項排進補送清單，不當成還原成功",
+               focus(dump()).get("pendingRestores") == 1,
+               f"實得 {focus(dump()).get('pendingRestores')}")
+
+        launch("B", app, ["--listen-port", "47821", "--pair-port", "47822"])
+        ok, _ = wait_for(lambda d: tap_state(d) is not None, 30, inst="B")
+        record("B 重新啟動（設定持久化：Music 仍是靜音的）",
+               ok and app_setting(dump("B"), "muted") is True)
+        ok, _ = wait_for(connected, 40)
+        record("A 與 B 重新連線", ok)
+        ok, _ = wait_for(lambda d: focus(d).get("pendingRestores") == 0, 20)
+        record("重連後自動補送，補送清單清空", ok,
+               f"實得 {focus(dump()).get('pendingRestores')}")
+        ok, _ = wait_for(lambda d: app_setting(d, "muted") is False, 20, inst="B")
+        record("B 的 Music 終於被解除靜音（欠的那一項送到了）", ok)
+
+    stop("B")
 
     notify("appReset", BUNDLE)
     notify("tapEngine", "0")

@@ -13,7 +13,9 @@ import Observation
 protocol FocusExecuting: AnyObject {
     func snapshot(forScene scene: ControlScene) -> FocusSnapshot
     func applyScene(named name: String) -> [ControlResult]
-    func restore(_ snapshot: FocusSnapshot) -> (restored: Int, failed: [String])
+    func restore(_ snapshot: FocusSnapshot) -> (restored: Int, failed: [String], retryable: [ControlRequest])
+    /// 補送先前因為對方離線而沒送出去的還原（B7-4）。
+    func retry(_ requests: [ControlRequest]) -> (restored: Int, stillFailing: [ControlRequest])
 }
 
 /// 一次限時場景結束後留下的結果。UI、通知與 SSE 事件講的都是這一份。
@@ -46,6 +48,8 @@ final class FocusSessionController {
     private(set) var remainingSeconds: Double?
     /// 上一次結束的結果，供 UI 顯示「已還原 N 項」。
     private(set) var lastOutcome: FocusOutcome?
+    /// 因為對方離線而還沒送出去的跨機還原（B7-4）。peer 一連上就補送一次。
+    private(set) var pendingPeerRestores: [ControlRequest] = []
 
     /// SSE 事件流（`GET /v1/events` 與 `chorus listen`）。組裝順序上 hub 比
     /// controller 晚建立，所以是後設的——沒接上時只是不發事件，不影響還原。
@@ -73,6 +77,7 @@ final class FocusSessionController {
         self.executor = executor
         self.scenes = scenes
         self.now = now
+        pendingPeerRestores = settings.focusPendingPeerRestores
     }
 
     private var currentDate: Date { now().addingTimeInterval(clockOffset) }
@@ -140,6 +145,11 @@ final class FocusSessionController {
         persist()
 
         let outcome = executor.restore(session.snapshot)
+        // 對方離線的那幾條不是壞掉，只是現在送不到——排進補送清單
+        if !outcome.retryable.isEmpty {
+            pendingPeerRestores += outcome.retryable
+            settings.focusPendingPeerRestores = pendingPeerRestores
+        }
         lastOutcome = FocusOutcome(
             sceneName: session.sceneName,
             reason: reason,
@@ -257,6 +267,28 @@ final class FocusSessionController {
             refreshRemaining()
             startTicking()
         }
+    }
+
+    // MARK: - 跨機補送（B7-4）
+
+    /// peer 連上了，把欠它的還原補送一次。
+    ///
+    /// **不做無限重試、也不設時限**：peer 回來就送、使用者說算了就算了
+    /// （`abandonPendingRestores`），兩個出口都明確。定時輪詢一個可能
+    /// 半年不開機的 Mac 只是在製造背景雜訊。
+    func retryPendingRestores() {
+        guard !pendingPeerRestores.isEmpty else { return }
+        let result = executor.retry(pendingPeerRestores)
+        guard result.restored > 0 || result.stillFailing.count != pendingPeerRestores.count else { return }
+        pendingPeerRestores = result.stillFailing
+        settings.focusPendingPeerRestores = pendingPeerRestores
+    }
+
+    /// 使用者按「放棄」：不再嘗試把那些值送回去。
+    func abandonPendingRestores() {
+        guard !pendingPeerRestores.isEmpty else { return }
+        pendingPeerRestores = []
+        settings.focusPendingPeerRestores = []
     }
 
     /// 收掉「上次結束」那一行（選單上的 ✕）。

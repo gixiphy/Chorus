@@ -260,3 +260,31 @@ struct FocusNotificationRuleTests {
         #expect(!FocusEndReason.quit.deservesNotification)
     }
 }
+
+@Suite("peer 已知值的欄位映射（B7-4）")
+struct PeerKnownFieldTests {
+    @Test("既有的三個欄位名不可改——那是跨重啟保留的資料的鍵")
+    func legacyFieldNamesUnchanged() {
+        #expect(ControlKey.brightness(displayUUID: nil).peerKnownField == "brightness")
+        #expect(ControlKey.volume(deviceUID: nil).peerKnownField == "volume")
+        #expect(ControlKey.mute(deviceUID: nil).peerKnownField == "muted")
+    }
+
+    @Test("B7-4 加的三組：防睡眠、螢幕電源、逐 App")
+    func newFields() {
+        #expect(ControlKey.keepAwake(displayUUID: nil).peerKnownField == "keepAwake")
+        #expect(ControlKey.displayPower(displayUUID: nil).peerKnownField == "power")
+        #expect(ControlKey.appVolume(bundleID: "com.apple.Music").peerKnownField
+            == "appVolume:com.apple.Music")
+        #expect(ControlKey.appMute(bundleID: "com.apple.Music").peerKnownField
+            == "appMute:com.apple.Music")
+    }
+
+    @Test("逐顯示器／逐裝置的值不記——沒有語意層意義，記了也對不回是哪一台")
+    func perEntityKeysAreNotRecorded() {
+        #expect(ControlKey.brightness(displayUUID: "A").peerKnownField == nil)
+        #expect(ControlKey.volume(deviceUID: "X").peerKnownField == nil)
+        #expect(ControlKey.input(displayUUID: "A").peerKnownField == nil)
+        #expect(ControlKey.contrast(displayUUID: "A").peerKnownField == nil)
+    }
+}

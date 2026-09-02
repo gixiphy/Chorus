@@ -67,6 +67,28 @@ final class AutomationExecutor {
         }
     }
 
+    /// 非同步入口。**只有限時場景需要它**——套用前要先把場景涉及的 peer
+    /// 現值問回來（跨機還原的原值來源）。其餘請求原封不動走同步路徑，
+    /// 既有的四個入口與內部的逐條套用完全不受影響。
+    func executeAsync(_ request: ControlRequest) async -> ControlResponse {
+        guard request.verb == .perform, request.action == .runScene, request.duration != nil else {
+            return execute(request)
+        }
+        do {
+            let validated = try ControlRequestValidator.validate(request)
+            guard validated.durationSeconds != nil else { return execute(request) }
+            let name = (validated.actionArgument ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if let scene = scenes.scene(named: name) {
+                await refreshPeerState(forScene: scene)
+            }
+            return execute(request)
+        } catch let error as ControlError {
+            return .failure(error)
+        } catch {
+            return .failure(.unsupported("\(error)"))
+        }
+    }
+
     // MARK: - 本機執行
 
     private func runLocally(_ request: ValidatedControlRequest) throws(ControlError) -> [ControlResult] {
@@ -845,10 +867,20 @@ extension AutomationExecutor: FocusExecuting {
                   let property = request.property
             else { continue }
 
-            // 跨機項目要等 B7-4：`forward` 只支援 set，沒有遠端 get，
-            // 拿不到原值。照常套用，但誠實說它不會自己回來。
+            // 跨機項目（B7-4）：`forward` 只支援 set、沒有遠端 get，所以原值
+            // 來自對方主動回報的 `stateReport`（start 之前已經問過一輪）。
+            // 問不到就誠實說它不會自己回來，不假裝還原得了。
             if let peer = request.peer {
-                unrestorable.append("\(peer)：\(property.rawValue)（跨機還原要等 B7-4）")
+                guard let value = peerSnapshotValue(
+                    property: property, target: request.target, peerName: peer
+                ) else {
+                    unrestorable.append("\(peer)：\(property.rawValue)（原值未知）")
+                    continue
+                }
+                requests.append(ControlRequest(
+                    verb: .set, target: request.target, property: property,
+                    value: value, peer: peer
+                ))
                 continue
             }
 
@@ -895,22 +927,88 @@ extension AutomationExecutor: FocusExecuting {
 
     /// 把快照放回去。同樣逐條獨立——某台螢幕這 25 分鐘內被拔掉了，
     /// 不該讓其餘項目跟著不還原。
-    func restore(_ snapshot: FocusSnapshot) -> (restored: Int, failed: [String]) {
+    ///
+    /// `retryable` 是**對方離線**的跨機項目：那不是壞掉，只是現在送不到。
+    /// 其餘失敗（裝置不在、沒配對）重試也不會變好，不進這個清單。
+    func restore(_ snapshot: FocusSnapshot) -> (restored: Int, failed: [String], retryable: [ControlRequest]) {
         var restored = 0
         var failed: [String] = []
+        var retryable: [ControlRequest] = []
         for request in FocusPlanner.restoreRequests(snapshot) {
             let response = execute(request)
             if response.ok {
                 restored += 1
             } else {
-                failed.append("\(request.target.stringValue)：\(response.error?.message ?? "未知錯誤")")
+                let label = request.peer.map { "\($0)（跨機）" } ?? request.target.stringValue
+                failed.append("\(label)：\(response.error?.message ?? "未知錯誤")")
+                if response.error?.code == ControlError.peerOffline("").code {
+                    retryable.append(request)
+                }
             }
         }
         if let mode = snapshot.keepAwake {
             restoreKeepAwake(mode: mode, remaining: snapshot.keepAwakeRemainingSeconds)
             restored += 1
         }
-        return (restored, failed)
+        return (restored, failed, retryable)
+    }
+
+    /// 補送一批先前因為對方離線而沒送出去的還原請求（B7-4）。
+    /// 回傳仍然失敗的那些——對方剛連上又斷了的話還會留在清單裡。
+    func retry(_ requests: [ControlRequest]) -> (restored: Int, stillFailing: [ControlRequest]) {
+        var restored = 0
+        var stillFailing: [ControlRequest] = []
+        for request in requests {
+            if execute(request).ok {
+                restored += 1
+            } else {
+                stillFailing.append(request)
+            }
+        }
+        return (restored, stillFailing)
+    }
+
+    /// 場景裡涉及的每台 peer 都問一次現值，等回報回來。
+    ///
+    /// **上限 1 秒**：既有的 200ms 回報合併 ＋ 一趟區網 RTT 綽綽有餘。等不到
+    /// 就用手上已知的值（可能過期），再不然就是 `unrestorable`——寧可慢一秒
+    /// 也不要拿三天前的音量當「原值」放回去。
+    func refreshPeerState(forScene scene: ControlScene) async {
+        let peerNames = Set(scene.requests.compactMap(\.peer))
+        guard !peerNames.isEmpty else { return }
+        var asked = false
+        for name in peerNames {
+            guard let peerID = try? resolvePeer(name) else { continue }
+            coordinator.requestPeerState(from: peerID)
+            asked = true
+        }
+        guard asked else { return }
+        try? await Task.sleep(for: .seconds(1))
+    }
+
+    /// peer 的原值。來源是對方主動回報並記在 `peerKnownControls` 的那一份。
+    private func peerSnapshotValue(
+        property: ControlProperty,
+        target: ControlTarget,
+        peerName: String
+    ) -> String? {
+        guard let peerID = try? resolvePeer(peerName),
+              let known = settings.peerKnownControls[peerID], !known.isEmpty,
+              let key = try? remoteKey(property: property, target: target)
+        else { return nil }
+        if let field = key.peerKnownField, let value = known[field] {
+            return property.valueKind == .boolean
+                ? (value > 0.5 ? "on" : "off")
+                : ControlValue.snapshotString(value)
+        }
+        // 對方有回報過（表非空）卻沒有這個 App 的欄位＝那個 App 在對方那裡
+        // **沒有被調整過**，也就是預設值。`AppAudioSettings` 對未知 bundle
+        // 回的正是 gain 1／不靜音，所以這不是猜，是同一條語意。
+        switch key {
+        case .appVolume: return ControlValue.snapshotString(1)
+        case .appMute: return "off"
+        default: return nil
+        }
     }
 
     /// 防睡眠的還原。`.duration` 以**剩餘秒數**重新起算：存的是原始秒數，

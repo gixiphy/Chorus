@@ -159,6 +159,10 @@ final class AppState {
         automation.focus = focus
         focusNotifier = FocusNotifier()
         focus.notifier = focusNotifier
+        // peer 連上就補送欠它的跨機還原（B7-4）
+        coordinator.peerConnectedHandler = { _ in
+            MainActor.assumeIsolated { AppStateRegistry.focus?.retryPendingRestores() }
+        }
 
         automationEvents = AutomationEventHub()
         automationServer = ControlHTTPServer(
