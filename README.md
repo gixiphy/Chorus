@@ -8,7 +8,7 @@ macOS 選單列 App：控制所有螢幕與音訊裝置——並且在同一區�
 > [SoundSource](https://rogueamoeba.com/soundsource/) 那一類。Chorus 把兩邊收進
 > 同一個選單列，再疊上跨機與 AI 這兩層——那才是它真正的差異點。
 
-`1.3.0`（build 75）· macOS 26+ · Apple Silicon · 繁體中文／简体中文／English
+`1.4.0`（build 76）· macOS 26+ · Apple Silicon · 繁體中文／简体中文／English
 
 <img src="assets/menubar.png" alt="Chorus 選單列" width="330">
 
