@@ -229,7 +229,11 @@ private struct FocusRow: View {
                 HStack(spacing: 6) {
                     Label("專注中：「\(session.sceneName)」", systemImage: "timer")
                         .font(.callout)
+                        // 長名字截斷、倒數與按鈕保持完整（實測「週一早上的深度
+                        // 工作時段」會截成「週一早上的…」）；tooltip 補回全名
                         .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help(session.sceneName)
                     Spacer(minLength: 4)
                     Text(countdown)
                         .font(.callout.monospacedDigit())
