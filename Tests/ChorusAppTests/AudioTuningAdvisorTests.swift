@@ -123,7 +123,7 @@ struct AudioTuningAdvisorTests {
     func missingEngineFailsHonestly() {
         let (advisor, _, _, _) = makeStack()
         advisor.analyze(target: .app(bundleID: "com.apple.podcasts"), request: "")
-        #expect(advisor.lastErrorMessage?.contains("分析引擎") == true)
+        #expect(advisor.lastErrorMessage?.contains("AI 引擎") == true)
         #expect(advisor.lastErrorAssist == .openEngineSettings)
     }
 }

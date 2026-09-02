@@ -21,28 +21,6 @@
         }
       }
     },
-    "%@ · %lld 條 · %@" : {
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%@ · %lld entry · %@"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%@ · %lld entries · %@"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "%@ — %@" : {
       "localizations" : {
         "en" : {
@@ -255,6 +233,28 @@
         }
       }
     },
+    "%lld 條 · %@" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld item · %@"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld items · %@"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld 項未還原（%@離線）" : {
       "localizations" : {
         "en" : {
@@ -313,6 +313,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "AI Advice"
+          }
+        }
+      }
+    },
+    "AI 引擎" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI Engine"
           }
         }
       }
@@ -387,12 +397,12 @@
         }
       }
     },
-    "Chorus 內建繁體中文與英文。其他語言可以交給本機的 AI CLI（設定 → 分析引擎裡選的那個）翻譯全部介面文字；翻好的檔只存在這台 Mac，重新啟動後生效。這是機器翻譯，翻不好的字串會退回英文。" : {
+    "Chorus 內建繁體中文與英文。其他語言可以交給本機的 AI CLI（設定 → AI 引擎裡選的那個）翻譯全部介面文字；翻好的檔只存在這台 Mac，隨時可以切回內建語言。這是機器翻譯，翻不好的字串會退回英文。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Chorus includes Traditional Chinese and English. For other languages, use the local AI CLI selected in Settings → Analysis Engine to translate all UI text. Translated files exist only on this Mac and take effect after restarting. This is machine translation; poorly translated strings fall back to English."
+            "value" : "Chorus includes Traditional Chinese and English. Other languages can use the local AI CLI selected in Settings → AI Engine to translate all UI text; translated files are stored only on this Mac, and you can switch back to a built-in language at any time. This is machine translation; strings that cannot be translated will fall back to English."
           }
         }
       }
@@ -1265,16 +1275,6 @@
         }
       }
     },
-    "光環境顧問與調音顧問共用的本機 LLM CLI（偵測到什麼列什麼；不經手任何金鑰）" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The local LLM CLI shared by the ambient light advisor and tuning advisor (lists what it detects; never handles any keys)"
-          }
-        }
-      }
-    },
     "內建清單裡沒有這個型號——可到 AutoEq 的 results 目錄複製該型號的 ParametricEQ 內容，用「貼上校正檔」套用。" : {
       "localizations" : {
         "en" : {
@@ -1291,6 +1291,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Built-in Display"
+          }
+        }
+      }
+    },
+    "內建（繁體中文／English，跟隨系統）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Built-in (Traditional Chinese/English, follows system)"
           }
         }
       }
@@ -1433,16 +1443,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Analysis failed: %@"
-          }
-        }
-      }
-    },
-    "分析引擎" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Analysis Engine"
           }
         }
       }
@@ -2561,16 +2561,6 @@
         }
       }
     },
-    "已安裝的翻譯" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Installed Translations"
-          }
-        }
-      }
-    },
     "已安裝，等待音訊服務載入" : {
       "localizations" : {
         "en" : {
@@ -3427,12 +3417,12 @@
         }
       }
     },
-    "未偵測到分析引擎——與光環境顧問共用同一組（設定 → 分析引擎）。" : {
+    "未偵測到 AI 引擎（設定 → AI 引擎）。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No analysis engine detected—shared with the ambient light advisor (Settings → Analysis Engine)."
+            "value" : "No AI engine detected (Settings → AI Engine)."
           }
         }
       }
@@ -3457,32 +3447,32 @@
         }
       }
     },
-    "未找到 %@ CLI，請確認已安裝（設定 → 分析引擎）" : {
+    "未找到 %@ CLI，請確認已安裝（設定 → AI 引擎）" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ CLI not found. Make sure it is installed (Settings → Analysis Engine)"
+            "value" : "%@ CLI was not found. Make sure it is installed (Settings → AI Engine)."
           }
         }
       }
     },
-    "未找到分析引擎" : {
+    "未找到 AI 引擎" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Analysis engine not found"
+            "value" : "No AI Engine Found"
           }
         }
       }
     },
-    "未找到可用的分析引擎（設定 → 分析引擎）" : {
+    "未找到可用的 AI 引擎（設定 → AI 引擎）" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No available analysis engine found (Settings → Analysis Engine)"
+            "value" : "No available AI engine was found (Settings → AI Engine)."
           }
         }
       }
@@ -3523,6 +3513,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This Mac"
+          }
+        }
+      }
+    },
+    "本機的 AI CLI，供光環境顧問、調音顧問與介面翻譯共用。偵測到什麼列什麼，Chorus 不經手任何金鑰，計費在你自己的訂閱上。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local AI CLI shared by the ambient-light advisor, audio tuning advisor, and UI translation. Chorus lists whatever it detects and never handles your keys; billing is charged to your own subscription."
           }
         }
       }
@@ -3747,12 +3747,12 @@
         }
       }
     },
-    "沒有可用的分析引擎——先到「分析引擎」分頁安裝或啟用一個 CLI。" : {
+    "沒有可用的 AI 引擎——先到「AI 引擎」分頁安裝或啟用一個 CLI。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No analysis engine is available—install or enable a CLI in the \"Analysis Engine\" tab first."
+            "value" : "No AI engine is available—install or enable a CLI on the \"AI Engine\" tab first."
           }
         }
       }
@@ -4219,16 +4219,6 @@
         }
       }
     },
-    "移除翻譯" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Remove Translation"
-          }
-        }
-      }
-    },
     "移除驅動…" : {
       "localizations" : {
         "en" : {
@@ -4589,16 +4579,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Translating %lld/%lld"
-          }
-        }
-      }
-    },
-    "翻譯已就位，但目前執行中的還是舊語言；重新啟動 Chorus 才會切換。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The translation is ready, but the running app is still using the previous language; restart Chorus to switch."
           }
         }
       }
@@ -4975,12 +4955,12 @@
         }
       }
     },
-    "設定 → 分析引擎：確認 CLI 已安裝或指定路徑" : {
+    "設定 → AI 引擎：確認 CLI 已安裝或指定路徑" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Settings → Analysis Engine: Verify the CLI is installed or specify its path"
+            "value" : "Settings → AI Engine: Make sure the CLI is installed or specify its path"
           }
         }
       }
@@ -5415,6 +5395,16 @@
         }
       }
     },
+    "選好的語言要重新啟動 Chorus 才會切換。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restart Chorus to switch to the selected language."
+          }
+        }
+      }
+    },
     "還原" : {
       "localizations" : {
         "en" : {
@@ -5725,12 +5715,12 @@
         }
       }
     },
-    "開啟設定 → 分析引擎，確認 CLI 已安裝或指定路徑" : {
+    "開啟設定 → AI 引擎，確認 CLI 已安裝或指定路徑" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Open Settings → Analysis Engine and make sure the CLI is installed or specify its path"
+            "value" : "Open Settings → AI Engine and make sure the CLI is installed or specify its path"
           }
         }
       }

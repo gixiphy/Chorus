@@ -36,7 +36,7 @@ enum AdviceError: Error {
     var userMessage: String {
         switch self {
         case let .engineNotFound(engineID):
-            String(localized: "未找到 \(engineID) CLI，請確認已安裝（設定 → 分析引擎）")
+            String(localized: "未找到 \(engineID) CLI，請確認已安裝（設定 → AI 引擎）")
         case let .notLoggedIn(engineID):
             String(localized: "\(engineID) 未登入或憑證已失效，請在終端重新登入後再試")
         case .timedOut:

@@ -43,7 +43,7 @@ struct AudioAdviceSection: View {
                     .disabled(tuner.isAnalyzing || !tuner.canAnalyze)
             }
             if !tuner.canAnalyze {
-                Text("未偵測到分析引擎——與光環境顧問共用同一組（設定 → 分析引擎）。")
+                Text("未偵測到 AI 引擎（設定 → AI 引擎）。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -251,7 +251,7 @@ struct AudioAdviceSection: View {
         case .openEngineSettings:
             SettingsLink { Text("開啟設定") }
                 .controlSize(.small)
-                .help("設定 → 分析引擎：確認 CLI 已安裝或指定路徑")
+                .help("設定 → AI 引擎：確認 CLI 已安裝或指定路徑")
         case nil:
             EmptyView()
         }

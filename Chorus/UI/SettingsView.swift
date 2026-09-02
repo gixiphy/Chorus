@@ -19,7 +19,7 @@ struct SettingsView: View {
             Tab("同步", systemImage: "arrow.triangle.2.circlepath") {
                 SyncSettingsTab()
             }
-            Tab("分析引擎", systemImage: "brain") {
+            Tab("AI 引擎", systemImage: "brain") {
                 AdvisorSettingsTab()
             }
             Tab("備份", systemImage: "icloud") {
@@ -492,7 +492,7 @@ private struct AdvisorSettingsTab: View {
                     engineRow(engine)
                 }
             } header: {
-                Text("光環境顧問與調音顧問共用的本機 LLM CLI（偵測到什麼列什麼；不經手任何金鑰）")
+                Text("本機的 AI CLI，供光環境顧問、調音顧問與介面翻譯共用。偵測到什麼列什麼，Chorus 不經手任何金鑰，計費在你自己的訂閱上。")
             }
             Section {
                 Button("重新掃描") { appState.advisor.registry.rescanIncludingModels() }

@@ -162,7 +162,18 @@ struct UITranslatorTests {
         #expect(store.manifest(for: "ja")?.translated == translated)
         #expect(translated == source.strings.count + source.plurals.count - (store.manifest(for: "ja")?.skipped.count ?? 0))
         // 全部翻完就沒有缺的
-        #expect(translator.missingCount == 0)
+        #expect(translator.missingCount(for: "ja") == 0)
+        #expect(translator.installedLanguages == ["ja"])
         #expect(translator.needsRelaunch)
+        // 選回內建：檔還在、設定清掉；沒有覆蓋在跑就不用重啟
+        translator.selectedLanguage = nil
+        #expect(settings.uiTranslationLanguage == nil)
+        #expect(translator.installedLanguages == ["ja"])
+        #expect(!translator.needsRelaunch)
+        // 移除選用中的語言會一起選回內建
+        translator.selectedLanguage = "ja"
+        translator.remove(language: "ja")
+        #expect(translator.installedLanguages.isEmpty)
+        #expect(translator.selectedLanguage == nil)
     }
 }

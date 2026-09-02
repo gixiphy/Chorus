@@ -399,7 +399,7 @@ struct DeviceDiagramView: View {
         case .openEngineSettings:
             SettingsLink { Text("開啟設定") }
                 .controlSize(.small)
-                .help("設定 → 分析引擎：確認 CLI 已安裝或指定路徑")
+                .help("設定 → AI 引擎：確認 CLI 已安裝或指定路徑")
         case nil:
             EmptyView()
         }
@@ -409,10 +409,10 @@ struct DeviceDiagramView: View {
     private var analyzeButton: some View {
         if appState.advisor.registry.activeEngine == nil {
             SettingsLink {
-                Label("未找到分析引擎", systemImage: "exclamationmark.triangle")
+                Label("未找到 AI 引擎", systemImage: "exclamationmark.triangle")
             }
             .controlSize(.small)
-            .help("開啟設定 → 分析引擎，確認 CLI 已安裝或指定路徑")
+            .help("開啟設定 → AI 引擎，確認 CLI 已安裝或指定路徑")
         } else {
             Button {
                 if appState.settings.advisorConfirmed {

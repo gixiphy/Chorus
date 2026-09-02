@@ -91,7 +91,7 @@ GLOSSARY = {
     "配置圖": "layout (the desk layout diagram)",
     "情境": "scenario (a saved desk lighting scenario)",
     "顧問／建議": "advisor / advice",
-    "分析引擎": "analysis engine (an external AI CLI such as Claude Code)",
+    "AI 引擎": "AI engine (an external AI CLI such as Claude Code; also the Settings tab name)",
     "動詞層／動作": "action (in scenes: 「%lld 個動作」= actions)",
     "結束時還原": "restore when the timed scene ends (NOT when the app quits)",
     "限時套用": "apply for a limited time (starts a timed scene)",

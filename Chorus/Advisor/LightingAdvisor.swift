@@ -163,7 +163,7 @@ final class LightingAdvisor {
         }
         // 這位顧問送照片，引擎必須能看圖；調音顧問純文字、不設此要求。
         guard let engine = registry.activeEngine(requiring: [.vision]) else {
-            lastErrorMessage = String(localized: "未找到可用的分析引擎（設定 → 分析引擎）")
+            lastErrorMessage = String(localized: "未找到可用的 AI 引擎（設定 → AI 引擎）")
             return
         }
         let provider = CLIAdviceProvider(

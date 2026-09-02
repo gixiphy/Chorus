@@ -41,24 +41,27 @@ final class UITranslator {
 
     // MARK: - 狀態
 
-    /// 使用者選定要用的翻譯（設定裡記的那個）及其 manifest。
-    var installed: UITranslationStore.Manifest? {
-        settings.uiTranslationLanguage.flatMap { store.manifest(for: $0) }
+    /// 使用者選定要用的介面語言：nil＝內建（跟隨系統的繁中／英文）。
+    /// 選回內建**不會**刪翻譯檔，之後還能再切回來。
+    var selectedLanguage: String? {
+        get { settings.uiTranslationLanguage }
+        set { settings.uiTranslationLanguage = newValue }
     }
 
-    /// 已翻好但目前執行的不是它：要重啟才會生效。
+    /// 已翻好、檔還在的語言。
+    var installedLanguages: [String] { store.installedLanguages() }
+
+    func manifest(for language: String) -> UITranslationStore.Manifest? { store.manifest(for: language) }
+
+    /// 選定的與正在執行的不同：要重啟才會生效（含選回內建）。
     var needsRelaunch: Bool {
-        guard let language = settings.uiTranslationLanguage, store.manifest(for: language) != nil else {
-            // 設定已清掉但覆蓋還在跑：也是要重啟
-            return TranslatedBundle.activeLanguage != nil
-        }
-        return TranslatedBundle.activeLanguage != language
+        let selected = selectedLanguage.flatMap { store.manifest(for: $0) != nil ? $0 : nil }
+        return TranslatedBundle.activeLanguage != selected
     }
 
-    /// 內建字串裡尚未翻的條數（升版後會長出來）。
-    var missingCount: Int {
-        guard let language = settings.uiTranslationLanguage else { return 0 }
-        return missingItems(for: language, source: UITranslationStore.builtinSource()).count
+    /// 某個已翻語言裡，內建字串尚未翻的條數（升版後會長出來）。
+    func missingCount(for language: String) -> Int {
+        missingItems(for: language, source: UITranslationStore.builtinSource()).count
     }
 
     var isRunning: Bool {
@@ -120,7 +123,7 @@ final class UITranslator {
     func translate(onlyMissing: Bool) {
         guard !isRunning else { return }
         guard let engine = registry.activeEngine else {
-            phase = .failed(String(localized: "未找到可用的分析引擎（設定 → 分析引擎）"))
+            phase = .failed(String(localized: "未找到可用的 AI 引擎（設定 → AI 引擎）"))
             return
         }
         let language = targetLanguage
@@ -222,11 +225,10 @@ final class UITranslator {
         task?.cancel()
     }
 
-    /// 移除已安裝的翻譯：刪檔、清設定。覆蓋還在記憶體裡，重啟才回內建語言。
-    func removeInstalled() {
-        guard let language = settings.uiTranslationLanguage else { return }
+    /// 刪掉某個語言的翻譯檔；若它正被選用，選回內建。覆蓋還在記憶體裡，重啟才變。
+    func remove(language: String) {
         try? store.remove(language: language)
-        settings.uiTranslationLanguage = nil
+        if settings.uiTranslationLanguage == language { settings.uiTranslationLanguage = nil }
         phase = .idle
     }
 

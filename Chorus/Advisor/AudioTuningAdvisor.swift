@@ -95,7 +95,7 @@ final class AudioTuningAdvisor {
     func analyze(target: AudioTuningTarget, request: String) {
         guard !isAnalyzing else { return }
         guard let engine = registry?.activeEngine else {
-            lastErrorMessage = String(localized: "未找到可用的分析引擎（設定 → 分析引擎）")
+            lastErrorMessage = String(localized: "未找到可用的 AI 引擎（設定 → AI 引擎）")
             lastErrorAssist = .openEngineSettings
             return
         }
