@@ -43,6 +43,33 @@ struct ModelListingTests {
     func empty() {
         #expect(AdviceEngineRegistry.parseModels("", format: .plainLines).isEmpty)
         #expect(AdviceEngineRegistry.parseModels("", format: .markerList).isEmpty)
+        #expect(AdviceEngineRegistry.parseModels("", format: .whitespaceColumns).isEmpty)
+    }
+
+    @Test("pi：跳過表頭，只收 images=yes，拼成 provider/model")
+    func whitespaceColumnsFiltersHeaderAndImages() {
+        let models = AdviceEngineRegistry.parseModels("""
+        provider     model              context  max-out  thinking  images
+        opencode-go  deepseek-v4-pro    1M       384K     yes       no
+        opencode-go  glm-5.1            202.8K   32.8K    yes       no
+        opencode-go  kimi-k2.7-code     262.1K   262.1K   yes       yes
+        opencode-go  gpt-5.6-luna       1.1M     128K     yes       yes
+        opencode-go  qwen3.7-max        1M       65.5K    yes       no
+        """, format: .whitespaceColumns)
+        #expect(models == ["opencode-go/kimi-k2.7-code", "opencode-go/gpt-5.6-luna"])
+    }
+
+    @Test("pi：真實 --list-models 列尾空白不影響，thinking=yes 不算看圖")
+    func whitespaceColumnsMatchesRealPiListing() {
+        // 實測 pi 0.84.1 的列尾有空白；thinking 也是 yes/no，不能拿「行內有 yes」當準。
+        let models = AdviceEngineRegistry.parseModels("""
+        provider     model              context  max-out  thinking  images
+        opencode-go  deepseek-v4-flash  1M       384K     yes       no    
+        opencode-go  gpt-5.6-luna       1.1M     128K     yes       yes   
+        opencode-go  grok-4.5           500K     500K     yes       yes   
+        opencode-go  qwen3.7-max        1M       65.5K    yes       no    
+        """, format: .whitespaceColumns)
+        #expect(models == ["opencode-go/gpt-5.6-luna", "opencode-go/grok-4.5"])
     }
 
     @Test("agy：TSV 取第一欄的 slug")
@@ -81,10 +108,11 @@ struct ModelListingTests {
         #expect(AdviceEngineRegistry.parseCodexModelsCache(Data("{}".utf8)).isEmpty)
     }
 
-    @Test("五家都有模型清單來源")
+    @Test("六家都有模型清單來源")
     func everyEngineHasASource() {
+        #expect(KnownCLIEngine.catalog.map(\.id) == ["claude", "agy", "grok", "codex", "opencode", "pi"])
         let byID = Dictionary(uniqueKeysWithValues: KnownCLIEngine.catalog.map { ($0.id, $0) })
-        for id in ["agy", "grok", "opencode", "codex"] {
+        for id in ["agy", "grok", "opencode", "codex", "pi"] {
             #expect(byID[id]?.modelListing != nil, "\(id) 少了清單來源")
         }
         // claude 沒有列舉介面，但別名是設計上穩定的，可作靜態建議
@@ -92,7 +120,28 @@ struct ModelListingTests {
         #expect(byID["claude"]?.suggestedModels.contains("sonnet") == true)
     }
 
-    @Test("每家都有模型欄位與格式提示——五家一致，不再有例外")
+    @Test("pi 目錄項對齊定稿：plainStdout、@path 附加、login=pi、只列看圖模型")
+    func piCatalogEntry() {
+        let pi = KnownCLIEngine.catalog.first { $0.id == "pi" }!
+        #expect(pi.executableName == "pi")
+        #expect(pi.displayName == "Pi")
+        #expect(pi.capabilities == [.vision])
+        #expect(pi.codec == .plainStdout)
+        #expect(pi.photoDelivery == .attached)
+        #expect(pi.pendingIntegration == false)
+        #expect(pi.experimental == false)
+        #expect(pi.supportsModelSelection)
+        #expect(pi.loginCommand == "pi")
+        #expect(pi.readInstruction == "the photo is attached")
+        guard case let .command(arguments, format) = pi.modelListing else {
+            Issue.record("pi 應以 --list-models 列舉")
+            return
+        }
+        #expect(arguments == ["--list-models"])
+        #expect(format == .whitespaceColumns)
+    }
+
+    @Test("每家都有模型欄位與格式提示——六家一致，不再有例外")
     func everyEngineHasModelField() {
         for engine in KnownCLIEngine.catalog {
             #expect(engine.supportsModelSelection, "\(engine.id) 少了模型欄位")

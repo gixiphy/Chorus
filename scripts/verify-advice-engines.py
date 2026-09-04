@@ -110,7 +110,7 @@ def cleanup():
         subprocess.run(["open", PROD_APP], capture_output=True)
 
 
-ENGINES = ["claude", "agy", "grok", "codex", "opencode"]
+ENGINES = ["claude", "agy", "grok", "codex", "opencode", "pi"]
 
 
 def verify_engine(engine_id, photo, model=""):

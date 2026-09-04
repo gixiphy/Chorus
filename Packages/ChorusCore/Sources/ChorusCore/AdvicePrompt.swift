@@ -196,7 +196,7 @@ public enum AdvicePrompt {
     public enum PhotoDelivery: Sendable, Equatable {
         /// 路徑寫進 prompt，由模型自己用讀檔工具取（claude／agy／grok）。
         case pathInPrompt
-        /// CLI 以參數直接附加影像（codex `--image`、opencode `-f`）——
+        /// CLI 以參數直接附加影像（codex `--image`、opencode `-f`、pi `@path`）——
         /// 模型已經看得到圖，再叫它「去讀某個路徑」只會誘發多餘的工具呼叫。
         case attached
     }

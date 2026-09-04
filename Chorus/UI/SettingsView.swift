@@ -554,7 +554,7 @@ private struct AdvisorSettingsTab: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if !engine.capabilities.contains(.vision) {
-                    // 能力旗標（E0）：目前目錄五家都能看圖，這行是為未來的
+                    // 能力旗標（E0）：目前目錄六家都能看圖，這行是為未來的
                     // 純文字引擎留的——它可以服務調音顧問，但光環境顧問會跳過它。
                     Text("純文字引擎——光環境顧問（需要看圖）不會使用它")
                         .font(.caption)

@@ -11,7 +11,7 @@ import Observation
 struct KnownCLIEngine: Identifiable, Sendable {
     /// 引擎能力（E0 正式化）。消費端聲明需求、選擇時過濾——
     /// 光環境顧問要 `.vision`（送照片），調音顧問純文字、什麼都不要求。
-    /// 目前五家都支援看圖，旗標在此刻不改變任何行為；它存在的意義是
+    /// 目前六家都支援看圖，旗標在此刻不改變任何行為；它存在的意義是
     /// 讓「接一個純文字引擎」成為加一筆目錄的事，而不是改選擇邏輯的事。
     enum Capability: Sendable, Hashable {
         /// 能吃影像輸入（路徑讓它讀，或參數直接附加）。
@@ -56,6 +56,10 @@ struct KnownCLIEngine: Identifiable, Sendable {
             case markerList
             /// `<slug>\t<顯示名>`（agy）。
             case tabSeparated
+            /// 空白對齊欄位＋表頭（pi：`provider model … images`）。
+            /// 跳過首欄為 `provider` 的表頭列，取前兩欄拼成 `provider/model`，
+            /// 且只收 `images == yes` 的列——選到純文字模型會讓看圖分析直接失敗。
+            case whitespaceColumns
         }
     }
     /// 給 prompt 的照片讀取措辭（僅 `.pathInPrompt` 用得到）。
@@ -128,6 +132,21 @@ struct KnownCLIEngine: Identifiable, Sendable {
             for path in run.photoPaths { arguments += ["-f", path] }
             return (arguments, nil)
 
+        case "pi":
+            // 照片以 @path 附加，不動讀檔工具 → --no-tools 直接免掉權限與誤觸。
+            // pi 沒有 --cd／--cwd，會從行程 cwd 自動撈 AGENTS.md／CLAUDE.md、
+            // extensions、skills、prompt templates——沙箱指不過去，只能把探索全關掉，
+            // 否則使用者機器上的擴充會默默改變顧問行為（難查、且無法重現）。
+            // 參數順序：pi [options] [@files...] [messages...]，@檔案排在訊息前
+            //（與 opencode 的 -f 相反方向）。
+            var arguments = ["-p", "--no-session", "--no-tools",
+                             "--no-context-files", "--no-extensions",
+                             "--no-skills", "--no-prompt-templates"]
+            if let model = run.model, !model.isEmpty { arguments += ["--model", model] }
+            for path in run.photoPaths { arguments.append("@" + path) }
+            arguments.append(prompt)
+            return (arguments, nil)
+
         default:
             return (["-p", prompt], nil)
         }
@@ -195,6 +214,17 @@ struct KnownCLIEngine: Identifiable, Sendable {
             suggestedModels: [],
             readInstruction: "the photo is attached",
             loginCommand: "opencode auth login"
+        ),
+        KnownCLIEngine(
+            id: "pi", executableName: "pi", displayName: "Pi",
+            capabilities: [.vision],
+            codec: .plainStdout, photoDelivery: .attached,
+            pendingIntegration: false, experimental: false, supportsModelSelection: true,
+            modelHint: String(localized: "provider/model 格式，如 opencode-go/kimi-k2.7-code"),
+            modelListing: .command(arguments: ["--list-models"], format: .whitespaceColumns),
+            suggestedModels: [],
+            readInstruction: "the photo is attached",
+            loginCommand: "pi"
         ),
     ]
 }
@@ -325,6 +355,18 @@ final class AdviceEngineRegistry {
                 // 去掉 "(default)" 之類的尾註
                 let slug = body.split(separator: " ").first.map(String.init) ?? body
                 return slug.isEmpty ? nil : slug
+            }
+        case .whitespaceColumns:
+            // pi：空白對齊欄位＋表頭。跳過首欄字面值 `provider` 的表頭列，
+            // 取前兩欄拼成 `provider/model`，只收 images == yes。
+            return lines.compactMap { line -> String? in
+                let parts = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+                guard parts.count >= 6, parts[0] != "provider" else { return nil }
+                guard parts.last?.lowercased() == "yes" else { return nil }
+                let provider = parts[0]
+                let model = parts[1]
+                guard !provider.isEmpty, !model.isEmpty else { return nil }
+                return "\(provider)/\(model)"
             }
         }
     }

@@ -14,7 +14,7 @@ public enum AdviceOutputCodec: String, Codable, Sendable {
     /// grok（Grok Build）`--output-format json`：envelope 欄位是 `text`。
     case textEnvelope
     /// 通用退路：整段 stdout 就是回應文字。
-    /// codex／opencode 都適用——它們把前言與進度寫 stderr，stdout 只有最終回覆。
+    /// codex／opencode／pi 都適用——它們把前言與進度寫 stderr，stdout 只有最終回覆。
     case plainStdout
 }
 

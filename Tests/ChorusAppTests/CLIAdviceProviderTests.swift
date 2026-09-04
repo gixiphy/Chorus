@@ -269,6 +269,54 @@ struct CLIAdviceProviderTests {
         #expect(!prompt.contains("/tmp/a.jpg"))
     }
 
+    @Test("pi：照片以 @path 附加且排在 prompt 前，探索旗標齊全")
+    func piAttachesPhotosAndDisablesExploration() async throws {
+        let argv = try await captureArgv(engineID: "pi", photos: ["/tmp/a.jpg", "/tmp/b.jpg"])
+        #expect(argv.first == "-p")
+        for flag in ["--no-session", "--no-tools", "--no-context-files",
+                     "--no-extensions", "--no-skills", "--no-prompt-templates"] {
+            #expect(argv.contains(flag), "缺少 \(flag)：\(argv)")
+        }
+        guard let firstPhoto = argv.firstIndex(of: "@/tmp/a.jpg"),
+              let secondPhoto = argv.firstIndex(of: "@/tmp/b.jpg"),
+              let prompt = argv.firstIndex(where: { $0.contains("attached to this message") })
+        else {
+            Issue.record("argv 形狀不符：\(argv)")
+            return
+        }
+        // 實測：@檔案必須排在訊息前（與 opencode 的 -f 相反方向）
+        #expect(firstPhoto < prompt)
+        #expect(secondPhoto < prompt)
+        #expect(argv.last?.contains("attached to this message") == true)
+        // 附加模式不該再把路徑寫進 prompt
+        let promptText = argv.last ?? ""
+        #expect(!promptText.contains("/tmp/a.jpg"))
+    }
+
+    @Test("pi：有模型時帶 --model，@path 仍排在 prompt 前")
+    func piInvocationIncludesModel() {
+        let engine = KnownCLIEngine.catalog.first { $0.id == "pi" }!
+        let run = KnownCLIEngine.RunContext(
+            sandbox: nil,
+            schemaFile: nil,
+            model: "opencode-go/kimi-k2.7-code",
+            photoPaths: ["/tmp/a.jpg"]
+        )
+        let (arguments, stdin) = engine.invocation(prompt: "analyze this", run: run)
+        #expect(stdin == nil)
+        #expect(arguments.first == "-p")
+        guard let modelFlag = arguments.firstIndex(of: "--model"),
+              let photo = arguments.firstIndex(of: "@/tmp/a.jpg"),
+              let prompt = arguments.firstIndex(of: "analyze this")
+        else {
+            Issue.record("argv 形狀不符：\(arguments)")
+            return
+        }
+        #expect(arguments[modelFlag + 1] == "opencode-go/kimi-k2.7-code")
+        #expect(modelFlag < photo)
+        #expect(photo < prompt)
+    }
+
     @Test("opencode：訊息必須排在 -f 前面，否則會被當成檔案路徑吃掉")
     func opencodeArgumentOrder() async throws {
         let argv = try await captureArgv(engineID: "opencode", photos: ["/tmp/a.jpg"])

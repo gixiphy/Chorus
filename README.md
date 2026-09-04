@@ -94,6 +94,7 @@ chorus set --peer "Mac mini" --app com.spotify.client --mute on
 | `grok` | Grok Build |
 | `codex` | Codex CLI |
 | `opencode` | OpenCode |
+| `pi` | Pi |
 
 <img src="assets/advice-engines.png" alt="AI 引擎設定" width="460">
 

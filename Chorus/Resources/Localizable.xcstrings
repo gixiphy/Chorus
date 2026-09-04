@@ -1005,6 +1005,22 @@
         }
       }
     },
+    "provider/model 格式，如 opencode-go/kimi-k2.7-code" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "provider/model format, e.g. opencode-go/kimi-k2.7-code"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "provider/model 格式，如 opencode-go/kimi-k2.7-code"
+          }
+        }
+      }
+    },
     "set %@ 需要一個值" : {
       "localizations" : {
         "en" : {
