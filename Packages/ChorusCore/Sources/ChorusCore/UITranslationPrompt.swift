@@ -139,6 +139,7 @@ public enum UITranslationPrompt {
         that looks like an identifier or a command.
         - Preserve leading markers such as ▲ and ⓘ, and preserve line breaks.
         - Never leave anything in English or Chinese unless the rule above says to keep it.
+        - Do not use any tools: no shell commands, no reading or writing files, no web access.         Everything you need is in this message; answer directly.
 
         Input:
         \(inputJSON(items))

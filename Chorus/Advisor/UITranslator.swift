@@ -37,17 +37,34 @@ final class UITranslator {
     private(set) var manifests: [String: UITranslationStore.Manifest] = [:]
     private(set) var missingCounts: [String: Int] = [:]
 
-    /// 起始批量。之後**依引擎實際表現動態調整**：一批完整回來又夠快就加量，
-    /// 回覆缺條（輸出被截斷）或整批失敗就砍半重送。不同 CLI 的輸出上限與速度
-    /// 差很多（claude 一批 40 條約 8 秒，agy 同一份 prompt 會卡死），寫死一個
-    /// 數字不是太保守就是會截斷。
-    static let batchSize = 40
-    static let minBatchSize = 10
+    /// 起始探測量：先用小批量量一下這個引擎多快，再依實測速率決定之後送幾條。
+    ///
+    /// 引擎之間差到兩個數量級（2026-09-04 實測：claude 每條 0.2 秒、agy 1.1 秒、
+    /// grok **12 秒**），寫死任何一個數字都會有人受害——對 grok 來說 40 條一批
+    /// 必定撞逾時，對 claude 來說 40 條又白白多送十幾次。所以只有起手是固定的。
+    static let probeBatchSize = 10
+    static let minBatchSize = 5
     static let maxBatchSize = 120
-    /// 每次加量的幅度（加法成長，不用倍增：一次跨太大踩到上限代價高）。
-    static let batchGrowStep = 20
-    /// 一批在這個秒數內回完才加量。
-    static let batchGrowSeconds: TimeInterval = 60
+    /// 目標批量＝在「逾時 × 這個比例」內回得完；餘裕留給引擎抖動與併發互相拖慢。
+    static let batchTimeBudget = 0.35
+    /// 一次最多放大幾倍：一個特別快的樣本不該把批量一口氣拉到上限。
+    static let batchGrowthFactor = 4
+    /// 依上一批的實測速率算下一批送幾條。`ceiling` 是截斷或失敗之後壓下來的
+    /// 上限——被截斷過就不該再長回去，否則會在「放大→截斷→砍半」之間震盪。
+    static func nextBatchSize(
+        previous: Int, elapsed: TimeInterval, budget: TimeInterval, ceiling: Int
+    ) -> Int {
+        guard previous > 0, elapsed > 0 else { return max(minBatchSize, min(previous, ceiling)) }
+        let perItem = elapsed / Double(previous)
+        let target = Int(budget / perItem)
+        return max(minBatchSize, min(ceiling, min(target, previous * batchGrowthFactor)))
+    }
+
+    /// 一批的預算秒數（與子行程逾時同源）。
+    static var batchBudgetSeconds: TimeInterval {
+        Double(CLIUITranslationBatchRunner.defaultTimeout.components.seconds) * batchTimeBudget
+    }
+
     /// 同一條字串被模型漏掉時最多重送幾次，之後就退回英文。
     static let maxItemAttempts = 2
     /// 整批硬失敗（逾時、decode 壞掉）幾次之後收手。降批量重送救得回截斷，
@@ -296,7 +313,9 @@ final class UITranslator {
             // 待送佇列：批量是動態的，所以不預先切好批，每次從佇列前面取「當下批量」條。
             var pending = items
             var attempts: [Int: Int] = [:]
-            var batchSize = Self.batchSize
+            var batchSize = Self.probeBatchSize
+            // 被截斷或失敗過就壓下來，之後不再長回去
+            var ceiling = Self.maxBatchSize
             var resolved = 0
             var failures = 0
             var inFlight = 0
@@ -340,7 +359,8 @@ final class UITranslator {
                             failures += 1
                             // 還有降的空間就砍半重送：引擎吃不下這個量是最常見的死法
                             if failures <= Self.maxBatchFailures, batchSize > Self.minBatchSize {
-                                batchSize = max(Self.minBatchSize, batchSize / 2)
+                                ceiling = max(Self.minBatchSize, outcome.items.count / 2)
+                                batchSize = min(batchSize, ceiling)
                                 pending.insert(contentsOf: outcome.items, at: 0)
                                 ChorusLog.app.notice("介面翻譯批次失敗，批量降到 \(batchSize) 重送：\(failure.message)")
                                 continue
@@ -386,12 +406,15 @@ final class UITranslator {
                         }
 
                         if missing.isEmpty {
-                            // 完整回來又夠快：這個引擎還吃得下，往上加量
-                            if outcome.elapsed < Self.batchGrowSeconds, batchSize < Self.maxBatchSize {
-                                batchSize = min(Self.maxBatchSize, batchSize + Self.batchGrowStep)
-                            }
+                            // 依這批的實測速率決定下一批送幾條
+                            batchSize = Self.nextBatchSize(
+                                previous: outcome.items.count, elapsed: outcome.elapsed,
+                                budget: Self.batchBudgetSeconds, ceiling: ceiling
+                            )
                         } else {
-                            batchSize = max(Self.minBatchSize, batchSize / 2)
+                            // 回覆缺條＝輸出裝不下，壓低上限並把缺的退回佇列
+                            ceiling = max(Self.minBatchSize, outcome.items.count / 2)
+                            batchSize = min(batchSize, ceiling)
                             pending.insert(contentsOf: missing, at: 0)
                             ChorusLog.app.notice("介面翻譯回覆缺 \(missing.count) 條，批量降到 \(batchSize) 重送")
                         }
@@ -496,8 +519,10 @@ struct CLIUITranslationBatchRunner: UITranslationBatchRunning {
     let engine: KnownCLIEngine
     let executable: URL
     var model: String?
-    /// 一批 40 條對慢的模型可能要兩三分鐘；比顧問寬。
-    var timeout: Duration = .seconds(300)
+    /// 一批對慢的模型可能要好幾分鐘；比顧問寬。批量的目標秒數也是從這裡推的
+    /// （`UITranslator.batchBudgetSeconds`）。
+    static let defaultTimeout: Duration = .seconds(300)
+    var timeout: Duration = CLIUITranslationBatchRunner.defaultTimeout
 
     func translate(_ items: [UITranslationItem], targetLanguage: String) async throws -> UITranslationBatch {
         let sandbox = FileManager.default.temporaryDirectory

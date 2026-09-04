@@ -231,6 +231,19 @@ struct UITranslatorTests {
         #expect(!translator.isRunning)
     }
 
+    @Test("批量算法：依實測速率換算，慢的引擎縮、快的引擎放，並吃天花板")
+    func nextBatchSizeFollowsMeasuredRate() {
+        // 每條 0.2 秒（claude 那種）：預算 105 秒 → 目標遠超上限，但一次只放大 4 倍
+        #expect(UITranslator.nextBatchSize(previous: 10, elapsed: 2, budget: 105, ceiling: 120) == 40)
+        // 每條 12 秒（grok 實測）：105 / 12 ≈ 8 條
+        #expect(UITranslator.nextBatchSize(previous: 10, elapsed: 123, budget: 105, ceiling: 120) == 8)
+        // 天花板壓著就不會長回去
+        #expect(UITranslator.nextBatchSize(previous: 10, elapsed: 2, budget: 105, ceiling: 15) == 15)
+        // 再慢也不低於下限
+        #expect(UITranslator.nextBatchSize(previous: 10, elapsed: 9999, budget: 105, ceiling: 120)
+                == UITranslator.minBatchSize)
+    }
+
     @Test("批量動態調整：一批完整又快就加量，收斂在上限")
     func batchSizeGrowsWhenEngineKeepsUp() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -250,8 +263,8 @@ struct UITranslatorTests {
             return
         }
         let observed = probe.observed
-        #expect(observed.first == UITranslator.batchSize)
-        #expect(observed.max()! > UITranslator.batchSize)
+        #expect(observed.first == UITranslator.probeBatchSize)
+        #expect(observed.max()! > UITranslator.probeBatchSize)
         #expect(observed.max()! <= UITranslator.maxBatchSize)
     }
 
@@ -274,9 +287,10 @@ struct UITranslatorTests {
             Issue.record("phase=\(translator.phase)")
             return
         }
-        // 有降下來（佇列尾巴本來就會不足一批，所以只看有沒有比起始批量小）
-        #expect(probe.observed.contains { $0 < UITranslator.batchSize })
+        // 放大到 20 以上就會被截斷。天花板壓下來之後不該再長回去——
+        // 併發 4 批，最多只有起頭那幾批來不及吃到天花板。
         #expect(probe.observed.max()! <= UITranslator.maxBatchSize)
+        #expect(probe.observed.suffix(6).allSatisfy { $0 <= 20 })
         // 缺的條有被重送回來，不是直接放棄：譯文數量要接近全部
         let written = store.existingTranslations(for: "ja")
         let source = UITranslator.builtinSource
@@ -412,7 +426,7 @@ struct UITranslatorTests {
         #expect(translator.needsRelaunch)
         #expect(translator.selection == .translated("ja"))
         // 沒翻到的字串要落在英文——選定自翻語言時把 AppleLanguages 釘成 en
-        #expect(defaults.stringArray(forKey: "AppleLanguages") == ["en"])
+        #expect(defaults.persistentDomain(forName: suite)?["AppleLanguages"] as? [String] == ["en"])
         // 選回跟隨系統：檔還在、設定清掉；沒有覆蓋在跑就不用重啟
         translator.selection = .system
         #expect(settings.uiTranslationLanguage == nil)
@@ -449,7 +463,7 @@ struct UITranslatorTests {
         translator.selection = .builtin("zh-Hans")
         #expect(settings.builtinLanguage == "zh-Hans")
         #expect(settings.uiTranslationLanguage == nil)
-        #expect(defaults.stringArray(forKey: "AppleLanguages") == ["zh-Hans"])
+        #expect(defaults.persistentDomain(forName: suite)?["AppleLanguages"] as? [String] == ["zh-Hans"])
         // 這個行程還在跑跟隨系統的語言：要重啟才會換
         #expect(translator.needsRelaunch)
 

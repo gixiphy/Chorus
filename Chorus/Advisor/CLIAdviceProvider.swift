@@ -18,6 +18,12 @@ enum CLIProcessRunner {
     /// 畫面就一直停在「翻譯中 0/587」，行程還一個 150MB 地留著。SIGKILL 擋不掉。
     static let killGrace: TimeInterval = 3
 
+    /// 答案印完之後，還願意等行程自己收尾多久。
+    /// 正常的 CLI 印完就退，**退出碼與 stderr 還有用**（非零退出要照原本的路徑
+    /// 報錯），所以不能一看到完整輸出就把行程砍掉當成功。等過這段還賴著的
+    /// （agy）才提前收工。
+    static let lingerGrace: TimeInterval = 2
+
     /// 還活著的子行程 pid：App 結束時一次收乾淨，不留孤兒（會被 launchd 收養、
     /// 賴在那裡吃記憶體）。
     private static let liveProcesses = LiveProcesses()
@@ -37,6 +43,44 @@ enum CLIProcessRunner {
     /// 沒人接手的話它們會活到自己想結束為止（見 `killGrace` 的註解）。
     static func killAll() {
         for pid in liveProcesses.pids { kill(pid, SIGKILL) }
+    }
+
+    /// 邊跑邊收的輸出緩衝：讀到一塊就交給 `onChunk` 判斷「答案是不是已經完整」。
+    ///
+    /// 需要邊讀邊判斷，是因為有的 CLI **把答案印完之後就是不結束**：2026-09-04 實測
+    /// agy 43 秒印完整包 JSON，行程再掛 100 秒以上都不退。等行程結束才讀的話，
+    /// 到手的答案會被逾時丟掉。
+    private final class OutputCollector: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        private var done = false
+
+        var text: String {
+            lock.lock(); defer { lock.unlock() }
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        var isDone: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return done
+        }
+
+        func start(_ handle: FileHandle, onChunk: (@Sendable (String) -> Void)? = nil) {
+            Thread.detachNewThread { [self] in
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty { break }
+                    lock.lock()
+                    data.append(chunk)
+                    let snapshot = onChunk == nil ? "" : String(decoding: data, as: UTF8.self)
+                    lock.unlock()
+                    onChunk?(snapshot)
+                }
+                lock.lock()
+                done = true
+                lock.unlock()
+            }
+        }
     }
 
     /// pid 清單（多執行緒共用：watchdog、terminationHandler、主執行緒都會碰）。
@@ -71,11 +115,16 @@ enum CLIProcessRunner {
 
     /// 執行到結束；逾時或取消都 terminate 子行程。
     /// stdout/stderr 在獨立執行緒並行讀取，避免管線塞滿造成死鎖。
+    ///
+    /// `isComplete` 給的是「這段 stdout 已經是完整答案了」的判斷。成立時就不再等
+    /// 行程結束——印完答案賴著不走的 CLI（agy）不該把整批翻譯拖到逾時。
+    /// 沒有結束標記的輸出格式（codex 的 plainStdout）傳 nil，維持等到行程結束。
     static func run(
         executable: URL,
         arguments: [String],
         stdin stdinText: String?,
-        timeout: Duration
+        timeout: Duration,
+        isComplete: (@Sendable (String) -> Bool)? = nil
     ) async throws -> Output {
         let process = Process()
         process.executableURL = executable
@@ -92,6 +141,8 @@ enum CLIProcessRunner {
         process.standardInput = stdinPipe
 
         let flags = Flags()
+        let stdoutCollector = OutputCollector()
+        let stderrCollector = OutputCollector()
 
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -106,6 +157,21 @@ enum CLIProcessRunner {
                 } catch {
                     if flags.claimResume() { continuation.resume(throwing: error) }
                     return
+                }
+
+                stderrCollector.start(stderrPipe.fileHandleForReading)
+                stdoutCollector.start(stdoutPipe.fileHandleForReading) { snapshot in
+                    // 每讀到一塊都會問一次，只有第一次判定完整的那次要起計時器
+                    guard let isComplete, isComplete(snapshot), flags.claimOutputComplete() else { return }
+                    Thread.detachNewThread {
+                        Thread.sleep(forTimeInterval: lingerGrace)
+                        // 這段時間內自己退掉的話 terminationHandler 已經接手了
+                        if flags.claimResume() {
+                            flags.markCompletedEarly()
+                            stop(process)
+                            continuation.resume()
+                        }
+                    }
                 }
 
                 if let stdinText {
@@ -136,32 +202,39 @@ enum CLIProcessRunner {
             stop(process)
         }
 
-        let stdout = await readToEnd(stdoutPipe.fileHandleForReading)
-        let stderr = await readToEnd(stderrPipe.fileHandleForReading)
+        // 行程正常結束才等收尾（有上限：孫行程可能還抓著管線不放）
+        if !flags.completedEarly {
+            await waitForCollectors(stdoutCollector, stderrCollector)
+        }
 
         try Task.checkCancellation()
         if flags.timedOut { throw AdviceError.timedOut }
         return Output(
-            status: process.terminationStatus,
-            stdout: String(data: stdout, encoding: .utf8) ?? "",
-            stderr: String(data: stderr, encoding: .utf8) ?? ""
+            // 提前收工時行程還沒退，terminationStatus 不能用；答案已經完整，當成功
+            status: flags.completedEarly ? 0 : process.terminationStatus,
+            stdout: stdoutCollector.text,
+            stderr: stderrCollector.text
         )
     }
 
-    private static func readToEnd(_ handle: FileHandle) async -> Data {
-        await withCheckedContinuation { continuation in
-            Thread.detachNewThread {
-                let data = (try? handle.readToEnd()) ?? Data()
-                continuation.resume(returning: data)
-            }
+    /// 等 reader 執行緒讀到 EOF，最多等 `collectorGrace` 秒。
+    private static let collectorGrace: TimeInterval = 5
+
+    private static func waitForCollectors(_ collectors: OutputCollector...) async {
+        let deadline = Date().addingTimeInterval(collectorGrace)
+        while Date() < deadline, collectors.contains(where: { !$0.isDone }) {
+            try? await Task.sleep(for: .milliseconds(20))
         }
     }
 
-    /// 一次性 resume 與逾時標記（terminationHandler / run 失敗 / watchdog 之間共享）。
+    /// 一次性 resume 與逾時／提前收工標記（terminationHandler / run 失敗 /
+    /// watchdog / stdout reader 之間共享）。
     private final class Flags: @unchecked Sendable {
         private let lock = NSLock()
         private var resumed = false
         private var didTimeOut = false
+        private var didCompleteEarly = false
+        private var outputComplete = false
 
         func claimResume() -> Bool {
             lock.lock(); defer { lock.unlock() }
@@ -178,6 +251,24 @@ enum CLIProcessRunner {
         var timedOut: Bool {
             lock.lock(); defer { lock.unlock() }
             return didTimeOut
+        }
+
+        /// 只讓第一次判定「輸出已完整」的呼叫起計時器。
+        func claimOutputComplete() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if outputComplete { return false }
+            outputComplete = true
+            return true
+        }
+
+        func markCompletedEarly() {
+            lock.lock(); defer { lock.unlock() }
+            didCompleteEarly = true
+        }
+
+        var completedEarly: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return didCompleteEarly
         }
     }
 }
@@ -274,12 +365,16 @@ enum CLIAdviceExecution {
     ) async throws -> T {
         let invocation = engine.invocation(prompt: prompt, run: run)
         let output: CLIProcessRunner.Output
+        // envelope 類的輸出解得開就代表答案完整，不必等行程自己結束
+        let complete: @Sendable (String) -> Bool = { AdviceOutputCodec.looksLikeCompleteJSONObject($0) }
+        let isComplete: (@Sendable (String) -> Bool)? = engine.codec.isSelfDelimitingJSON ? complete : nil
         do {
             output = try await CLIProcessRunner.run(
                 executable: executable,
                 arguments: invocation.arguments,
                 stdin: invocation.stdin,
-                timeout: run.timeout
+                timeout: run.timeout,
+                isComplete: isComplete
             )
         } catch let error as AdviceError {
             throw error

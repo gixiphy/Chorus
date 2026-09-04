@@ -56,6 +56,27 @@ struct CLIAdviceProviderTests {
         #expect(advice.offsets[0].displayID == "display:AAA")
     }
 
+    @Test("印完答案卻不肯結束的 CLI：拿到完整 envelope 就收工，不等到逾時")
+    func returnsWhenTheAnswerIsCompleteEvenIfTheProcessLingers() async throws {
+        // agy 2026-09-04 實測：43 秒印完整包 JSON，行程再掛 100 秒以上都不退。
+        // 傻等行程結束的話，到手的答案會被逾時整批丟掉。
+        let stub = try makeStub(envelopeScript(result: Self.validAdviceJSON) + """
+
+        trap '' TERM
+        i=0
+        while [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
+        """)
+        var provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
+        provider.timeout = .seconds(60)
+        let started = Date()
+        let advice = try await provider.advise(
+            photos: [LabeledPhoto(path: "/tmp/desk.jpg")], context: context, sandbox: nil
+        )
+        #expect(advice.offsets.count == 1)
+        // 逾時是 60 秒；等的只該是 lingerGrace 那一小段
+        #expect(Date().timeIntervalSince(started) < 20)
+    }
+
     @Test("prompt 組裝：claude 引擎經 stdin 傳遞，含照片路徑、schema 與 Read 指示")
     func promptAssembly() async throws {
         let capture = FileManager.default.temporaryDirectory

@@ -129,3 +129,9 @@ schemes:
     test:
       targets:
         - ChorusAppTests
+      # 測試宿主就是 Chorus.app 本尊，會讀到使用者自己的 com.hermes.Chorus 偏好。
+      # 選了自翻語言時那裡的 AppleLanguages 是 en，於是所有 String(localized:)
+      # 都變英文，比對中文原文的測試就整片紅（2026-09-04 真的踩到）。
+      # 在測試啟動參數把語言釘死，測試結果不再受使用者當下的介面語言影響。
+      commandLineArguments:
+        "-AppleLanguages (zh-Hant)": true

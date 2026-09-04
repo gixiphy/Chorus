@@ -16,6 +16,26 @@ public enum AdviceOutputCodec: String, Codable, Sendable {
     /// 通用退路：整段 stdout 就是回應文字。
     /// codex／opencode／pi 都適用——它們把前言與進度寫 stderr，stdout 只有最終回覆。
     case plainStdout
+
+    /// stdout 有沒有「收完了」的結束標記。envelope 三種都是單一 JSON 物件，
+    /// 解得開就代表答案完整；`plainStdout` 沒有標記，只能等行程自己結束。
+    ///
+    /// 用途：印完答案卻不結束的 CLI（實測 agy）不該把整批拖到逾時。
+    public var isSelfDelimitingJSON: Bool {
+        switch self {
+        case .jsonEnvelope, .responseEnvelope, .textEnvelope: true
+        case .plainStdout: false
+        }
+    }
+
+    /// 這段 stdout 是不是已經是一個完整的 JSON 物件。
+    public static func looksLikeCompleteJSONObject(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}"),
+              let data = trimmed.data(using: .utf8)
+        else { return false }
+        return (try? JSONSerialization.jsonObject(with: data)) is [String: Any]
+    }
 }
 
 /// 解析失敗的型別化錯誤；`raw` 帶原始文字供 UI 顯示與回報。
