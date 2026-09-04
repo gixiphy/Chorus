@@ -190,6 +190,121 @@ struct UITranslatorTests {
         )
     }
 
+    /// 記錄每批被送了幾條；`truncateAbove` 模擬輸出被截斷（只回前面那些條），
+    /// `failure` 模擬引擎硬失敗。
+    final class SizeProbeRunner: UITranslationBatchRunning, @unchecked Sendable {
+        private let lock = NSLock()
+        private var sizes: [Int] = []
+        let truncateAbove: Int?
+        let failure: AdviceError?
+
+        init(truncateAbove: Int? = nil, failure: AdviceError? = nil) {
+            self.truncateAbove = truncateAbove
+            self.failure = failure
+        }
+
+        var observed: [Int] {
+            lock.lock(); defer { lock.unlock() }
+            return sizes
+        }
+
+        private func record(_ count: Int) { lock.lock(); sizes.append(count); lock.unlock() }
+
+        func translate(_ items: [UITranslationItem], targetLanguage: String) async throws -> UITranslationBatch {
+            record(items.count)
+            if let failure { throw failure }
+            let kept = truncateAbove.map { Array(items.prefix($0)) } ?? items
+            return UITranslationBatch(translations: kept.map { item in
+                if let plural = item.plural {
+                    return .init(id: item.id, plural: ["other": "JA " + (plural["other"] ?? "")])
+                }
+                return .init(id: item.id, text: "JA " + (item.english ?? item.key))
+            })
+        }
+    }
+
+    private func runToCompletion(_ translator: UITranslator, onlyMissing: Bool = false) async throws {
+        translator.translate(onlyMissing: onlyMissing)
+        for _ in 0..<400 where translator.isRunning {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(!translator.isRunning)
+    }
+
+    @Test("批量動態調整：一批完整又快就加量，收斂在上限")
+    func batchSizeGrowsWhenEngineKeepsUp() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-uitranslator-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "chorus.tests.uitranslator.grow.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (translator, _) = makeTranslator(directory: directory, defaults: defaults)
+        let probe = SizeProbeRunner()
+        translator.batchRunner = probe
+        translator.targetLanguage = "ja"
+
+        try await runToCompletion(translator)
+        guard case .finished = translator.phase else {
+            Issue.record("phase=\(translator.phase)")
+            return
+        }
+        let observed = probe.observed
+        #expect(observed.first == UITranslator.batchSize)
+        #expect(observed.max()! > UITranslator.batchSize)
+        #expect(observed.max()! <= UITranslator.maxBatchSize)
+    }
+
+    @Test("回覆被截斷：缺的條退回佇列重送，批量跟著砍半")
+    func batchSizeShrinksWhenRepliesAreTruncated() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-uitranslator-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "chorus.tests.uitranslator.shrink.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (translator, store) = makeTranslator(directory: directory, defaults: defaults)
+        // 每批最多只回 20 條：40 條一批一定會缺
+        let probe = SizeProbeRunner(truncateAbove: 20)
+        translator.batchRunner = probe
+        translator.targetLanguage = "ja"
+
+        try await runToCompletion(translator)
+        guard case .finished = translator.phase else {
+            Issue.record("phase=\(translator.phase)")
+            return
+        }
+        // 有降下來（佇列尾巴本來就會不足一批，所以只看有沒有比起始批量小）
+        #expect(probe.observed.contains { $0 < UITranslator.batchSize })
+        #expect(probe.observed.max()! <= UITranslator.maxBatchSize)
+        // 缺的條有被重送回來，不是直接放棄：譯文數量要接近全部
+        let written = store.existingTranslations(for: "ja")
+        let source = UITranslator.builtinSource
+        #expect(written.strings.count > source.strings.count * 9 / 10)
+    }
+
+    @Test("整批硬失敗：先降批量重送，連續失敗就收手並保留已翻的")
+    func batchFailureShrinksThenGivesUp() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-uitranslator-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "chorus.tests.uitranslator.fail.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (translator, _) = makeTranslator(directory: directory, defaults: defaults)
+        translator.batchRunner = SizeProbeRunner(failure: .timedOut)
+        translator.targetLanguage = "ja"
+
+        try await runToCompletion(translator)
+        guard case let .failed(message) = translator.phase else {
+            Issue.record("phase=\(translator.phase)")
+            return
+        }
+        #expect(!message.isEmpty)
+        // 一直失敗不能無限重試：送出的批數要有上限
+        #expect((translator.batchRunner as! SizeProbeRunner).observed.count <= 12)
+    }
+
     @Test("批次併發送出：同時在跑的不只一批，也不超過上限")
     func batchesRunConcurrently() async throws {
         let directory = FileManager.default.temporaryDirectory

@@ -97,7 +97,7 @@ struct InterfaceLanguageSection: View {
                     translator.translate(onlyMissing: false)
                 }
                 .disabled(translator.isRunning || translator.activeEngine == nil)
-                Text("約 \(UITranslator.builtinSource.strings.count) 條字串，40 條一批送出，通常幾分鐘內完成。")
+                Text("約 \(UITranslator.builtinSource.strings.count) 條字串，分批送出，批量依引擎的速度與回覆完整度自動調整，通常幾分鐘內完成。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

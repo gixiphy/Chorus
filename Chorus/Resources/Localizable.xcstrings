@@ -7044,6 +7044,7 @@
       }
     },
     "約 %lld 條字串，40 條一批送出，通常幾分鐘內完成。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "variations" : {
@@ -7067,6 +7068,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "约 %lld 条字符串，40 条一批发送，通常几分钟内完成。"
+          }
+        }
+      }
+    },
+    "約 %lld 條字串，分批送出，批量依引擎的速度與回覆完整度自動調整，通常幾分鐘內完成。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About %lld strings, sent in batches. Batch size adjusts automatically to the engine's speed and how complete its replies are, and it usually finishes within a few minutes."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "约 %lld 条字符串，分批送出，批量根据引擎的速度与回复完整度自动调整，通常几分钟内完成。"
           }
         }
       }

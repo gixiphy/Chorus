@@ -37,7 +37,22 @@ final class UITranslator {
     private(set) var manifests: [String: UITranslationStore.Manifest] = [:]
     private(set) var missingCounts: [String: Int] = [:]
 
+    /// 起始批量。之後**依引擎實際表現動態調整**：一批完整回來又夠快就加量，
+    /// 回覆缺條（輸出被截斷）或整批失敗就砍半重送。不同 CLI 的輸出上限與速度
+    /// 差很多（claude 一批 40 條約 8 秒，agy 同一份 prompt 會卡死），寫死一個
+    /// 數字不是太保守就是會截斷。
     static let batchSize = 40
+    static let minBatchSize = 10
+    static let maxBatchSize = 120
+    /// 每次加量的幅度（加法成長，不用倍增：一次跨太大踩到上限代價高）。
+    static let batchGrowStep = 20
+    /// 一批在這個秒數內回完才加量。
+    static let batchGrowSeconds: TimeInterval = 60
+    /// 同一條字串被模型漏掉時最多重送幾次，之後就退回英文。
+    static let maxItemAttempts = 2
+    /// 整批硬失敗（逾時、decode 壞掉）幾次之後收手。降批量重送救得回截斷，
+    /// 救不回卡死的引擎——不設上限就會一直重試下去。
+    static let maxBatchFailures = 2
     /// 同時在跑的批數。批與批之間互不相干（各是一次獨立的 CLI 呼叫），循序送
     /// 15 批要半小時（2026-09-04 實測一批約兩分鐘），開併發把牆鐘時間壓下來。
     static let maxConcurrentBatches = 4
@@ -214,6 +229,28 @@ final class UITranslator {
 
     // MARK: - 動作
 
+    /// 一批送出去的結果。TaskGroup 的結果型別必須是 Sendable，而 `any Error`
+    /// 不是，所以錯誤在這裡先收斂成可搬運的形狀。
+    private struct BatchOutcome: Sendable {
+        var items: [UITranslationItem]
+        var reply: UITranslationBatch?
+        var failure: BatchFailure?
+        /// 這批花了多久：加量與否看它。
+        var elapsed: TimeInterval
+    }
+
+    private enum BatchFailure: Error, Sendable {
+        case advice(AdviceError)
+        case other(String)
+
+        var message: String {
+            switch self {
+            case let .advice(error): error.userMessage
+            case let .other(text): text
+            }
+        }
+    }
+
     /// 翻譯（或補翻）目標語言。`onlyMissing` 為 true 時保留既有譯文、只送缺的。
     func translate(onlyMissing: Bool) {
         guard !isRunning else { return }
@@ -256,41 +293,81 @@ final class UITranslator {
 
         task = Task { [weak self] in
             defer { self?.task = nil }
-            var done = 0
-            let batches = stride(from: 0, to: items.count, by: Self.batchSize).map {
-                Array(items[$0..<min($0 + Self.batchSize, items.count)])
-            }
+            // 待送佇列：批量是動態的，所以不預先切好批，每次從佇列前面取「當下批量」條。
+            var pending = items
+            var attempts: [Int: Int] = [:]
+            var batchSize = Self.batchSize
+            var resolved = 0
+            var failures = 0
+            var inFlight = 0
             let started = Date()
             ChorusLog.app.notice(
-                "介面翻譯開始：\(language) \(total) 條分 \(batches.count) 批、同時 \(Self.maxConcurrentBatches) 批，引擎 \(engine.id)"
+                "介面翻譯開始：\(language) \(total) 條，起始批量 \(batchSize)、同時 \(Self.maxConcurrentBatches) 批，引擎 \(engine.id)"
             )
             do {
-                // 併發跑批：收到一批就補送下一批，額度滿載到最後一批為止。
-                // 每批仍舊各自落地，取消或中途失敗時已翻的都在。
-                try await withThrowingTaskGroup(
-                    of: (batch: [UITranslationItem], reply: UITranslationBatch).self
-                ) { group in
-                    var next = 0
-                    while next < batches.count, next < Self.maxConcurrentBatches {
-                        let batch = batches[next]
-                        next += 1
-                        group.addTask {
-                            (batch, try await runner.translate(batch, targetLanguage: languageName))
-                        }
-                    }
-                    while let (batch, reply) = try await group.next() {
-                        try Task.checkCancellation()
-                        if next < batches.count {
-                            let batch = batches[next]
-                            next += 1
+                // 併發跑批：收一批補一批，補的時候用**當下**的批量，
+                // 所以前一批的結果會影響下一批送多少。每批各自落地，
+                // 取消或中途失敗時已翻的都在。
+                try await withThrowingTaskGroup(of: BatchOutcome.self) { group in
+                    while true {
+                        while inFlight < Self.maxConcurrentBatches, !pending.isEmpty {
+                            let chunk = Array(pending.prefix(batchSize))
+                            pending.removeFirst(chunk.count)
                             group.addTask {
-                                (batch, try await runner.translate(batch, targetLanguage: languageName))
+                                let sent = Date()
+                                do {
+                                    let reply = try await runner.translate(chunk, targetLanguage: languageName)
+                                    return BatchOutcome(items: chunk, reply: reply, failure: nil,
+                                                        elapsed: Date().timeIntervalSince(sent))
+                                } catch let error as AdviceError {
+                                    return BatchOutcome(items: chunk, reply: nil, failure: .advice(error),
+                                                        elapsed: Date().timeIntervalSince(sent))
+                                } catch is CancellationError {
+                                    throw CancellationError()
+                                } catch {
+                                    return BatchOutcome(items: chunk, reply: nil,
+                                                        failure: .other(error.localizedDescription),
+                                                        elapsed: Date().timeIntervalSince(sent))
+                                }
                             }
+                            inFlight += 1
                         }
-                        let entries = Dictionary(reply.translations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-                        for item in batch {
+                        guard inFlight > 0, let outcome = try await group.next() else { break }
+                        inFlight -= 1
+                        try Task.checkCancellation()
+
+                        if let failure = outcome.failure {
+                            failures += 1
+                            // 還有降的空間就砍半重送：引擎吃不下這個量是最常見的死法
+                            if failures <= Self.maxBatchFailures, batchSize > Self.minBatchSize {
+                                batchSize = max(Self.minBatchSize, batchSize / 2)
+                                pending.insert(contentsOf: outcome.items, at: 0)
+                                ChorusLog.app.notice("介面翻譯批次失敗，批量降到 \(batchSize) 重送：\(failure.message)")
+                                continue
+                            }
+                            throw failure
+                        }
+
+                        let entries = Dictionary(
+                            (outcome.reply?.translations ?? []).map { ($0.id, $0) },
+                            uniquingKeysWith: { first, _ in first }
+                        )
+                        // 模型整條沒回的（多半是輸出被截斷）退回佇列再試，不是直接放棄
+                        var missing: [UITranslationItem] = []
+                        for item in outcome.items {
+                            guard let entry = entries[item.id] else {
+                                let tried = (attempts[item.id] ?? 0) + 1
+                                attempts[item.id] = tried
+                                if tried <= Self.maxItemAttempts {
+                                    missing.append(item)
+                                } else {
+                                    skipped.insert(item.key)
+                                    resolved += 1
+                                }
+                                continue
+                            }
                             if let plural = item.plural {
-                                if let forms = entries[item.id]?.plural,
+                                if let forms = entry.plural,
                                    let other = forms["other"],
                                    forms.values.allSatisfy({ UITranslationValidator.isAcceptable(candidate: $0, source: plural["other"] ?? other) }) {
                                     plurals[item.key] = forms
@@ -298,15 +375,27 @@ final class UITranslator {
                                 } else {
                                     skipped.insert(item.key)
                                 }
-                            } else if let text = entries[item.id]?.text,
+                            } else if let text = entry.text,
                                       UITranslationValidator.isAcceptable(candidate: text, source: item.english ?? item.key) {
                                 strings[item.key] = text
                                 skipped.remove(item.key)
                             } else {
                                 skipped.insert(item.key)
                             }
+                            resolved += 1
                         }
-                        done += batch.count
+
+                        if missing.isEmpty {
+                            // 完整回來又夠快：這個引擎還吃得下，往上加量
+                            if outcome.elapsed < Self.batchGrowSeconds, batchSize < Self.maxBatchSize {
+                                batchSize = min(Self.maxBatchSize, batchSize + Self.batchGrowStep)
+                            }
+                        } else {
+                            batchSize = max(Self.minBatchSize, batchSize / 2)
+                            pending.insert(contentsOf: missing, at: 0)
+                            ChorusLog.app.notice("介面翻譯回覆缺 \(missing.count) 條，批量降到 \(batchSize) 重送")
+                        }
+
                         guard let self else { return }
                         try self.store.write(
                             language: language, strings: strings, plurals: plurals,
@@ -319,10 +408,10 @@ final class UITranslator {
                                 skipped: skipped.sorted()
                             )
                         )
-                        self.phase = .running(done: done, total: total)
+                        self.phase = .running(done: resolved, total: total)
                         self.refreshInstalled()
                         ChorusLog.app.info(
-                            "介面翻譯進度：\(language) \(done)/\(total)，累計 \(Int(Date().timeIntervalSince(started))) 秒"
+                            "介面翻譯進度：\(language) \(resolved)/\(total)，批量 \(batchSize)，本批 \(Int(outcome.elapsed)) 秒，累計 \(Int(Date().timeIntervalSince(started))) 秒"
                         )
                     }
                 }
@@ -330,19 +419,19 @@ final class UITranslator {
                 self.selection = .translated(language)
                 self.phase = .finished(translated: strings.count + plurals.count, skipped: skipped.count)
                 self.refreshInstalled()
-                ChorusLog.app.notice("介面翻譯完成：\(language) \(strings.count + plurals.count) 條、跳過 \(skipped.count)，引擎 \(engine.id)，耗時 \(Int(Date().timeIntervalSince(started))) 秒")
+                ChorusLog.app.notice("介面翻譯完成：\(language) \(strings.count + plurals.count) 條、跳過 \(skipped.count)，引擎 \(engine.id)，收斂批量 \(batchSize)，耗時 \(Int(Date().timeIntervalSince(started))) 秒")
             } catch is CancellationError {
                 self?.phase = .idle
                 self?.refreshInstalled()
-                ChorusLog.app.notice("介面翻譯取消：\(language) 已完成 \(done)/\(total)")
-            } catch let error as AdviceError {
-                self?.phase = .failed(error.userMessage)
+                ChorusLog.app.notice("介面翻譯取消：\(language) 已完成 \(resolved)/\(total)")
+            } catch let failure as BatchFailure {
+                self?.phase = .failed(failure.message)
                 self?.refreshInstalled()
-                ChorusLog.app.error("介面翻譯失敗：\(language) 於 \(done)/\(total)，\(error.userMessage)")
+                ChorusLog.app.error("介面翻譯失敗：\(language) 於 \(resolved)/\(total)，\(failure.message)")
             } catch {
                 self?.phase = .failed(error.localizedDescription)
                 self?.refreshInstalled()
-                ChorusLog.app.error("介面翻譯失敗：\(language) 於 \(done)/\(total)，\(error.localizedDescription)")
+                ChorusLog.app.error("介面翻譯失敗：\(language) 於 \(resolved)/\(total)，\(error.localizedDescription)")
             }
         }
     }
