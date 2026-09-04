@@ -1,6 +1,7 @@
 import ChorusCore
 import Foundation
 import ObjectiveC
+import Observation
 import Testing
 @testable import Chorus
 
@@ -130,6 +131,111 @@ struct UITranslatorTests {
                 return .init(id: item.id, text: "JA " + (item.english ?? item.key))
             })
         }
+    }
+
+    /// 記錄同時有幾批在跑：循序送的話峰值會是 1。
+    final class ConcurrencyProbeRunner: UITranslationBatchRunning, @unchecked Sendable {
+        private let lock = NSLock()
+        private var inFlight = 0
+        private var highWater = 0
+
+        var peak: Int {
+            lock.lock(); defer { lock.unlock() }
+            return highWater
+        }
+
+        /// 上鎖的部分包成同步方法：async 內文不能直接 lock／unlock。
+        private func enter() {
+            lock.lock()
+            inFlight += 1
+            highWater = max(highWater, inFlight)
+            lock.unlock()
+        }
+
+        private func leave() {
+            lock.lock()
+            inFlight -= 1
+            lock.unlock()
+        }
+
+        func translate(_ items: [UITranslationItem], targetLanguage: String) async throws -> UITranslationBatch {
+            enter()
+            try? await Task.sleep(for: .milliseconds(30))
+            leave()
+            return UITranslationBatch(translations: items.map { .init(id: $0.id, text: "JA " + ($0.english ?? $0.key)) })
+        }
+    }
+
+    /// 觀察通知用的旗標（`withObservationTracking` 的 onChange 是 @Sendable）。
+    final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func raise() { lock.lock(); value = true; lock.unlock() }
+        var isRaised: Bool { lock.lock(); defer { lock.unlock() }; return value }
+    }
+
+    private func makeTranslator(
+        directory: URL, defaults: UserDefaults
+    ) -> (translator: UITranslator, store: UITranslationStore) {
+        let store = UITranslationStore(directory: directory)
+        let settings = SettingsStore(defaults: defaults)
+        let registry = AdviceEngineRegistry(settings: settings, scanOnInit: false)
+        registry.injectDetected([.init(
+            engine: KnownCLIEngine.catalog.first { $0.id == "codex" }!,
+            url: URL(fileURLWithPath: "/usr/bin/true"), version: nil
+        )])
+        return (
+            UITranslator(store: store, settings: settings, registry: registry, languageDefaults: defaults),
+            store
+        )
+    }
+
+    @Test("批次併發送出：同時在跑的不只一批，也不超過上限")
+    func batchesRunConcurrently() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-uitranslator-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "chorus.tests.uitranslator.concurrency.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (translator, _) = makeTranslator(directory: directory, defaults: defaults)
+        let probe = ConcurrencyProbeRunner()
+        translator.batchRunner = probe
+        translator.targetLanguage = "ja"
+
+        translator.translate(onlyMissing: false)
+        for _ in 0..<400 where translator.isRunning {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(!translator.isRunning)
+        #expect(probe.peak > 1)
+        #expect(probe.peak <= UITranslator.maxConcurrentBatches)
+    }
+
+    @Test("移除語言當場通知觀察者：清單是可觀察狀態，不是每次讀檔（畫面才會即時更新）")
+    func removeUpdatesObservableState() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-uitranslator-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "chorus.tests.uitranslator.remove.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (translator, store) = makeTranslator(directory: directory, defaults: defaults)
+        try store.write(
+            language: "ja", strings: ["結束 Chorus": "Chorus を終了"], plurals: [:], pluralValueTypes: [:],
+            manifest: .init(language: "ja", engineID: "codex", model: nil, date: Date(),
+                            sourceBuild: "79", translated: 1, skipped: [])
+        )
+        translator.refreshInstalled()
+        #expect(translator.installedLanguages == ["ja"])
+        #expect(translator.manifest(for: "ja")?.translated == 1)
+
+        let flag = Flag()
+        withObservationTracking { _ = translator.installedLanguages } onChange: { flag.raise() }
+        translator.remove(language: "ja")
+        #expect(flag.isRaised)
+        #expect(translator.installedLanguages.isEmpty)
+        #expect(translator.manifest(for: "ja") == nil)
     }
 
     @Test("系統語言建議：跳過內建語言、正規化 region 與中文 script")

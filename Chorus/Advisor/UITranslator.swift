@@ -30,7 +30,21 @@ final class UITranslator {
     /// 測試用：換掉真的 CLI。
     @ObservationIgnored var batchRunner: (any UITranslationBatchRunning)?
 
+    /// 已翻好的語言、它們的 manifest 與待補條數。**快取在可觀察的狀態裡**：
+    /// `store` 不是 `@Observable`，View 直接讀檔的話 SwiftUI 追蹤不到檔案系統的變化，
+    /// 移除語言後那一列不會消失（2026-09-04 回報）。順帶也省掉每次重算 body 的讀檔。
+    private(set) var installedLanguages: [String] = []
+    private(set) var manifests: [String: UITranslationStore.Manifest] = [:]
+    private(set) var missingCounts: [String: Int] = [:]
+
     static let batchSize = 40
+    /// 同時在跑的批數。批與批之間互不相干（各是一次獨立的 CLI 呼叫），循序送
+    /// 15 批要半小時（2026-09-04 實測一批約兩分鐘），開併發把牆鐘時間壓下來。
+    static let maxConcurrentBatches = 4
+
+    /// 內建英文來源只讀一次：600 條字串、執行期不會變，但 `missingCount`
+    /// 與設定頁每次重算 body 都會用到。
+    static let builtinSource = UITranslationStore.builtinSource()
 
     init(
         store: UITranslationStore,
@@ -47,6 +61,7 @@ final class UITranslator {
         targetLanguage = settings.uiTranslationLanguage
             ?? Self.suggestedLanguage(preferred: Locale.preferredLanguages)
             ?? "ja"
+        refreshInstalled()
     }
 
     // MARK: - 狀態
@@ -115,23 +130,33 @@ final class UITranslator {
     /// 這個行程實際跑的是哪個語言：`AppState` 掛完覆蓋後設一次。
     nonisolated(unsafe) static var runningSelection: Selection = .system
 
-    /// 已翻好、檔還在的語言。
-    var installedLanguages: [String] { store.installedLanguages() }
+    func manifest(for language: String) -> UITranslationStore.Manifest? { manifests[language] }
 
-    func manifest(for language: String) -> UITranslationStore.Manifest? { store.manifest(for: language) }
+    /// 重讀檔案系統，更新上面三份快取。啟動、翻完一批、移除語言時各叫一次——
+    /// 檔案只有我們自己會動，不必每次畫面更新都掃一遍。
+    func refreshInstalled() {
+        let languages = store.installedLanguages()
+        var manifests: [String: UITranslationStore.Manifest] = [:]
+        var missing: [String: Int] = [:]
+        for language in languages {
+            manifests[language] = store.manifest(for: language)
+            missing[language] = missingItems(for: language, source: Self.builtinSource).count
+        }
+        installedLanguages = languages
+        self.manifests = manifests
+        missingCounts = missing
+    }
 
     /// 選定的與正在執行的不同：要重啟才會生效（含切回內建語言）。
     var needsRelaunch: Bool {
         var desired = selection
         // 翻譯檔不在（被手動刪掉）就當作沒選——重啟也救不回來，別掛著一個假提示
-        if case let .translated(code) = desired, store.manifest(for: code) == nil { desired = .system }
+        if case let .translated(code) = desired, manifests[code] == nil { desired = .system }
         return desired != Self.runningSelection
     }
 
     /// 某個已翻語言裡，內建字串尚未翻的條數（升版後會長出來）。
-    func missingCount(for language: String) -> Int {
-        missingItems(for: language, source: UITranslationStore.builtinSource()).count
-    }
+    func missingCount(for language: String) -> Int { missingCounts[language] ?? 0 }
 
     var isRunning: Bool {
         if case .running = phase { return true }
@@ -197,7 +222,7 @@ final class UITranslator {
             return
         }
         let language = targetLanguage
-        let source = UITranslationStore.builtinSource()
+        let source = Self.builtinSource
         let existing: (strings: [String: String], plurals: [String: [String: String]]) =
             onlyMissing ? store.existingTranslations(for: language) : (strings: [:], plurals: [:])
         var strings = existing.strings
@@ -235,57 +260,88 @@ final class UITranslator {
             let batches = stride(from: 0, to: items.count, by: Self.batchSize).map {
                 Array(items[$0..<min($0 + Self.batchSize, items.count)])
             }
+            let started = Date()
+            ChorusLog.app.notice(
+                "介面翻譯開始：\(language) \(total) 條分 \(batches.count) 批、同時 \(Self.maxConcurrentBatches) 批，引擎 \(engine.id)"
+            )
             do {
-                for batch in batches {
-                    try Task.checkCancellation()
-                    let reply = try await runner.translate(batch, targetLanguage: languageName)
-                    let entries = Dictionary(reply.translations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-                    for item in batch {
-                        if let plural = item.plural {
-                            if let forms = entries[item.id]?.plural,
-                               let other = forms["other"],
-                               forms.values.allSatisfy({ UITranslationValidator.isAcceptable(candidate: $0, source: plural["other"] ?? other) }) {
-                                plurals[item.key] = forms
+                // 併發跑批：收到一批就補送下一批，額度滿載到最後一批為止。
+                // 每批仍舊各自落地，取消或中途失敗時已翻的都在。
+                try await withThrowingTaskGroup(
+                    of: (batch: [UITranslationItem], reply: UITranslationBatch).self
+                ) { group in
+                    var next = 0
+                    while next < batches.count, next < Self.maxConcurrentBatches {
+                        let batch = batches[next]
+                        next += 1
+                        group.addTask {
+                            (batch, try await runner.translate(batch, targetLanguage: languageName))
+                        }
+                    }
+                    while let (batch, reply) = try await group.next() {
+                        try Task.checkCancellation()
+                        if next < batches.count {
+                            let batch = batches[next]
+                            next += 1
+                            group.addTask {
+                                (batch, try await runner.translate(batch, targetLanguage: languageName))
+                            }
+                        }
+                        let entries = Dictionary(reply.translations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                        for item in batch {
+                            if let plural = item.plural {
+                                if let forms = entries[item.id]?.plural,
+                                   let other = forms["other"],
+                                   forms.values.allSatisfy({ UITranslationValidator.isAcceptable(candidate: $0, source: plural["other"] ?? other) }) {
+                                    plurals[item.key] = forms
+                                    skipped.remove(item.key)
+                                } else {
+                                    skipped.insert(item.key)
+                                }
+                            } else if let text = entries[item.id]?.text,
+                                      UITranslationValidator.isAcceptable(candidate: text, source: item.english ?? item.key) {
+                                strings[item.key] = text
                                 skipped.remove(item.key)
                             } else {
                                 skipped.insert(item.key)
                             }
-                        } else if let text = entries[item.id]?.text,
-                                  UITranslationValidator.isAcceptable(candidate: text, source: item.english ?? item.key) {
-                            strings[item.key] = text
-                            skipped.remove(item.key)
-                        } else {
-                            skipped.insert(item.key)
                         }
-                    }
-                    done += batch.count
-                    guard let self else { return }
-                    // 每批落地：取消或下一批失敗時已翻的都在
-                    try self.store.write(
-                        language: language, strings: strings, plurals: plurals,
-                        pluralValueTypes: source.pluralValueTypes,
-                        manifest: .init(
-                            language: language, engineID: engine.id,
-                            model: self.settings.advisorModelIDs[engine.id],
-                            date: Date(), sourceBuild: build,
-                            translated: strings.count + plurals.count,
-                            skipped: skipped.sorted()
+                        done += batch.count
+                        guard let self else { return }
+                        try self.store.write(
+                            language: language, strings: strings, plurals: plurals,
+                            pluralValueTypes: source.pluralValueTypes,
+                            manifest: .init(
+                                language: language, engineID: engine.id,
+                                model: self.settings.advisorModelIDs[engine.id],
+                                date: Date(), sourceBuild: build,
+                                translated: strings.count + plurals.count,
+                                skipped: skipped.sorted()
+                            )
                         )
-                    )
-                    self.phase = .running(done: done, total: total)
+                        self.phase = .running(done: done, total: total)
+                        self.refreshInstalled()
+                        ChorusLog.app.info(
+                            "介面翻譯進度：\(language) \(done)/\(total)，累計 \(Int(Date().timeIntervalSince(started))) 秒"
+                        )
+                    }
                 }
                 guard let self else { return }
                 self.selection = .translated(language)
                 self.phase = .finished(translated: strings.count + plurals.count, skipped: skipped.count)
-                ChorusLog.app.notice("介面翻譯完成：\(language) \(strings.count + plurals.count) 條、跳過 \(skipped.count)，引擎 \(engine.id)")
+                self.refreshInstalled()
+                ChorusLog.app.notice("介面翻譯完成：\(language) \(strings.count + plurals.count) 條、跳過 \(skipped.count)，引擎 \(engine.id)，耗時 \(Int(Date().timeIntervalSince(started))) 秒")
             } catch is CancellationError {
                 self?.phase = .idle
+                self?.refreshInstalled()
                 ChorusLog.app.notice("介面翻譯取消：\(language) 已完成 \(done)/\(total)")
             } catch let error as AdviceError {
                 self?.phase = .failed(error.userMessage)
+                self?.refreshInstalled()
                 ChorusLog.app.error("介面翻譯失敗：\(language) 於 \(done)/\(total)，\(error.userMessage)")
             } catch {
                 self?.phase = .failed(error.localizedDescription)
+                self?.refreshInstalled()
                 ChorusLog.app.error("介面翻譯失敗：\(language) 於 \(done)/\(total)，\(error.localizedDescription)")
             }
         }
@@ -300,6 +356,8 @@ final class UITranslator {
         try? store.remove(language: language)
         if settings.uiTranslationLanguage == language { selection = .system }
         phase = .idle
+        // 清單／manifest 都在快取裡，刪完要當場更新，畫面那一列才會馬上消失
+        refreshInstalled()
     }
 
     /// 重新啟動 App 套用語言：`open -n` 拉起新實例（連同啟動參數），自己退出。
