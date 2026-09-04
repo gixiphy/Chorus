@@ -183,6 +183,62 @@ struct CLIAdviceProviderTests {
         #expect(Date().timeIntervalSince(started) < 10)
     }
 
+    @Test("吃掉 SIGTERM 的 CLI：寬限期後補 SIGKILL，逾時照樣收得掉")
+    func timeoutKillsProcessesThatIgnoreSIGTERM() async throws {
+        // agy 2026-09-04 就是這樣：卡在等模型回應，SIGTERM 完全不理，
+        // terminationHandler 不來、continuation 不 resume，畫面永遠停在翻譯中。
+        let stub = try makeStub("""
+        trap '' TERM
+        cat > /dev/null
+        i=0
+        while [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
+        """)
+        var provider = CLIAdviceProvider(engine: claudeEngine(), executable: stub)
+        provider.timeout = .milliseconds(500)
+        let started = Date()
+        do {
+            _ = try await provider.advise(photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil)
+            Issue.record("預期丟錯")
+        } catch let error as AdviceError {
+            guard case .timedOut = error else {
+                Issue.record("預期 timedOut，得到 \(error)")
+                return
+            }
+        }
+        let elapsed = Date().timeIntervalSince(started)
+        // 逾時 0.5 秒 ＋ 寬限 3 秒；沒有補刀的話這裡會一直掛著
+        #expect(elapsed > CLIProcessRunner.killGrace)
+        #expect(elapsed < 20)
+    }
+
+    @Test("取消：吃掉 SIGTERM 的 CLI 也要被收掉，不留孤兒")
+    func cancelKillsProcessesThatIgnoreSIGTERM() async throws {
+        let stub = try makeStub("""
+        trap '' TERM
+        cat > /dev/null
+        i=0
+        while [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
+        """)
+        let started = Date()
+        let task = Task {
+            try await CLIProcessRunner.run(
+                executable: stub, arguments: [], stdin: "x", timeout: .seconds(120)
+            )
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        task.cancel()
+        let result = await task.result
+        #expect(throwsCancellationOrError(result))
+        let elapsed = Date().timeIntervalSince(started)
+        #expect(elapsed > CLIProcessRunner.killGrace)
+        #expect(elapsed < 20)
+    }
+
+    private func throwsCancellationOrError(_ result: Result<CLIProcessRunner.Output, any Error>) -> Bool {
+        if case .failure = result { return true }
+        return false
+    }
+
     @Test("decode 失敗自動重試一次：第二次成功")
     func retryOnDecodeFailure() async throws {
         let marker = FileManager.default.temporaryDirectory

@@ -10,6 +10,49 @@ enum CLIProcessRunner {
         let stderr: String
     }
 
+    /// SIGTERM 之後多久補一刀 SIGKILL。
+    ///
+    /// `Process.terminate()` 只送 SIGTERM，CLI 大可以不理：2026-09-04 實測 agy 卡在
+    /// 等模型回應（0% CPU、兩條對外連線掛著），SIGTERM 完全沒作用——逾時與「取消」
+    /// 都變成空包彈，`terminationHandler` 不會來，我們這邊的 continuation 永遠不 resume，
+    /// 畫面就一直停在「翻譯中 0/587」，行程還一個 150MB 地留著。SIGKILL 擋不掉。
+    static let killGrace: TimeInterval = 3
+
+    /// 還活著的子行程 pid：App 結束時一次收乾淨，不留孤兒（會被 launchd 收養、
+    /// 賴在那裡吃記憶體）。
+    private static let liveProcesses = LiveProcesses()
+
+    /// 送 SIGTERM，寬限期過了還在就 SIGKILL。
+    private static func stop(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        Thread.detachNewThread {
+            Thread.sleep(forTimeInterval: killGrace)
+            // isRunning 為真才動手：行程收掉後 pid 會被系統回收再利用
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
+    }
+
+    /// App 結束前呼叫：手上還在跑的 CLI 一律 SIGKILL。
+    /// 沒人接手的話它們會活到自己想結束為止（見 `killGrace` 的註解）。
+    static func killAll() {
+        for pid in liveProcesses.pids { kill(pid, SIGKILL) }
+    }
+
+    /// pid 清單（多執行緒共用：watchdog、terminationHandler、主執行緒都會碰）。
+    private final class LiveProcesses: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: Set<pid_t> = []
+
+        var pids: [pid_t] {
+            lock.lock(); defer { lock.unlock() }
+            return Array(storage)
+        }
+
+        func insert(_ pid: pid_t) { lock.lock(); storage.insert(pid); lock.unlock() }
+        func remove(_ pid: pid_t) { lock.lock(); storage.remove(pid); lock.unlock() }
+    }
+
     /// 白名單環境；PATH 前置執行檔目錄，讓 CLI 找得到自帶 runtime。
     /// USER 必要：claude CLI 靠它查 Keychain 憑證，缺了會誤報「未登入」。
     static func whitelistedEnvironment(executableDirectory: String) -> [String: String] {
@@ -53,11 +96,13 @@ enum CLIProcessRunner {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 // handler 先於 run() 設定，保證必被呼叫
-                process.terminationHandler = { _ in
+                process.terminationHandler = { finished in
+                    liveProcesses.remove(finished.processIdentifier)
                     if flags.claimResume() { continuation.resume() }
                 }
                 do {
                     try process.run()
+                    liveProcesses.insert(process.processIdentifier)
                 } catch {
                     if flags.claimResume() { continuation.resume(throwing: error) }
                     return
@@ -83,12 +128,12 @@ enum CLIProcessRunner {
                     }
                     if process.isRunning {
                         flags.markTimedOut()
-                        process.terminate()
+                        stop(process)
                     }
                 }
             }
         } onCancel: {
-            if process.isRunning { process.terminate() }
+            stop(process)
         }
 
         let stdout = await readToEnd(stdoutPipe.fileHandleForReading)

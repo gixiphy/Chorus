@@ -69,5 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AppStateRegistry.displayManager?.shutdown()
             AppStateRegistry.keepAwake?.shutdown()
         }
+        // 翻譯／顧問還在跑的 CLI：不收的話會被 launchd 收養，一個 150MB 賴著不走
+        CLIProcessRunner.killAll()
     }
 }
