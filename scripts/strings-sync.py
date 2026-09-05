@@ -39,6 +39,8 @@ INFO_PLIST_SOURCE = os.path.join(ROOT, "Chorus", "Support", "Info.plist")
 INFOPLIST_KEYS = [
     "NSLocalNetworkUsageDescription",
     "NSAudioCaptureUsageDescription",
+    "NSLocationUsageDescription",
+    "NSLocationWhenInUseUsageDescription",
 ]
 
 

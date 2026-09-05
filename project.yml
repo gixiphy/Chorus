@@ -100,6 +100,10 @@ targets:
         # 下拉清單裡，是 kTCCServiceAudioCapture 的專屬 usage key；
         # 對話框在 AudioDeviceStart 時觸發（不是建 tap 時）。
         NSAudioCaptureUsageDescription: Chorus 需要擷取系統音訊，才能提供各 App 獨立音量與等化器。音訊只在本機處理，不會傳送到任何地方。
+        # 定位只為算日出日落（時間排程 sunTracking）。macOS 看 NSLocationUsageDescription，
+        # 新版也認 WhenInUse 那把；兩把都給同一句免得哪版跳空白對話框。
+        NSLocationUsageDescription: Chorus 只用你的所在地計算日出日落時間，作為沒有光線感測器時的環境光估計。位置不會離開這台 Mac。
+        NSLocationWhenInUseUsageDescription: Chorus 只用你的所在地計算日出日落時間，作為沒有光線感測器時的環境光估計。位置不會離開這台 Mac。
         NSBonjourServices:
           - _chorus._tcp
           - _chorus-pair._tcp

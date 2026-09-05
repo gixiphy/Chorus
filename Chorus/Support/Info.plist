@@ -35,5 +35,9 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Chorus 會在區域網路上尋找你的其他 Mac，以同步亮度與音量。</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Chorus 只用你的所在地計算日出日落時間，作為沒有光線感測器時的環境光估計。位置不會離開這台 Mac。</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Chorus 只用你的所在地計算日出日落時間，作為沒有光線感測器時的環境光估計。位置不會離開這台 Mac。</string>
 </dict>
 </plist>

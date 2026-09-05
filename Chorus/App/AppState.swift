@@ -14,6 +14,8 @@ final class AppState {
     let pairing: PairingController
     let coordinator: ControlCoordinator
     let autoBrightness: AutoBrightnessController
+    /// 所在地座標，只供時間排程算日出日落。
+    let location: LocationProvider
     let diagram: DiagramStore
     let advisor: LightingAdvisor
     let mediaKeys: MediaKeyInterceptor
@@ -81,11 +83,13 @@ final class AppState {
             audioManager: audioManager
         )
         let sensor = AmbientLightSensorClient(fakeALS: instance.fakeALS, disabled: instance.disableALS)
+        location = LocationProvider(settings: settings)
         autoBrightness = AutoBrightnessController(
             localPeerID: instance.peerID,
             settings: settings,
             displayManager: displayManager,
-            sensor: sensor
+            sensor: sensor,
+            location: location
         )
         diagram = DiagramStore(instance: instance)
         advisor = LightingAdvisor(

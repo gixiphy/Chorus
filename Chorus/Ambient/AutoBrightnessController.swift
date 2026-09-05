@@ -32,12 +32,28 @@ final class AutoBrightnessController {
     /// 時間排程當基準時的來源識別；不是 peerID，不會撞到任何配對裝置。
     static let scheduleSourceID = "schedule"
 
+    /// 所在地今天的日出日落；沒座標或極晝極夜為 nil（排程沿用手動時間）。
+    var todaySunTimes: SolarCalculator.SunTimes? {
+        guard let coordinate = location.coordinate else { return nil }
+        return SolarCalculator.sunTimes(
+            on: Date(), latitude: coordinate.latitude, longitude: coordinate.longitude
+        )
+    }
+
+    /// 實際生效的排程：sunTracking 且算得出日出日落時，天亮天黑已換成今天的值。
+    var resolvedSchedule: AmbientSchedule {
+        let schedule = settings.ambientSchedule
+        guard schedule.sunTracking, let sun = todaySunTimes else { return schedule }
+        return schedule.applying(sun: sun)
+    }
+
     /// Coordinator 注入：把本機感器回報廣播到 mesh。
     @ObservationIgnored var broadcastHandler: (@MainActor (AmbientReport) -> Void)?
 
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private weak var displayManager: DisplayManager?
     @ObservationIgnored private let sensor: AmbientLightSensorClient
+    @ObservationIgnored private let location: LocationProvider
     @ObservationIgnored private let localPeerID: String
 
     @ObservationIgnored private var smoother = LuxSmoother()
@@ -63,12 +79,14 @@ final class AutoBrightnessController {
         localPeerID: String,
         settings: SettingsStore,
         displayManager: DisplayManager,
-        sensor: AmbientLightSensorClient
+        sensor: AmbientLightSensorClient,
+        location: LocationProvider
     ) {
         self.localPeerID = localPeerID
         self.settings = settings
         self.displayManager = displayManager
         self.sensor = sensor
+        self.location = location
         syncCore = AmbientSyncCore(localPeerID: localPeerID)
         syncCore.hasLocalSensor = sensor.isAvailable
     }
@@ -86,6 +104,10 @@ final class AutoBrightnessController {
                 try? await Task.sleep(for: .seconds(5))
                 self?.checkSourceStaleness()
             }
+        }
+        // 每次啟動重新定位一次：筆電搬家了要跟；Mac mini 上就是一次快取命中
+        if !sensor.isAvailable, settings.ambientScheduleEnabled, settings.ambientSchedule.sunTracking {
+            location.refresh()
         }
         refreshBaselineState()
     }
@@ -114,8 +136,13 @@ final class AutoBrightnessController {
     }
 
     /// 排程參數變更（設定頁）；正在用排程時立即以新參數重算。
+    /// 剛打開 sunTracking 會觸發定位（第一次會跳系統授權對話框）。
     func setSchedule(_ schedule: AmbientSchedule) {
+        let wasTracking = settings.ambientSchedule.sunTracking
         settings.ambientSchedule = schedule
+        if schedule.sunTracking, !wasTracking || location.coordinate == nil {
+            location.refresh()
+        }
         refreshBaselineState()
     }
 
@@ -275,7 +302,7 @@ final class AutoBrightnessController {
             baselineSourceID = nil
             return
         }
-        let lux = settings.ambientSchedule.lux(at: Date())
+        let lux = resolvedSchedule.lux(at: Date())
         baselineLux = lux
         baselineSourceID = Self.scheduleSourceID
         if settings.autoBrightnessEnabled {

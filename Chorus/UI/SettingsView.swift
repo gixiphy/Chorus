@@ -456,16 +456,59 @@ private struct AmbientScheduleControls: View {
             LabeledContent("夜間環境光") {
                 luxSlider(\.nightLux, range: 0...500)
             }
-            LabeledContent("天亮時間") {
-                minutePicker(\.dawnMinute)
-            }
-            LabeledContent("天黑時間") {
-                minutePicker(\.duskMinute)
+            Toggle("依所在位置自動取得日出日落", isOn: Binding(
+                get: { appState.settings.ambientSchedule.sunTracking },
+                set: { on in
+                    var schedule = appState.settings.ambientSchedule
+                    schedule.sunTracking = on
+                    appState.autoBrightness.setSchedule(schedule)
+                }
+            ))
+            if appState.settings.ambientSchedule.sunTracking, let sun = appState.autoBrightness.todaySunTimes {
+                LabeledContent("今天") {
+                    Text("日出 \(clock(sun.sunriseMinute)) · 日落 \(clock(sun.sunsetMinute))")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            } else {
+                if appState.settings.ambientSchedule.sunTracking {
+                    Text(sunTrackingProblem)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                LabeledContent("天亮時間") {
+                    minutePicker(\.dawnMinute)
+                }
+                LabeledContent("天黑時間") {
+                    minutePicker(\.duskMinute)
+                }
             }
             Text("天亮與天黑前後各半小時會平滑過渡。一有裝置回報真實環境光就改用那一份。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// sunTracking 開著卻算不出日出日落時，講清楚為什麼還在用手動時間。
+    private var sunTrackingProblem: String {
+        let location = appState.location
+        if location.coordinate != nil {
+            return String(localized: "所在地今天沒有日出或日落，改用下方的手動時間。")
+        }
+        switch location.status {
+        case .denied, .restricted:
+            return String(localized: "定位被拒絕，改用下方的手動時間。到「系統設定 › 隱私權與安全性 › 定位服務」允許 Chorus 後再開一次。")
+        default:
+            if let error = location.lastError {
+                return String(localized: "無法取得位置（\(error)），改用下方的手動時間。")
+            }
+            return String(localized: "正在取得位置…在那之前先用下方的手動時間。")
+        }
+    }
+
+    private func clock(_ minute: Double) -> String {
+        let whole = Int(minute.rounded())
+        return String(format: "%02d:%02d", (whole / 60) % 24, whole % 60)
     }
 
     private func luxSlider(_ keyPath: WritableKeyPath<AmbientSchedule, Double>, range: ClosedRange<Double>) -> some View {

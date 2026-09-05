@@ -44,6 +44,50 @@
           }
         }
       }
+    },
+    "NSLocationUsageDescription" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus uses your location only to calculate sunrise and sunset times, as an ambient light estimate when no ambient light sensor is available. Your location never leaves this Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus 只用你的所在地计算日出日落时间，作为没有光线传感器时的环境光估计。位置不会离开这台 Mac。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus 只用你的所在地計算日出日落時間，作為沒有光線感測器時的環境光估計。位置不會離開這台 Mac。"
+          }
+        }
+      }
+    },
+    "NSLocationWhenInUseUsageDescription" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus uses your location only to calculate sunrise and sunset times, as an ambient light estimate when no ambient light sensor is available. Your location never leaves this Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus 只用你的所在地计算日出日落时间，作为没有光线传感器时的环境光估计。位置不会离开这台 Mac。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus 只用你的所在地計算日出日落時間，作為沒有光線感測器時的環境光估計。位置不會離開這台 Mac。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

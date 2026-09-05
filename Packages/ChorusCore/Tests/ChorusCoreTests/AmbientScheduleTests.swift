@@ -109,10 +109,31 @@ struct AmbientScheduleTests {
         #expect(AmbientSchedule(rampMinutes: 999).rampMinutes == 240)
     }
 
+    @Test("Legacy JSON without sunTracking decodes as manual times")
+    func legacyDecode() throws {
+        let json = #"{"dayLux":400,"nightLux":40,"dawnMinute":420,"duskMinute":1080,"rampMinutes":60}"#
+        let decoded = try JSONDecoder().decode(AmbientSchedule.self, from: Data(json.utf8))
+        #expect(decoded.sunTracking == false)
+        #expect(decoded == schedule)
+    }
+
+    @Test("Applying sun times replaces dawn and dusk only")
+    func applyingSun() {
+        var tracking = schedule
+        tracking.sunTracking = true
+        let applied = tracking.applying(sun: .init(sunriseMinute: 305.4, sunsetMinute: 1126.6))
+        #expect(applied.dawnMinute == 305)
+        #expect(applied.duskMinute == 1127)
+        #expect(applied.dayLux == 400)
+        #expect(applied.sunTracking == true)
+    }
+
     @Test("Codable round trip")
     func codable() throws {
-        let data = try JSONEncoder().encode(schedule)
+        var tracking = schedule
+        tracking.sunTracking = true
+        let data = try JSONEncoder().encode(tracking)
         let decoded = try JSONDecoder().decode(AmbientSchedule.self, from: data)
-        #expect(decoded == schedule)
+        #expect(decoded == tracking)
     }
 }

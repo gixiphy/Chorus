@@ -5,8 +5,8 @@ import Foundation
 /// 位階是最低的——本機感器、peer 回報都優先；只有兩者皆無（Mac mini 單機、
 /// 筆電合蓋且 peer 全離線）才用它。它不是量測，是猜：室內白天靠窗光，
 /// 晚上靠燈，所以模型不是日照角而是「日間值／夜間值＋兩段餘弦漸變」。
-/// 天亮天黑時間由使用者設，不用定位（免 TCC 彈窗，且室內開燈時間本來就
-/// 不等於日落）。
+/// 天亮天黑時間預設由使用者設；開 `sunTracking` 則由 app 端拿所在地的日出日落
+/// （SolarCalculator）每天覆蓋——本型別本身不碰定位，只提供 `applying(sun:)`。
 ///
 /// 純邏輯、可序列化；時間一律用「當地時區的當日分鐘數」表達。
 public struct AmbientSchedule: Codable, Sendable, Equatable {
@@ -20,6 +20,8 @@ public struct AmbientSchedule: Codable, Sendable, Equatable {
     public var duskMinute: Int
     /// 每段漸變的總長度（分鐘），以天亮／天黑為中心前後各一半。
     public var rampMinutes: Int
+    /// 天亮／天黑改用所在地日出日落（app 端有座標時才生效，否則沿用手動時間）。
+    public var sunTracking: Bool
 
     public static let minutesPerDay = 1440
 
@@ -28,13 +30,36 @@ public struct AmbientSchedule: Codable, Sendable, Equatable {
         nightLux: Double = 40,
         dawnMinute: Int = 7 * 60,
         duskMinute: Int = 18 * 60,
-        rampMinutes: Int = 60
+        rampMinutes: Int = 60,
+        sunTracking: Bool = false
     ) {
         self.dayLux = max(dayLux, 0)
         self.nightLux = max(nightLux, 0)
         self.dawnMinute = Self.wrap(dawnMinute)
         self.duskMinute = Self.wrap(duskMinute)
         self.rampMinutes = min(max(rampMinutes, 1), 240)
+        self.sunTracking = sunTracking
+    }
+
+    /// 舊版存檔沒有 `sunTracking` 欄位 → 視為關閉。
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            dayLux: try c.decode(Double.self, forKey: .dayLux),
+            nightLux: try c.decode(Double.self, forKey: .nightLux),
+            dawnMinute: try c.decode(Int.self, forKey: .dawnMinute),
+            duskMinute: try c.decode(Int.self, forKey: .duskMinute),
+            rampMinutes: try c.decode(Int.self, forKey: .rampMinutes),
+            sunTracking: try c.decodeIfPresent(Bool.self, forKey: .sunTracking) ?? false
+        )
+    }
+
+    /// 以日出日落取代天亮／天黑（取整分鐘）。其餘參數不動。
+    public func applying(sun: SolarCalculator.SunTimes) -> AmbientSchedule {
+        var copy = self
+        copy.dawnMinute = Self.wrap(Int(sun.sunriseMinute.rounded()))
+        copy.duskMinute = Self.wrap(Int(sun.sunsetMinute.rounded()))
+        return copy
     }
 
     /// 該時刻的估計 lux。`minuteOfDay` 可帶小數（秒），超出一天會取模。

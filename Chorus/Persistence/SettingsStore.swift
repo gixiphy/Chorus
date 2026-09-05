@@ -39,6 +39,7 @@ final class SettingsStore {
         static let ambientDeviceOffset = "chorus.ambient.deviceOffset"
         static let ambientScheduleEnabled = "chorus.ambient.scheduleEnabled"
         static let ambientSchedule = "chorus.ambient.schedule"
+        static let ambientLocation = "chorus.ambient.location"
         static let hiddenAudioDevices = "chorus.audio.hiddenDevices"
         static let mediaKeyCapture = "chorus.mediaKeys.enabled"
         static let audioBridgeDisabled = "chorus.audio.bridgeDisabled"
@@ -161,6 +162,17 @@ final class SettingsStore {
         didSet {
             if let data = try? JSONEncoder().encode(ambientSchedule) {
                 defaults.set(data, forKey: Key.ambientSchedule)
+            }
+        }
+    }
+
+    /// 最後一次定位 [緯度, 經度]，只給日出日落計算用；綁機、不進備份。
+    var ambientLocation: [Double]? {
+        didSet {
+            if let ambientLocation {
+                defaults.set(ambientLocation, forKey: Key.ambientLocation)
+            } else {
+                defaults.removeObject(forKey: Key.ambientLocation)
             }
         }
     }
@@ -463,6 +475,7 @@ final class SettingsStore {
         } else {
             ambientSchedule = AmbientSchedule()
         }
+        ambientLocation = defaults.array(forKey: Key.ambientLocation) as? [Double]
         hiddenAudioDevices = Set(defaults.stringArray(forKey: Key.hiddenAudioDevices) ?? [])
         mediaKeyCaptureEnabled = defaults.bool(forKey: Key.mediaKeyCapture)
         audioBridgeDisabled = Set(defaults.stringArray(forKey: Key.audioBridgeDisabled) ?? [])

@@ -1614,6 +1614,22 @@
         }
       }
     },
+    "今天" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Today"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今天"
+          }
+        }
+      }
+    },
     "介面語言" : {
       "localizations" : {
         "en" : {
@@ -1834,6 +1850,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "例如 0.8、80%、+10%（每个 App 最高 400%）"
+          }
+        }
+      }
+    },
+    "依所在位置自動取得日出日落" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get sunrise and sunset from your location"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "根据所在位置自动获取日出日落"
           }
         }
       }
@@ -3623,6 +3655,22 @@
         }
       }
     },
+    "定位被拒絕，改用下方的手動時間。到「系統設定 › 隱私權與安全性 › 定位服務」允許 Chorus 後再開一次。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Location access was denied, so the manual times below are used instead. Allow Chorus in System Settings › Privacy & Security › Location Services, then turn this on again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "定位被拒绝，改用下方的手动时间。到“系统设置 › 隐私与安全性 › 定位服务”允许 Chorus 后再打开一次。"
+          }
+        }
+      }
+    },
     "實驗性" : {
       "localizations" : {
         "en" : {
@@ -4695,6 +4743,22 @@
         }
       }
     },
+    "所在地今天沒有日出或日落，改用下方的手動時間。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There is no sunrise or sunset at your location today, so the manual times below are used instead."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所在地今天没有日出或日落，改用下方的手动时间。"
+          }
+        }
+      }
+    },
     "手動 10 段" : {
       "localizations" : {
         "en" : {
@@ -5383,6 +5447,22 @@
         }
       }
     },
+    "日出 %@ · 日落 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sunrise %@ · Sunset %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "日出 %@ · 日落 %@"
+          }
+        }
+      }
+    },
     "日間環境光" : {
       "localizations" : {
         "en" : {
@@ -5831,6 +5911,22 @@
         }
       }
     },
+    "正在取得位置…在那之前先用下方的手動時間。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Getting your location… The manual times below are used until then."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在获取位置…在此之前先用下方的手动时间。"
+          }
+        }
+      }
+    },
     "正在套用「%@」…" : {
       "localizations" : {
         "en" : {
@@ -6223,6 +6319,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无光线传感器 — 等待其他设备报告"
+          }
+        }
+      }
+    },
+    "無法取得位置（%@），改用下方的手動時間。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't get your location (%@), so the manual times below are used instead."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法获取位置（%@），改用下方的手动时间。"
           }
         }
       }

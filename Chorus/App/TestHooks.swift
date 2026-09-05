@@ -136,7 +136,7 @@ final class TestHooks {
                 appState.autoBrightness.injectLux(value)
             }
         case "ambientSchedule":
-            // 時間排程兜底：value = enabled|dayLux|nightLux|dawn|dusk（後四欄可省略，分鐘）
+            // 時間排程兜底：value = enabled|dayLux|nightLux|dawn|dusk|sunTracking（後五欄可省略，分鐘）
             if let raw = info["value"] {
                 let fields = raw.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
                 var schedule = appState.settings.ambientSchedule
@@ -144,8 +144,17 @@ final class TestHooks {
                 if fields.count > 2, let value = Double(fields[2]) { schedule.nightLux = value }
                 if fields.count > 3, let value = Int(fields[3]) { schedule.dawnMinute = value }
                 if fields.count > 4, let value = Int(fields[4]) { schedule.duskMinute = value }
+                if fields.count > 5 { schedule.sunTracking = fields[5] == "1" }
                 appState.autoBrightness.setSchedule(schedule)
                 appState.autoBrightness.setScheduleEnabled(fields[0] == "1")
+            }
+        case "ambientLocation":
+            // 不經 TCC 直接給座標：value = lat|lon
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|").compactMap { Double($0) }
+                if fields.count == 2 {
+                    appState.location.inject(latitude: fields[0], longitude: fields[1])
+                }
             }
         case "excludeAllAuto":
             // 同機 E2E：讓這個實例只回報 lux、不寫實體螢幕（兩實例共用同一片硬體）
@@ -799,6 +808,10 @@ final class TestHooks {
                 "deviceOffset": appState.settings.ambientDeviceOffset,
                 "scheduleEnabled": appState.settings.ambientScheduleEnabled,
                 "followingSchedule": appState.autoBrightness.isFollowingSchedule,
+                "sunTracking": appState.settings.ambientSchedule.sunTracking,
+                "locationKnown": appState.location.coordinate != nil,
+                "resolvedDawn": appState.autoBrightness.resolvedSchedule.dawnMinute,
+                "resolvedDusk": appState.autoBrightness.resolvedSchedule.duskMinute,
             ] as [String: Any],
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dump, options: [.sortedKeys]) {
