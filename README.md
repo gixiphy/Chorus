@@ -8,7 +8,7 @@ macOS 選單列 App：控制所有螢幕與音訊裝置——並且在同一區�
 > [SoundSource](https://rogueamoeba.com/soundsource/) 那一類。Chorus 把兩邊收進
 > 同一個選單列，再疊上跨機與 AI 這兩層——那才是它真正的差異點。
 
-`1.4.0`（build 78）· macOS 26+ · Apple Silicon · 繁體中文／简体中文／English
+`1.5.0`（build 87）· macOS 26+ · Apple Silicon · 繁體中文／简体中文／English
 
 <img src="assets/menubar.png" alt="Chorus 選單列" width="330">
 
@@ -37,6 +37,9 @@ macOS 選單列 App：控制所有螢幕與音訊裝置——並且在同一區�
   「把桌子另一頭那台的螢幕關掉」不必走過去。
 - **跨機環境光**：有光線感測器的 Mac 當基準，沒有的跟著它走——Mac mini 這種沒光感的
   機器也能有自動亮度。基準來源斷線會自動接手，闔上筆電不會讓螢幕忽明忽暗。
+- **時間排程兜底**：一顆感器都沒有時（Mac mini 單機、筆電合蓋且 peer 全離線），
+  可以依日夜時段估一個環境光——白天多亮、晚上多亮、幾點天亮天黑，前後各半小時
+  平滑過渡。天亮天黑可以改成依所在地的日出日落自動算，一有真感器回報就立刻讓位。
 
 ```bash
 chorus set --peer "Mac mini" --all-displays --power off
