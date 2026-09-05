@@ -37,6 +37,8 @@ final class SettingsStore {
         static let ambientCurve = "chorus.ambient.curve"
         static let ambientDisplayOffsets = "chorus.ambient.displayOffsets"
         static let ambientDeviceOffset = "chorus.ambient.deviceOffset"
+        static let ambientScheduleEnabled = "chorus.ambient.scheduleEnabled"
+        static let ambientSchedule = "chorus.ambient.schedule"
         static let hiddenAudioDevices = "chorus.audio.hiddenDevices"
         static let mediaKeyCapture = "chorus.mediaKeys.enabled"
         static let audioBridgeDisabled = "chorus.audio.bridgeDisabled"
@@ -147,6 +149,20 @@ final class SettingsStore {
     /// 整機亮度差異值（-0.5…+0.5），peer 可經配置圖遠端調整。
     var ambientDeviceOffset: Double {
         didSet { defaults.set(ambientDeviceOffset, forKey: Key.ambientDeviceOffset) }
+    }
+
+    /// 無本機感器且無 peer 回報時，是否改依時間排程估計環境光（最低位階的兜底）。
+    var ambientScheduleEnabled: Bool {
+        didSet { defaults.set(ambientScheduleEnabled, forKey: Key.ambientScheduleEnabled) }
+    }
+
+    /// 時間排程的參數（日夜 lux、天亮天黑時間）。
+    var ambientSchedule: AmbientSchedule {
+        didSet {
+            if let data = try? JSONEncoder().encode(ambientSchedule) {
+                defaults.set(data, forKey: Key.ambientSchedule)
+            }
+        }
     }
 
     /// 選單列不顯示的音訊裝置 UID（虛擬裝置如 Teams Audio 等）。
@@ -440,6 +456,13 @@ final class SettingsStore {
         }
         ambientDisplayOffsets = (defaults.dictionary(forKey: Key.ambientDisplayOffsets) as? [String: Double]) ?? [:]
         ambientDeviceOffset = defaults.object(forKey: Key.ambientDeviceOffset) as? Double ?? 0
+        ambientScheduleEnabled = defaults.object(forKey: Key.ambientScheduleEnabled) as? Bool ?? false
+        if let data = defaults.data(forKey: Key.ambientSchedule),
+           let schedule = try? JSONDecoder().decode(AmbientSchedule.self, from: data) {
+            ambientSchedule = schedule
+        } else {
+            ambientSchedule = AmbientSchedule()
+        }
         hiddenAudioDevices = Set(defaults.stringArray(forKey: Key.hiddenAudioDevices) ?? [])
         mediaKeyCaptureEnabled = defaults.bool(forKey: Key.mediaKeyCapture)
         audioBridgeDisabled = Set(defaults.stringArray(forKey: Key.audioBridgeDisabled) ?? [])

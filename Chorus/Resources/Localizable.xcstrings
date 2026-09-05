@@ -1838,6 +1838,22 @@
         }
       }
     },
+    "依時間排程估計 · %lld lx" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Estimated from schedule · %lld lx"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按时间计划估算 · %lld lx"
+          }
+        }
+      }
+    },
     "依環境光自動調整亮度" : {
       "localizations" : {
         "en" : {
@@ -3395,6 +3411,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "夜晚，开顶灯"
+          }
+        }
+      }
+    },
+    "夜間環境光" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Night Ambient Light"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "夜间环境光"
+          }
+        }
+      }
+    },
+    "天亮時間" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sunrise Time"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "天亮时间"
+          }
+        }
+      }
+    },
+    "天亮與天黑前後各半小時會平滑過渡。一有裝置回報真實環境光就改用那一份。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transitions smoothly over the half hour before and after sunrise and sunset. Switches to real ambient light as soon as a device reports it."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "天亮与天黑前后各半小时会平滑过渡。一有设备上报真实环境光就改用那一份。"
+          }
+        }
+      }
+    },
+    "天黑時間" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sunset Time"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "天黑时间"
           }
         }
       }
@@ -5303,6 +5383,22 @@
         }
       }
     },
+    "日間環境光" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Day Ambient Light"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "日间环境光"
+          }
+        }
+      }
+    },
     "時長只能配 perform runScene（場景 ＋ 時長 ＝ 限時場景）" : {
       "localizations" : {
         "en" : {
@@ -5955,6 +6051,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有“%@”这个属性"
+          }
+        }
+      }
+    },
+    "沒有其他裝置回報時，依時間排程估計環境光" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Estimate ambient light from a schedule when no other device reports it"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有其他设备上报时，按时间计划估算环境光"
           }
         }
       }

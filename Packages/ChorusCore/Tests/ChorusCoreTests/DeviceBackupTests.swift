@@ -37,6 +37,8 @@ struct DeviceBackupTests {
             ambientDisplayOffsets: ["disp-\(tag)": flag ? 0.1 : 0.2],
             ambientDeviceOffset: flag ? 0.05 : 0.15,
             ambientExcludedDisplays: ["ex-\(tag)"],
+            ambientScheduleEnabled: flag,
+            ambientSchedule: AmbientSchedule(dayLux: flag ? 300 : 600, nightLux: flag ? 20 : 60, dawnMinute: flag ? 400 : 420, duskMinute: flag ? 1080 : 1140),
             keepAwakePreventsSystemSleep: flag,
             keepAwakeDisplayUUID: "ka-disp-\(tag)",
             keepAwakeAppBundleID: "ka-app-\(tag)",

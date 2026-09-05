@@ -398,6 +398,7 @@ private struct AmbientCurveSection: View {
                 Text("這台 Mac 沒有光線感測器，將跟隨已配對裝置回報的環境光。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                AmbientScheduleControls()
             }
             LabeledContent("最暗亮度") {
                 Slider(
@@ -434,6 +435,81 @@ private struct AmbientCurveSection: View {
                     .frame(width: 56, alignment: .trailing)
             }
         }
+    }
+}
+
+/// 時間排程兜底（只在無本機感器的機器顯示）：沒有 peer 回報時依日夜時段估環境光。
+/// 這是估計不是量測，所以參數是「白天多亮、晚上多亮、幾點天亮、幾點天黑」，
+/// 不談日照角也不要定位權限。
+private struct AmbientScheduleControls: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        Toggle("沒有其他裝置回報時，依時間排程估計環境光", isOn: Binding(
+            get: { appState.settings.ambientScheduleEnabled },
+            set: { appState.autoBrightness.setScheduleEnabled($0) }
+        ))
+        if appState.settings.ambientScheduleEnabled {
+            LabeledContent("日間環境光") {
+                luxSlider(\.dayLux, range: 50...2000)
+            }
+            LabeledContent("夜間環境光") {
+                luxSlider(\.nightLux, range: 0...500)
+            }
+            LabeledContent("天亮時間") {
+                minutePicker(\.dawnMinute)
+            }
+            LabeledContent("天黑時間") {
+                minutePicker(\.duskMinute)
+            }
+            Text("天亮與天黑前後各半小時會平滑過渡。一有裝置回報真實環境光就改用那一份。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func luxSlider(_ keyPath: WritableKeyPath<AmbientSchedule, Double>, range: ClosedRange<Double>) -> some View {
+        HStack {
+            Slider(
+                value: Binding(
+                    get: { appState.settings.ambientSchedule[keyPath: keyPath] },
+                    set: { value in
+                        var schedule = appState.settings.ambientSchedule
+                        schedule[keyPath: keyPath] = value
+                        appState.autoBrightness.setSchedule(schedule)
+                    }
+                ),
+                in: range
+            )
+            .frame(width: 160)
+            Text("\(Int(appState.settings.ambientSchedule[keyPath: keyPath])) lx")
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(width: 56, alignment: .trailing)
+        }
+    }
+
+    /// 當日分鐘數 ↔ 時刻選擇器：日期部分固定用今天，只取時與分。
+    private func minutePicker(_ keyPath: WritableKeyPath<AmbientSchedule, Int>) -> some View {
+        DatePicker(
+            "",
+            selection: Binding(
+                get: {
+                    let minute = appState.settings.ambientSchedule[keyPath: keyPath]
+                    return Calendar.current.date(
+                        bySettingHour: minute / 60, minute: minute % 60, second: 0, of: Date()
+                    ) ?? Date()
+                },
+                set: { date in
+                    let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                    var schedule = appState.settings.ambientSchedule
+                    schedule[keyPath: keyPath] = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+                    appState.autoBrightness.setSchedule(schedule)
+                }
+            ),
+            displayedComponents: .hourAndMinute
+        )
+        .labelsHidden()
     }
 }
 

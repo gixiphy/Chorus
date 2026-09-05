@@ -4,6 +4,10 @@ import Observation
 
 /// 自動亮度迴路：光感器（本機或遠端 peer）→ 曲線 + 差異值 → 各顯示器亮度。
 ///
+/// 基準來源位階：本機感器 ＞ peer 回報 ＞ 時間排程（AmbientSchedule，使用者開啟才算）。
+/// 排程只在本機無感器且 AmbientSyncCore 沒有任何存活來源時接手；它是估計值，
+/// **不廣播**——有真感器的 peer 一回來就立刻讓位。
+///
 /// 寫入路徑：一律經 DisplayManager.applyBrightness(_:toUUID:)（先寫 model、不廣播），
 /// 因此 1 Hz poller 通常看不到落差；殘餘落差由 handleExternalBrightnessChange 對帳 ——
 /// 與 lastAutoWritten 相近視為 DisplayServices 自身收斂（靜默吸收），
@@ -18,10 +22,15 @@ final class AutoBrightnessController {
     private(set) var currentLux: Double?
     /// 目前生效的環境基準（本機感器或跟隨的 peer；無來源為 nil）。
     private(set) var baselineLux: Double?
-    /// 基準來源 peerID（本機時等於 localPeerID）。
+    /// 基準來源 peerID（本機時等於 localPeerID；時間排程時為 scheduleSourceID）。
     private(set) var baselineSourceID: String?
 
     var hasLocalSensor: Bool { sensor.isAvailable }
+    /// 目前基準是否來自時間排程（UI 文案用）。
+    var isFollowingSchedule: Bool { baselineSourceID == Self.scheduleSourceID }
+
+    /// 時間排程當基準時的來源識別；不是 peerID，不會撞到任何配對裝置。
+    static let scheduleSourceID = "schedule"
 
     /// Coordinator 注入：把本機感器回報廣播到 mesh。
     @ObservationIgnored var broadcastHandler: (@MainActor (AmbientReport) -> Void)?
@@ -78,6 +87,7 @@ final class AutoBrightnessController {
                 self?.checkSourceStaleness()
             }
         }
+        refreshBaselineState()
     }
 
     // MARK: - 開關與查詢
@@ -94,6 +104,19 @@ final class AutoBrightnessController {
             rampTask = nil
             lastAutoWritten = [:]
         }
+    }
+
+    /// 時間排程兜底開關（設定頁）。關掉時若正在用排程 → 基準清空、亮度維持現值。
+    func setScheduleEnabled(_ enabled: Bool) {
+        guard settings.ambientScheduleEnabled != enabled else { return }
+        settings.ambientScheduleEnabled = enabled
+        refreshBaselineState()
+    }
+
+    /// 排程參數變更（設定頁）；正在用排程時立即以新參數重算。
+    func setSchedule(_ schedule: AmbientSchedule) {
+        settings.ambientSchedule = schedule
+        refreshBaselineState()
     }
 
     /// 該顯示器目前是否由 auto 管理（poller 與同步抑制的判斷依據）。
@@ -242,11 +265,22 @@ final class AutoBrightnessController {
         }
     }
 
-    /// 來源被移除（失聯／斷線）後同步 UI 狀態；亮度維持現值不再跟隨。
+    /// 沒有存活的感器來源時的狀態同步：有開排程就退到排程（每次 tick 重算，
+    /// 讓漸變隨時間走），否則清空基準、亮度維持現值不再跟隨。
+    /// 有本機感器的機器永遠不會走到排程——pollSensor 自己就是來源。
     private func refreshBaselineState() {
         guard syncCore.currentBaseline() == nil else { return }
-        baselineLux = nil
-        baselineSourceID = nil
+        guard !sensor.isAvailable, settings.ambientScheduleEnabled else {
+            baselineLux = nil
+            baselineSourceID = nil
+            return
+        }
+        let lux = settings.ambientSchedule.lux(at: Date())
+        baselineLux = lux
+        baselineSourceID = Self.scheduleSourceID
+        if settings.autoBrightnessEnabled {
+            applyTargets(baseline: lux)
+        }
     }
 
     /// 對所有受管顯示器計算目標並平滑過渡（5 步 × 100 ms）。

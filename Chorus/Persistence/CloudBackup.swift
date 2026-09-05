@@ -76,6 +76,8 @@ final class CloudBackup {
             ambientDisplayOffsets: settings.ambientDisplayOffsets,
             ambientDeviceOffset: settings.ambientDeviceOffset,
             ambientExcludedDisplays: Array(settings.ambientExcludedDisplays),
+            ambientScheduleEnabled: settings.ambientScheduleEnabled,
+            ambientSchedule: settings.ambientSchedule,
             keepAwakePreventsSystemSleep: settings.keepAwakePreventsSystemSleep,
             keepAwakeDisplayUUID: settings.keepAwakeDisplayUUID,
             keepAwakeAppBundleID: settings.keepAwakeAppBundleID,
@@ -120,6 +122,8 @@ final class CloudBackup {
         settings.ambientDisplayOffsets = backup.ambientDisplayOffsets
         settings.ambientDeviceOffset = backup.ambientDeviceOffset
         settings.ambientExcludedDisplays = Set(backup.ambientExcludedDisplays)
+        settings.ambientScheduleEnabled = backup.ambientScheduleEnabled
+        settings.ambientSchedule = backup.ambientSchedule
         settings.keepAwakePreventsSystemSleep = backup.keepAwakePreventsSystemSleep
         settings.keepAwakeDisplayUUID = backup.keepAwakeDisplayUUID
         settings.keepAwakeAppBundleID = backup.keepAwakeAppBundleID

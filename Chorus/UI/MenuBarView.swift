@@ -208,6 +208,9 @@ private struct AutoBrightnessRow: View {
             return appState.settings.autoBrightnessEnabled ? String(localized: "讀取環境光中…") : String(localized: "使用本機光線感測器")
         }
         if let sourceID = auto.baselineSourceID, let lux = auto.baselineLux {
+            if auto.isFollowingSchedule {
+                return String(localized: "依時間排程估計 · \(Int(lux.rounded())) lx")
+            }
             let name = appState.pairedPeers.peers.first { $0.peerID == sourceID }?.deviceName ?? String(localized: "其他裝置")
             return String(localized: "跟隨 \(name) · \(Int(lux.rounded())) lx")
         }

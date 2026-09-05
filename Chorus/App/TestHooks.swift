@@ -135,6 +135,18 @@ final class TestHooks {
             if let value = info["value"].flatMap(Double.init) {
                 appState.autoBrightness.injectLux(value)
             }
+        case "ambientSchedule":
+            // 時間排程兜底：value = enabled|dayLux|nightLux|dawn|dusk（後四欄可省略，分鐘）
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+                var schedule = appState.settings.ambientSchedule
+                if fields.count > 1, let value = Double(fields[1]) { schedule.dayLux = value }
+                if fields.count > 2, let value = Double(fields[2]) { schedule.nightLux = value }
+                if fields.count > 3, let value = Int(fields[3]) { schedule.dawnMinute = value }
+                if fields.count > 4, let value = Int(fields[4]) { schedule.duskMinute = value }
+                appState.autoBrightness.setSchedule(schedule)
+                appState.autoBrightness.setScheduleEnabled(fields[0] == "1")
+            }
         case "excludeAllAuto":
             // 同機 E2E：讓這個實例只回報 lux、不寫實體螢幕（兩實例共用同一片硬體）
             appState.settings.ambientExcludedDisplays = Set(appState.displayManager.displays.map(\.uuid))
@@ -785,6 +797,8 @@ final class TestHooks {
                 "baselineSource": appState.autoBrightness.baselineSourceID.map { $0 as Any } ?? NSNull(),
                 "displayOffsets": appState.settings.ambientDisplayOffsets,
                 "deviceOffset": appState.settings.ambientDeviceOffset,
+                "scheduleEnabled": appState.settings.ambientScheduleEnabled,
+                "followingSchedule": appState.autoBrightness.isFollowingSchedule,
             ] as [String: Any],
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dump, options: [.sortedKeys]) {

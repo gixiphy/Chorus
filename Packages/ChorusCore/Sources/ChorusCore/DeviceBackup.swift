@@ -86,6 +86,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
     public var ambientDisplayOffsets: [String: Double]
     public var ambientDeviceOffset: Double
     public var ambientExcludedDisplays: [String]
+    public var ambientScheduleEnabled: Bool
+    public var ambientSchedule: AmbientSchedule
 
     // MARK: 整機偏好
 
@@ -132,6 +134,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         ambientDisplayOffsets: [String: Double] = [:],
         ambientDeviceOffset: Double = 0,
         ambientExcludedDisplays: [String] = [],
+        ambientScheduleEnabled: Bool = false,
+        ambientSchedule: AmbientSchedule = AmbientSchedule(),
         keepAwakePreventsSystemSleep: Bool = false,
         keepAwakeDisplayUUID: String? = nil,
         keepAwakeAppBundleID: String? = nil,
@@ -174,6 +178,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         self.ambientDisplayOffsets = ambientDisplayOffsets
         self.ambientDeviceOffset = ambientDeviceOffset
         self.ambientExcludedDisplays = ambientExcludedDisplays.sorted()
+        self.ambientScheduleEnabled = ambientScheduleEnabled
+        self.ambientSchedule = ambientSchedule
         self.keepAwakePreventsSystemSleep = keepAwakePreventsSystemSleep
         self.keepAwakeDisplayUUID = keepAwakeDisplayUUID
         self.keepAwakeAppBundleID = keepAwakeAppBundleID
@@ -227,6 +233,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         ambientDisplayOffsets = try c.decodeIfPresent([String: Double].self, forKey: .ambientDisplayOffsets) ?? [:]
         ambientDeviceOffset = try c.decodeIfPresent(Double.self, forKey: .ambientDeviceOffset) ?? 0
         ambientExcludedDisplays = try list(.ambientExcludedDisplays)
+        ambientScheduleEnabled = try c.decodeIfPresent(Bool.self, forKey: .ambientScheduleEnabled) ?? false
+        ambientSchedule = try c.decodeIfPresent(AmbientSchedule.self, forKey: .ambientSchedule) ?? AmbientSchedule()
         keepAwakePreventsSystemSleep = try c.decodeIfPresent(
             Bool.self, forKey: .keepAwakePreventsSystemSleep) ?? false
         keepAwakeDisplayUUID = try c.decodeIfPresent(String.self, forKey: .keepAwakeDisplayUUID)
@@ -286,7 +294,9 @@ public enum BackupPortability {
     public static let portable: Set<String> = [
         "scenes",
         "deviceEQ", "deviceBalance", "deviceEffects", "appAudio", "excludedApps",
+        // 時間排程講的是使用者一天的作息，跟哪台 Mac 無關；有感器的機器會自動不理它
         "autoBrightnessEnabled", "ambientCurve", "ambientDeviceOffset",
+        "ambientScheduleEnabled", "ambientSchedule",
         "keepAwakePreventsSystemSleep", "mediaKeyCaptureEnabled",
         "syncBrightnessEnabled", "syncVolumeEnabled",
         "advisorEngineID", "advisorModelIDs", "advisorDisabledEngines",
