@@ -810,6 +810,8 @@ final class TestHooks {
                 "followingSchedule": appState.autoBrightness.isFollowingSchedule,
                 "sunTracking": appState.settings.ambientSchedule.sunTracking,
                 "locationKnown": appState.location.coordinate != nil,
+                "locationStatus": appState.location.statusDescription,
+                "locationError": appState.location.lastError.map { $0 as Any } ?? NSNull(),
                 "resolvedDawn": appState.autoBrightness.resolvedSchedule.dawnMinute,
                 "resolvedDusk": appState.autoBrightness.resolvedSchedule.duskMinute,
             ] as [String: Any],

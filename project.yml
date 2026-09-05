@@ -112,6 +112,10 @@ targets:
       path: Chorus/Support/Chorus.entitlements
       properties:
         com.apple.security.app-sandbox: false
+        # Hardened runtime 下沒有這把，locationd 會把授權請求靜靜吞掉、對話框永遠不跳
+        # （log：「supported the hardened runtime but doesn't have the entitlement,
+        # not sending #AuthPrompt」）。時間排程的日出日落自動取得靠它。
+        com.apple.security.personal-information.location: true
 
   ChorusAppTests:
     type: bundle.unit-test
