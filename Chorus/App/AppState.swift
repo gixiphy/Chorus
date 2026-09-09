@@ -224,11 +224,13 @@ final class AppState {
         displayManager.automationEvents = automationEvents
         focus.events = automationEvents
 
-        // 綁定型的兩個模式是唯一跨重啟保留的（設定上互斥，螢幕優先）
+        // 綁定型的三個模式是唯一跨重啟保留的（設定上互斥，螢幕 > App > agent）
         if let uuid = settings.keepAwakeDisplayUUID {
             keepAwake.activate(.whileDisplayConnected(uuid: uuid))
         } else if let bundleID = settings.keepAwakeAppBundleID {
             keepAwake.activate(.whileAppRunning(bundleID: bundleID))
+        } else if settings.keepAwakeAgentMode {
+            keepAwake.activate(.whileAgentsWorking)
         }
 
         displayManager.start()

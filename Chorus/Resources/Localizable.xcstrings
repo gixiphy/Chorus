@@ -97,6 +97,22 @@
         }
       }
     },
+    "%@ 個 %@ session 工作中 — 系統不待機" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ %@ session(s) working - system won't sleep"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 个 %@ session 工作中 — 系统不睡眠"
+          }
+        }
+      }
+    },
     "%@ 只能套用在：%@" : {
       "localizations" : {
         "en" : {
@@ -513,6 +529,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "AI 调音建议"
+          }
+        }
+      }
+    },
+    "Agent" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent"
           }
         }
       }
@@ -1370,6 +1402,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "“%@”限时应用中"
+          }
+        }
+      }
+    },
+    "「有 agent 在工作時」不吃上面這個開關：它一律只擋系統待機、不擋螢幕待機——agent 跑整夜時要的是機器別睡，螢幕暗掉正好。偵測靠 Claude Code 與 Codex 的 session log 有沒有在寫入（只看修改時間，不讀內容），停手 5 分鐘後放開。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"While agents are working\" ignores the toggle above: it always blocks system sleep only, never display sleep - an agent running overnight needs the Mac awake, and a dark display is exactly right. Detection watches whether Claude Code and Codex session logs are being written (modification time only, never contents), and lets go 5 minutes after they stop."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「有 agent 在工作时」不吃上面这个开关：它一律只挡系统睡眠、不挡屏幕睡眠——agent 跑整夜时要的是机器别睡，屏幕暗掉正好。检测靠 Claude Code 与 Codex 的 session log 有没有在写入（只看修改时间，不读内容），停手 5 分钟后放开。"
           }
         }
       }
@@ -5607,6 +5655,22 @@
         }
       }
     },
+    "有 agent 在工作時" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "While agents are working"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 agent 在工作时"
+          }
+        }
+      }
+    },
     "未偵測到 AI 引擎（設定 → AI 引擎）。" : {
       "localizations" : {
         "en" : {
@@ -6099,6 +6163,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每个输出设备一组：左右平衡与均衡。耳机校正（AutoEq）的主场景本来就不经虚拟设备——直接对那副耳机开启。"
+          }
+        }
+      }
+    },
+    "沒有 agent 在工作 — 暫停中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No agents working - paused"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有 agent 在工作 — 暂停中"
           }
         }
       }
@@ -9417,6 +9497,7 @@
       }
     },
     "開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時）在選單列。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9428,6 +9509,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "开关与触发条件（30 分钟／1 小时／无限期／连接某台显示器时／某个 App 运行时）在菜单栏。"
+          }
+        }
+      }
+    },
+    "開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時／有 agent 在工作時）在選單列。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Controls and triggers (30 minutes/1 hour/indefinitely/when connected to a display/while an app is running/while agents are working) are in the menu bar."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开关与触发条件（30 分钟／1 小时／无限期／连接某台显示器时／某个 App 运行时／有 agent 在工作时）在菜单栏。"
           }
         }
       }

@@ -202,7 +202,10 @@ private struct DisplaySettingsTab: View {
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                Text("開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時）在選單列。")
+                Text("開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時／有 agent 在工作時）在選單列。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("「有 agent 在工作時」不吃上面這個開關：它一律只擋系統待機、不擋螢幕待機——agent 跑整夜時要的是機器別睡，螢幕暗掉正好。偵測靠 Claude Code 與 Codex 的 session log 有沒有在寫入（只看修改時間，不讀內容），停手 5 分鐘後放開。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

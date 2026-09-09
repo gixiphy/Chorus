@@ -12,6 +12,10 @@ import Observation
 /// - 加擋「系統待機」（`PreventUserIdleSystemSleep`）是額外選項，給長時間
 ///   下載／編譯的情境。
 ///
+/// Agent 模式（M9-2）是唯一反過來的一檔：只擋系統待機、不擋螢幕待機。
+/// agent 跑整夜時要的是機器別睡，螢幕暗掉正好。哪一檔擋什麼由
+/// `KeepAwakePlanner.assertionPlan` 決定，不在這裡分支。
+///
 /// assertion 是 process 綁定的：Chorus 結束時核心自動釋放，
 /// 不會有「App 沒了但機器再也不睡」的殘留。
 @MainActor
@@ -24,6 +28,9 @@ final class KeepAwakeController {
     /// 計時模式的剩餘秒數（其餘模式為 nil）。
     /// 存成 property 而非 computed——選單要每秒重繪倒數，得是可觀察的變更。
     private(set) var remainingSeconds: Double?
+    /// Agent 活動偵測。只有 Agent 模式會叫它 `start()`，
+    /// 其餘模式不必為了沒人看的狀態定期掃目錄。
+    let agentActivity: AgentActivityMonitor
 
     /// 除了螢幕待機，是否連系統待機一起擋。
     var alsoPreventSystemSleep: Bool {
@@ -43,16 +50,23 @@ final class KeepAwakeController {
     /// 只有綁定 App 模式才掛：其餘模式不必為每次 App 啟動／結束醒來。
     @ObservationIgnored private var appObservers: [NSObjectProtocol] = []
 
-    init(settings: SettingsStore, displayManager: DisplayManager) {
+    init(
+        settings: SettingsStore,
+        displayManager: DisplayManager,
+        agentActivity: AgentActivityMonitor = AgentActivityMonitor()
+    ) {
         self.settings = settings
         self.displayManager = displayManager
+        self.agentActivity = agentActivity
         alsoPreventSystemSleep = settings.keepAwakePreventsSystemSleep
+        agentActivity.onWorkingChanged = { [weak self] in self?.reevaluate() }
     }
 
     func activate(_ mode: KeepAwakeMode) {
         self.mode = mode
         startedAt = mode == .off ? nil : Self.now
         updateAppObservers()
+        updateAgentMonitor()
         reevaluate()
         // 計時模式需要輪詢到期；其餘模式靠事件驅動即可
         tickTask?.cancel()
@@ -89,6 +103,7 @@ final class KeepAwakeController {
     func shutdown() {
         tickTask?.cancel()
         removeAppObservers()
+        agentActivity.stop()
         release(&displayAssertion)
         release(&systemAssertion)
         isHolding = false
@@ -106,11 +121,17 @@ final class KeepAwakeController {
             startedAt: startedAt,
             now: Self.now,
             connectedDisplayUUIDs: connected,
-            runningAppBundleIDs: running
+            runningAppBundleIDs: running,
+            agentsWorking: agentActivity.isWorking
         )
         if shouldHold {
-            hold(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep, reason: "Chorus 螢幕長亮")
-            if alsoPreventSystemSleep {
+            let plan = KeepAwakePlanner.assertionPlan(mode: mode, alsoPreventSystemSleep: alsoPreventSystemSleep)
+            if plan.preventsDisplaySleep {
+                hold(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep, reason: "Chorus 螢幕長亮")
+            } else {
+                release(&displayAssertion)
+            }
+            if plan.preventsSystemSleep {
                 hold(&systemAssertion, type: kIOPMAssertionTypePreventUserIdleSystemSleep, reason: "Chorus 防止系統待機")
             } else {
                 release(&systemAssertion)
@@ -127,6 +148,15 @@ final class KeepAwakeController {
             }
         }
         isHolding = shouldHold
+    }
+
+    /// Agent 模式進出時開／關目錄輪詢。
+    private func updateAgentMonitor() {
+        if case .whileAgentsWorking = mode {
+            agentActivity.start()
+        } else {
+            agentActivity.stop()
+        }
     }
 
     /// 綁定 App 模式進出時掛上／拆掉 workspace 監聽。

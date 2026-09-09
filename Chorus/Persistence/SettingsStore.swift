@@ -64,6 +64,7 @@ final class SettingsStore {
         static let keepAwakeSystemSleep = "chorus.keepAwake.preventSystemSleep"
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
         static let keepAwakeAppBundleID = "chorus.keepAwake.appBundleID"
+        static let keepAwakeAgentMode = "chorus.keepAwake.agentMode"
         static let virtualTargetUID = "chorus.audio.virtualTargetUID"
         static let automationServer = "chorus.automation.serverEnabled"
         static let automationPort = "chorus.automation.serverPort"
@@ -380,6 +381,13 @@ final class SettingsStore {
         didSet { defaults.set(keepAwakeAppBundleID, forKey: Key.keepAwakeAppBundleID) }
     }
 
+    /// 「有 agent 在工作時才防睡眠」是否啟用。同樣是綁定型的模式，
+    /// 與上面兩個互斥，一起跨重啟保留——agent 常常是隔夜跑，
+    /// 開機後還沒開選單就該生效。
+    var keepAwakeAgentMode: Bool {
+        didSet { defaults.set(keepAwakeAgentMode, forKey: Key.keepAwakeAgentMode) }
+    }
+
     /// 虛擬輸出裝置的轉送目標：**nil＝自動**（跟著使用中的螢幕走，都沒有就
     /// 回內建輸出）。指定 UID 則固定送那台——但它不在時仍會自動退回，
     /// 不會讓聲音消失；它回來時再接回去。
@@ -525,6 +533,7 @@ final class SettingsStore {
         keepAwakePreventsSystemSleep = defaults.bool(forKey: Key.keepAwakeSystemSleep)
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
         keepAwakeAppBundleID = defaults.string(forKey: Key.keepAwakeAppBundleID)
+        keepAwakeAgentMode = defaults.bool(forKey: Key.keepAwakeAgentMode)
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)

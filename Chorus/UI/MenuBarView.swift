@@ -536,7 +536,7 @@ private struct KeepAwakeRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Label("螢幕長亮", systemImage: appState.keepAwake.isHolding ? "cup.and.saucer.fill" : "cup.and.saucer")
+                Label("螢幕長亮", systemImage: iconName)
                     .font(.callout)
                 Spacer()
                 Menu(menuLabel) {
@@ -557,6 +557,7 @@ private struct KeepAwakeRow: View {
                             Button(app.name) { activate(.whileAppRunning(bundleID: app.bundleID)) }
                         }
                     }
+                    Button("有 agent 在工作時") { activate(.whileAgentsWorking) }
                     if appState.keepAwake.mode != .off {
                         Divider()
                         Button("關閉") { activate(.off) }
@@ -572,7 +573,16 @@ private struct KeepAwakeRow: View {
         }
     }
 
-    /// 切模式時順手把「跨重啟記住的綁定」對齊：兩個綁定互斥，
+    /// Agent 模式擋的不是螢幕待機，杯子圖示會誤導；持有時改用機器人。
+    private var iconName: String {
+        let keepAwake = appState.keepAwake
+        if keepAwake.mode == .whileAgentsWorking {
+            return keepAwake.isHolding ? "cpu.fill" : "cpu"
+        }
+        return keepAwake.isHolding ? "cup.and.saucer.fill" : "cup.and.saucer"
+    }
+
+    /// 切模式時順手把「跨重啟記住的綁定」對齊：三個綁定互斥，
     /// 選了計時／無限期／關閉就都清掉——否則下次開機會冒出使用者
     /// 早就換掉的舊綁定。
     private func activate(_ mode: KeepAwakeMode) {
@@ -586,6 +596,7 @@ private struct KeepAwakeRow: View {
         } else {
             appState.settings.keepAwakeAppBundleID = nil
         }
+        appState.settings.keepAwakeAgentMode = mode == .whileAgentsWorking
         appState.keepAwake.activate(mode)
     }
 
@@ -596,6 +607,7 @@ private struct KeepAwakeRow: View {
         case .duration: String(localized: "計時中")
         case .whileDisplayConnected: String(localized: "綁定螢幕")
         case .whileAppRunning: String(localized: "綁定 App")
+        case .whileAgentsWorking: String(localized: "Agent")
         }
     }
 
@@ -618,6 +630,14 @@ private struct KeepAwakeRow: View {
         case let .whileAppRunning(bundleID):
             let name = RunningApps.displayName(for: bundleID)
             return keepAwake.isHolding ? String(localized: "「\(name)」執行中不待機") : String(localized: "「\(name)」未執行 — 暫停中")
+        case .whileAgentsWorking:
+            let engines = keepAwake.agentActivity.engines
+            guard keepAwake.isHolding else { return String(localized: "沒有 agent 在工作 — 暫停中") }
+            let count = String(keepAwake.agentActivity.working.count)
+            let sources = engines.joined(separator: "、")
+            // Agent 模式擋的是系統待機不是螢幕待機，說明得講清楚——
+            // 不然使用者會以為壞了：螢幕照樣會暗。
+            return String(localized: "\(count) 個 \(sources) session 工作中 — 系統不待機")
         }
     }
 }

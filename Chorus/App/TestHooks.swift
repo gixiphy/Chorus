@@ -522,6 +522,7 @@ final class TestHooks {
         case let .duration(seconds): "duration:\(Int(seconds))"
         case let .whileDisplayConnected(uuid): "display:\(uuid)"
         case let .whileAppRunning(bundleID): "app:\(bundleID)"
+        case .whileAgentsWorking: "agents"
         }
     }
 
