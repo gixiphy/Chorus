@@ -48,9 +48,12 @@ final class AppState {
         FaultRegistry.shared.configure(arguments: ProcessInfo.processInfo.arguments)
         #endif
         MainLoopWatchdog.shared.start()
+        // 每一步之後打點：選單出來之前主執行緒花在哪裡（Batch F）
+        var timeline = StartupTimeline()
         self.instance = instance
         let settings = SettingsStore(defaults: instance.defaults)
         self.settings = settings
+        timeline.mark("settings")
         // 使用者自翻的介面語言要在**任何 View 建立前**掛上 Bundle.main
         let translationStore = UITranslationStore(
             directory: UITranslationStore.defaultDirectory(instance: instance, environment: ProcessInfo.processInfo.environment)
@@ -72,13 +75,17 @@ final class AppState {
             "介面語言：\(Bundle.main.preferredLocalizations.first ?? "?")"
                 + "（選定 \(settings.uiTranslationLanguage ?? settings.builtinLanguage ?? "跟隨系統")）"
         )
+        timeline.mark("translationOverride")
         displayManager = DisplayManager(settings: settings)
+        timeline.mark("displayManager")
         audioManager = AudioDeviceManager(settings: settings, displayManager: displayManager)
+        timeline.mark("audioManager")
         pairedPeers = PairedPeersStore(
             defaults: instance.defaults,
             keychain: KeychainStore(service: instance.keychainService)
         )
         sessionManager = SyncSessionManager(instance: instance, pairedPeers: pairedPeers)
+        timeline.mark("pairedPeers+sync")
         pairing = PairingController(instance: instance, pairedPeers: pairedPeers, sessionManager: sessionManager)
         coordinator = ControlCoordinator(
             localPeerID: instance.peerID,
@@ -87,6 +94,7 @@ final class AppState {
             displayManager: displayManager,
             audioManager: audioManager
         )
+        timeline.mark("coordinator")
         let sensor = AmbientLightSensorClient(fakeALS: instance.fakeALS, disabled: instance.disableALS)
         location = LocationProvider(settings: settings)
         autoBrightness = AutoBrightnessController(
@@ -96,6 +104,7 @@ final class AppState {
             sensor: sensor,
             location: location
         )
+        timeline.mark("ambient")
         diagram = DiagramStore(instance: instance)
         advisor = LightingAdvisor(
             instance: instance,
@@ -107,6 +116,7 @@ final class AppState {
             diagram: diagram
         )
 
+        timeline.mark("advisor")
         // 能力（含 "als"）要在 sessionManager.start() 之前設定，Bonjour TXT 與 hello 才帶得到
         var capabilities = ["display", "audio"]
         if sensor.isAvailable { capabilities.append("als") }
@@ -120,18 +130,21 @@ final class AppState {
             displayManager: displayManager,
             autoBrightness: autoBrightness
         )
+        timeline.mark("scenarios")
         mediaKeys = MediaKeyInterceptor(
             settings: settings,
             displayManager: displayManager,
             audioManager: audioManager
         )
 
+        timeline.mark("mediaKeys")
         virtualDriver = VirtualAudioDriverController()
         audioManager.virtualDriver = virtualDriver
 
         keepAwake = KeepAwakeController(settings: settings, displayManager: displayManager)
         emergencyRestore = EmergencyRestoreMonitor(displayManager: displayManager)
 
+        timeline.mark("keepAwake")
         displayManager.autoController = autoBrightness
         displayManager.audioManager = audioManager
         displayManager.scenarioStore = scenarios
@@ -142,6 +155,7 @@ final class AppState {
         coordinator.attachAutoController(autoBrightness)
         coordinator.attachKeepAwake(keepAwake)
 
+        timeline.mark("wiring")
         let tapRegistry = AudioProcessRegistry()
         #if DEBUG
         let tapBackend: any TapBackend
@@ -156,12 +170,15 @@ final class AppState {
         let tapBackend: any TapBackend = CoreAudioTapBackend()
         #endif
         tapEngine = TapEngine(backend: tapBackend, registry: tapRegistry, settings: settings)
+        timeline.mark("tapEngine")
         autoEq = AutoEqCatalog(instance: instance)
+        timeline.mark("autoEq")
         alertVolume = AlertVolumeController()
         audioManager.tapEngine = tapEngine
         tapEngine.stateChangedHandler = { [weak audioManager] in
             audioManager?.refreshBridges()
         }
+        timeline.mark("alertVolume")
         coordinator.tapEngine = tapEngine
         // 與光環境顧問共用同一份引擎 registry（設定頁只有一組引擎選擇）
         audioTuner = AudioTuningAdvisor(
@@ -171,6 +188,7 @@ final class AppState {
             audioManager: audioManager,
             catalog: auCatalog
         )
+        timeline.mark("audioTuner")
         uiTranslator = UITranslator(
             store: translationStore, settings: settings, registry: advisor.registry,
             languageDefaults: UITranslator.languageDefaults(
@@ -178,6 +196,7 @@ final class AppState {
             )
         )
 
+        timeline.mark("uiTranslator")
         sceneStore = SceneStore(defaults: instance.defaults)
         automation = AutomationExecutor(
             settings: settings,
@@ -193,6 +212,7 @@ final class AppState {
             scenes: sceneStore
         )
 
+        timeline.mark("automation")
         focus = FocusSessionController(settings: settings, executor: automation, scenes: sceneStore)
         AppStateRegistry.focus = focus
         automation.focus = focus
@@ -203,6 +223,7 @@ final class AppState {
             MainActor.assumeIsolated { AppStateRegistry.focus?.retryPendingRestores() }
         }
 
+        timeline.mark("focus")
         cloudBackup = CloudBackup(
             files: CloudBackupFiles(
                 // `--cloud-root` 是 E2E 的覆寫：同機雙實例不該把東西寫進
@@ -216,6 +237,7 @@ final class AppState {
         )
         AppStateRegistry.cloudBackup = cloudBackup
 
+        timeline.mark("cloudBackup")
         automationEvents = AutomationEventHub()
         automationServer = ControlHTTPServer(
             settings: settings,
@@ -228,6 +250,7 @@ final class AppState {
         displayManager.automationEvents = automationEvents
         focus.events = automationEvents
 
+        timeline.mark("automationServer")
         // 綁定型的三個模式是唯一跨重啟保留的（設定上互斥，螢幕 > App > agent）
         if let uuid = settings.keepAwakeDisplayUUID {
             keepAwake.activate(.whileDisplayConnected(uuid: uuid))
@@ -237,19 +260,31 @@ final class AppState {
             keepAwake.activate(.whileAgentsWorking)
         }
 
+        timeline.mark("keepAwakeRestore")
         displayManager.start()
+        timeline.mark("display.start")
         audioManager.start()
+        timeline.mark("audio.start")
         sessionManager.start()
+        timeline.mark("sync.start")
         autoBrightness.start()
+        timeline.mark("ambient.start")
         mediaKeys.updateActivation()
+        timeline.mark("mediaKeys.start")
         virtualDriver.refreshStatus()
+        timeline.mark("virtualDriver.refresh")
         automationServer.updateActivation()
+        timeline.mark("automationServer.start")
         tapEngine.start()
+        timeline.mark("taps.start")
         // 上次沒正常結束時把限時場景接回來。**要等列舉完**——顯示器與音訊
         // 裝置還沒到齊時還原會誤判「裝置已不在」，所以是延後的，不在這裡直接跑
         focus.scheduleResume()
+        timeline.mark("focus.resume")
         cloudBackup.updateActivation()
+        timeline.mark("cloudBackup.start")
 
+        timeline.finish()
         let info = Bundle.main.infoDictionary
         ChorusLog.app.notice(
             "啟動 \(info?["CFBundleShortVersionString"] ?? "?") (build \(info?["CFBundleVersion"] ?? "?")) "

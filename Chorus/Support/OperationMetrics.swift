@@ -57,6 +57,15 @@ final class OperationMetrics: Sendable {
         log?.notice("慢操作 \(finished.name) 耗時 \(Self.format(finished.elapsed))（\(outcome.rawValue)）")
     }
 
+    /// 已經量好的一段（例如啟動打點）直接記進去。
+    func record(_ name: String, elapsed: Duration, outcome: OperationOutcome = .success) {
+        let now = now
+        ledger.withLock { ledger in
+            let token = ledger.begin(name, now: now - elapsed)
+            ledger.end(token, outcome: outcome, now: now)
+        }
+    }
+
     func measure<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
         let token = begin(name)
         do {

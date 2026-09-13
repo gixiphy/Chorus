@@ -173,7 +173,8 @@ private struct AlertVolumeRow: View {
             SliderRow.trailingIcon("bell.fill")
             SliderRow.value(appState.alertVolume.volume)
         }
-        .onAppear { appState.alertVolume.refresh() }
+        // 背景讀：打開選單不等 AppleScript
+        .onAppear { appState.alertVolume.refreshInBackground() }
     }
 }
 
