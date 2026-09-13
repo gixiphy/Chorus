@@ -60,14 +60,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         ChorusLog.app.notice("結束（applicationWillTerminate）")
         MainActor.assumeIsolated {
-            AppStateRegistry.scenarioStore?.saveOnTerminate()
+            // 每一步的耗時寫一行：退出被哪一步拖住（例如 iCloud Drive 卡著）要看得出來
+            let metrics = OperationMetrics.shared
+            let exitStarted = metrics.now
+            var timings: [String] = []
+            func timed(_ name: String, _ body: () -> Void) {
+                let started = metrics.now
+                body()
+                timings.append("\(name) \(OperationMetrics.format(metrics.now - started))")
+            }
+            timed("scenario") { AppStateRegistry.scenarioStore?.saveOnTerminate() }
             // 結束 Chorus 一定還原限時場景（與 B3 的螢幕電源同態度）：
             // 使用者不該因為關掉 Chorus 就被留在「Slack 靜音、螢幕 30%」
-            AppStateRegistry.focus?.shutdown()
+            timed("focus") { AppStateRegistry.focus?.shutdown() }
             // 自動備份是 60 秒一拍——結束前把最後那一分鐘的變更補上
-            AppStateRegistry.cloudBackup?.shutdown()
-            AppStateRegistry.displayManager?.shutdown()
-            AppStateRegistry.keepAwake?.shutdown()
+            timed("cloud") { AppStateRegistry.cloudBackup?.shutdown() }
+            timed("display") { AppStateRegistry.displayManager?.shutdown() }
+            timed("keepAwake") { AppStateRegistry.keepAwake?.shutdown() }
+            ChorusLog.app.notice(
+                "結束收尾：\(timings.joined(separator: "、"))（共 \(OperationMetrics.format(metrics.now - exitStarted))）"
+            )
+            MainLoopWatchdog.shared.logWindowSummary(label: "結束前")
         }
         // 翻譯／顧問還在跑的 CLI：不收的話會被 launchd 收養，一個 150MB 賴著不走
         CLIProcessRunner.killAll()

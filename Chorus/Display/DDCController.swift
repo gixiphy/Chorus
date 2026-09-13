@@ -61,23 +61,33 @@ final class DDCController: @unchecked Sendable {
     private var suspendUntilUptime: TimeInterval = 0
     private var audioFailureHandler: (@Sendable (CGDirectDisplayID) -> Void)?
 
+    /// 所有投進 queue 的工作都經過這裡，排隊中的數量才量得到（`ddc.queue`）。
+    /// I2C 卡住時整條 queue 停住，這個數字會一路往上。
+    private func enqueue(_ work: @escaping @Sendable () -> Void) {
+        OperationMetrics.shared.adjustGauge("ddc.queue", by: 1)
+        queue.async {
+            OperationMetrics.shared.adjustGauge("ddc.queue", by: -1)
+            work()
+        }
+    }
+
     /// 音訊類 VCP（0x62/0x8D）持續失敗的回呼——只影響音量橋接，
     /// 絕不連坐亮度（見 flushLocked 的分 VCP 計數）。
     func setAudioFailureHandler(_ handler: @escaping @Sendable (CGDirectDisplayID) -> Void) {
-        queue.async { self.audioFailureHandler = handler }
+        enqueue { self.audioFailureHandler = handler }
     }
     private var failureHandler: (@Sendable (CGDirectDisplayID) -> Void)?
 
     /// 註冊「DDC 持續失敗」回呼（呼叫端負責降級到軟體調光）。
     func setPersistentFailureHandler(_ handler: @escaping @Sendable (CGDirectDisplayID) -> Void) {
-        queue.async { self.failureHandler = handler }
+        enqueue { self.failureHandler = handler }
     }
 
     /// 重新掃描 IORegistry 並配對 display ID ↔ IOAVService。
     /// 回傳有 DDC 能力的 display ID 集合。
     func refresh(displayIDs: [CGDirectDisplayID]) async -> Set<CGDirectDisplayID> {
         await withCheckedContinuation { continuation in
-            queue.async {
+            enqueue {
                 guard AppleSiliconDDC.isArm64 else {
                     self.services = [:]
                     continuation.resume(returning: [])
@@ -107,7 +117,7 @@ final class DDCController: @unchecked Sendable {
     /// 讀取 VCP 現值與最大值。讀取失敗（螢幕不支援或 I2C 錯誤）回 nil。
     func read(_ displayID: CGDirectDisplayID, vcp: UInt8) async -> (current: UInt16, max: UInt16)? {
         await withCheckedContinuation { continuation in
-            queue.async {
+            enqueue {
                 guard let service = self.services[displayID] else {
                     continuation.resume(returning: nil)
                     return
@@ -123,7 +133,7 @@ final class DDCController: @unchecked Sendable {
     /// `oneShot`：跳過「與最後寫入相同就不寫」的去重——輸入源這類動作型 VCP
     /// 可能被外部改走（螢幕按鈕、另一台機器），我們的 lastWritten 不可信。
     func write(_ displayID: CGDirectDisplayID, vcp: UInt8, value: UInt16, oneShot: Bool = false) {
-        queue.async {
+        enqueue {
             if oneShot {
                 self.lastWritten[displayID]?[vcp] = nil
             }
@@ -144,7 +154,7 @@ final class DDCController: @unchecked Sendable {
     /// 睡醒後螢幕的 I2C/scaler 需要時間才可靠：此期間所有寫入延後
     /// （pending 保留、值照常合併），期滿由 tick 自動補寫最後值。
     func deferWrites(for seconds: TimeInterval) {
-        queue.async {
+        enqueue {
             let until = ProcessInfo.processInfo.systemUptime + seconds
             self.suspendUntilUptime = max(self.suspendUntilUptime, until)
             if !self.pendingWrites.isEmpty {
@@ -167,7 +177,7 @@ final class DDCController: @unchecked Sendable {
             let settled = now - self.lastRequestUptime >= Self.settleQuiet
             let overdue = now - self.lastFlushUptime >= Self.maxLatency
             if !suspended, settled || overdue {
-                self.flushLocked(now: now)
+                OperationMetrics.shared.measure("ddc.flush") { self.flushLocked(now: now) }
             }
             if !self.pendingWrites.isEmpty {
                 self.scheduleTickLocked()
@@ -231,7 +241,7 @@ final class DDCController: @unchecked Sendable {
     /// 純讀取，不寫入。
     func diagnostics(_ displayID: CGDirectDisplayID) async -> Diagnostics {
         let (hasService, failures, transport) = await withCheckedContinuation { continuation in
-            queue.async {
+            enqueue {
                 continuation.resume(returning: (
                     self.services[displayID] != nil,
                     self.writeFailureCounts[displayID] ?? [:],

@@ -55,8 +55,22 @@ final class AudioWorker: @unchecked Sendable {
         weak var worker: AudioWorker?
     }
 
-    func start() {
+    /// 投進 queue 的工作都經過這裡：`audio.queue` 是排隊中的數量，
+    /// 給了 `measuring` 就另外記 HAL 呼叫本身的耗時。
+    private func enqueue(measuring name: String? = nil, _ work: @escaping @Sendable () -> Void) {
+        OperationMetrics.shared.adjustGauge("audio.queue", by: 1)
         queue.async {
+            OperationMetrics.shared.adjustGauge("audio.queue", by: -1)
+            if let name {
+                OperationMetrics.shared.measure(name, work)
+            } else {
+                work()
+            }
+        }
+    }
+
+    func start() {
+        enqueue {
             for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultOutputDevice] {
                 var address = CoreAudioProperty.address(selector)
                 AudioObjectAddPropertyListenerBlock(self.systemObject, &address, self.queue, self.listenerBlock)
@@ -68,7 +82,7 @@ final class AudioWorker: @unchecked Sendable {
     // MARK: - 控制（fire-and-forget，UI 端樂觀更新）
 
     func setVolume(_ deviceID: AudioObjectID, to value: Double) {
-        queue.async {
+        enqueue(measuring: "audio.set") {
             let clamped = Float32(min(max(value, 0), 1))
             let main = CoreAudioProperty.address(
                 CoreAudioProperty.virtualMainVolume,
@@ -95,7 +109,7 @@ final class AudioWorker: @unchecked Sendable {
     /// 原生左右平衡（−1…+1）。vmbc 優先（逐聲道音量的裝置），
     /// 退而寫 stereo pan（內建喇叭）。呼叫端已確認 `canSetBalance`。
     func setBalance(_ deviceID: AudioObjectID, to balance: Double) {
-        queue.async {
+        enqueue(measuring: "audio.set") {
             let halValue = Float32((min(max(balance, -1), 1) + 1) / 2) // −1…+1 → 0…1
             let vmbc = CoreAudioProperty.address(
                 CoreAudioProperty.virtualMainBalance, scope: kAudioObjectPropertyScopeOutput
@@ -114,7 +128,7 @@ final class AudioWorker: @unchecked Sendable {
     }
 
     func setMute(_ deviceID: AudioObjectID, muted: Bool) {
-        queue.async {
+        enqueue(measuring: "audio.set") {
             let address = CoreAudioProperty.address(
                 kAudioDevicePropertyMute,
                 scope: kAudioObjectPropertyScopeOutput
@@ -124,7 +138,7 @@ final class AudioWorker: @unchecked Sendable {
     }
 
     func setDefaultOutputDevice(_ deviceID: AudioObjectID) {
-        queue.async {
+        enqueue(measuring: "audio.set") {
             let address = CoreAudioProperty.address(kAudioHardwarePropertyDefaultOutputDevice)
             CoreAudioProperty.set(self.systemObject, address, to: deviceID)
         }
@@ -138,7 +152,7 @@ final class AudioWorker: @unchecked Sendable {
         snapshotScheduled = true
         queue.asyncAfter(deadline: .now() + .milliseconds(50)) {
             self.snapshotScheduled = false
-            self.rebuildSnapshotLocked()
+            OperationMetrics.shared.measure("audio.snapshot") { self.rebuildSnapshotLocked() }
         }
     }
 

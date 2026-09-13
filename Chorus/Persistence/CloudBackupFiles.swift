@@ -16,6 +16,9 @@ import Foundation
 /// 到期日。Chorus 不沙盒，直接寫 CloudDocs **一行 entitlement 都不用改**，
 /// 而且檔案就躺在使用者自己的 iCloud Drive 裡看得到、打得開。
 /// （架構參考使用者的另一個專案 Foldwall 0.7.0，MIT；只參考做法不搬碼。）
+///
+/// 每一次碰 CloudDocs 都經過 `metrics`（耗時基線）與 `faults`（故障注入）。
+/// 這些 I/O 目前仍在主執行緒上同步執行——量出來的就是它們拖住介面的時間。
 @MainActor
 final class CloudBackupFiles {
     /// `Chorus/devices/` 的上一層。`nil` ＝ iCloud Drive 沒開，整個功能停用。
@@ -28,19 +31,31 @@ final class CloudBackupFiles {
     /// 撞名時算過一次就好（判斷依據是檔案裡的 `deviceID`，不是檔名）。
     private var cachedFileName: String?
 
-    init(root: URL?, deviceName: String, deviceID: String) {
+    private let faults: FaultRegistry
+    private let metrics: OperationMetrics
+
+    init(
+        root: URL?,
+        deviceName: String,
+        deviceID: String,
+        faults: FaultRegistry = .shared,
+        metrics: OperationMetrics = .shared
+    ) {
         self.root = root
         self.deviceName = deviceName
         self.deviceID = deviceID
+        self.faults = faults
+        self.metrics = metrics
     }
 
     /// 正式路徑：iCloud Drive 沒登入／沒開啟時那個目錄不存在，回 nil。
     static func defaultRoot() -> URL? {
         let drive = URL.homeDirectory.appending(path: "Library/Mobile Documents/com~apple~CloudDocs")
-        guard FileManager.default.fileExists(atPath: drive.path(percentEncoded: false)) else {
-            return nil
+        let exists = OperationMetrics.shared.measure("cloud.metadata") {
+            (try? FaultRegistry.shared.injectBlocking(.cloudMetadata)) != nil
+                && FileManager.default.fileExists(atPath: drive.path(percentEncoded: false))
         }
-        return drive.appending(path: "Chorus")
+        return exists ? drive.appending(path: "Chorus") : nil
     }
 
     var isAvailable: Bool { root != nil }
@@ -90,36 +105,50 @@ final class CloudBackupFiles {
     @discardableResult
     func write(_ backup: DeviceBackup, to url: URL? = nil) throws -> URL {
         guard let target = url ?? deviceURL else { throw CocoaError(.fileNoSuchFile) }
-        try FileManager.default.createDirectory(
-            at: target.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
-        try BackupCodec.encode(backup).write(to: target, options: .atomic)
-        return target
+        return try metrics.measure("cloud.write") {
+            try faults.injectBlocking(.cloudWrite)
+            try FileManager.default.createDirectory(
+                at: target.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try BackupCodec.encode(backup).write(to: target, options: .atomic)
+            return target
+        }
     }
 
     func decode(at url: URL) -> DeviceBackup? {
-        guard let data = try? Data(contentsOf: url) else {
+        let token = metrics.begin("cloud.read")
+        guard (try? faults.injectBlocking(.cloudRead)) != nil,
+              let data = try? Data(contentsOf: url)
+        else {
             // iCloud 上可能只放了佔位符（`.icloud`）。請系統下載——這是非同步的，
             // 所以這一次仍然讀不到，下次進設定頁再試。
             try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+            metrics.end(token, .failure)
             return nil
         }
+        metrics.end(token)
         return try? BackupCodec.decode(DeviceBackup.self, from: data)
     }
 
     var lastBackupDate: Date? {
         guard let deviceURL else { return nil }
-        return (try? deviceURL.resourceValues(forKeys: [.contentModificationDateKey]))?
-            .contentModificationDate
+        return metrics.measure("cloud.metadata") { () -> Date? in
+            guard (try? faults.injectBlocking(.cloudMetadata)) != nil else { return nil }
+            return (try? deviceURL.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+        }
     }
 
     /// `devices/` 底下每一份，新到舊。**解不開的略過**——那可能是使用者自己
     /// 丟進去的東西，不該讓整份清單消失。
     func scan() -> [BackupFile] {
-        guard let devicesDirectory,
-              let urls = try? FileManager.default.contentsOfDirectory(
-                  at: devicesDirectory, includingPropertiesForKeys: nil)
-        else { return [] }
+        guard let devicesDirectory else { return [] }
+        let listing = metrics.measure("cloud.scan") { () -> [URL]? in
+            guard (try? faults.injectBlocking(.cloudScan)) != nil else { return nil }
+            return try? FileManager.default.contentsOfDirectory(
+                at: devicesDirectory, includingPropertiesForKeys: nil)
+        }
+        guard let urls = listing else { return [] }
         return urls
             .filter { $0.pathExtension == "json" }
             .compactMap { url in

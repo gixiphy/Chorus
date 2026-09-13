@@ -43,6 +43,11 @@ final class AppState {
     let automationServer: ControlHTTPServer
 
     init(instance: InstanceConfig = .current) {
+        // 最先開：啟動本身（列舉、iCloud Drive 探測）的停頓也要量得到
+        #if DEBUG
+        FaultRegistry.shared.configure(arguments: ProcessInfo.processInfo.arguments)
+        #endif
+        MainLoopWatchdog.shared.start()
         self.instance = instance
         let settings = SettingsStore(defaults: instance.defaults)
         self.settings = settings

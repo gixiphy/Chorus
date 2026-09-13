@@ -208,10 +208,13 @@ final class SyncSessionManager {
                 expectedPeerID: peerID,
                 onClose: {}
             )
+            let connectToken = OperationMetrics.shared.begin("sync.connect")
             do {
                 try await connection.start()
+                OperationMetrics.shared.end(connectToken)
                 self?.beginSession(connection)
             } catch {
+                OperationMetrics.shared.end(connectToken, .failure)
                 self?.dialFailed(peerID)
             }
             self?.dialTasks[peerID] = nil
@@ -253,10 +256,13 @@ final class SyncSessionManager {
     private func handleInbound(_ nwConnection: NWConnection) {
         Task { [weak self] in
             let connection = PeerConnection.inbound(connection: nwConnection, onClose: {})
+            let acceptToken = OperationMetrics.shared.begin("sync.accept")
             do {
                 try await connection.start()
+                OperationMetrics.shared.end(acceptToken)
                 self?.beginSession(connection)
             } catch {
+                OperationMetrics.shared.end(acceptToken, .failure)
                 connection.close()
             }
         }
@@ -266,6 +272,9 @@ final class SyncSessionManager {
 
     private func beginSession(_ connection: PeerConnection) {
         Task { [instance, localCapabilities] in
+            // sync.hello 在途＝連線已 ready、還在等對方 hello 的 session。
+            // 目前沒有期限：對方不回就一直掛在這裡（Batch C 補）
+            let helloToken = OperationMetrics.shared.begin("sync.hello")
             let myHello = Hello(
                 peerID: instance.peerID,
                 deviceName: instance.deviceDisplayName,
@@ -273,13 +282,18 @@ final class SyncSessionManager {
                 deviceKind: "mac",
                 capabilities: localCapabilities
             )
-            try? await connection.send(Envelope(msg: .hello(myHello)))
+            if !FaultRegistry.shared.isWithholding(.syncHello) {
+                try? await FaultRegistry.shared.inject(.syncHello)
+                try? await connection.send(Envelope(msg: .hello(myHello)))
+            }
 
             var iterator = connection.incoming.makeAsyncIterator()
             guard let first = await iterator.next(), case let .hello(hello) = first.msg else {
+                OperationMetrics.shared.end(helloToken, .failure)
                 connection.close()
                 return
             }
+            OperationMetrics.shared.end(helloToken)
             guard acceptSession(connection, hello: hello) else {
                 connection.close()
                 return

@@ -1,4 +1,5 @@
 #if DEBUG
+import AppKit
 import ChorusCore
 import CoreAudio
 import Foundation
@@ -223,6 +224,14 @@ final class TestHooks {
                 appState.uiTranslator.targetLanguage = language
                 appState.uiTranslator.translate(onlyMissing: info["onlyMissing"] == "1")
             }
+        case "fault":
+            // value ＝ FaultSpec：`cloud.write=delay:4`、`sync.hello=withhold`、`sync.hello=off`
+            if let spec = info["value"] {
+                FaultRegistry.shared.apply(spec: spec)
+            }
+        case "quit":
+            // 走正常結束流程（applicationWillTerminate），量退出收尾耗時用
+            NSApplication.shared.terminate(nil)
         case "cloudBackupNow":
             appState.cloudBackup.backupNow()
         case "cloudEnabled":
@@ -505,6 +514,46 @@ final class TestHooks {
         }
     }
 
+    /// 主迴圈延遲、操作統計、佇列深度與目前注入的故障（基線腳本讀這一段）。
+    private static func responsivenessDump() -> [String: Any] {
+        func histogram(_ latency: LatencyHistogram) -> [String: Any] {
+            [
+                "count": latency.count,
+                "p50": latency.percentile(0.5).map { $0 as Any } ?? NSNull(),
+                "p95": latency.percentile(0.95).map { $0 as Any } ?? NSNull(),
+                "p99": latency.percentile(0.99).map { $0 as Any } ?? NSNull(),
+                "max": latency.maxMillis,
+            ]
+        }
+        let watchdog = MainLoopWatchdog.shared.snapshot()
+        let metrics = OperationMetrics.shared.snapshot()
+        return [
+            "mainLoop": [
+                "running": watchdog.running,
+                "latencyMs": histogram(watchdog.lifetime.latency),
+                "lagCount": watchdog.lifetime.lagCount,
+                "hangCount": watchdog.lifetime.hangCount,
+                "longestStallMs": watchdog.lifetime.longestStall.millis,
+                "pendingAgeMs": watchdog.pendingAge.map { $0.millis as Any } ?? NSNull(),
+            ] as [String: Any],
+            "operations": Dictionary(uniqueKeysWithValues: metrics.operations.map { name, stats in
+                (name, [
+                    "started": stats.started,
+                    "completed": stats.completed,
+                    "inFlight": stats.inFlight,
+                    "inFlightHighWater": stats.inFlightHighWater,
+                    "outcomes": Dictionary(uniqueKeysWithValues: stats.outcomes.map { ($0.key.rawValue, $0.value) }),
+                    "latencyMs": histogram(stats.latency),
+                    "oldestInFlightMs": metrics.oldestInFlight[name].map { $0.millis as Any } ?? NSNull(),
+                ] as [String: Any])
+            }),
+            "gauges": metrics.gauges.mapValues { ["current": $0.current, "highWater": $0.highWater] },
+            "faults": Dictionary(uniqueKeysWithValues: FaultRegistry.shared.active.map {
+                ($0.key.rawValue, String(describing: $0.value))
+            }),
+        ]
+    }
+
     private static func describe(_ state: TapEngine.State) -> String {
         switch state {
         case .off: "off"
@@ -782,6 +831,7 @@ final class TestHooks {
                 "canUndo": appState.audioTuner.canUndo,
                 "lastError": appState.audioTuner.lastErrorMessage.map { $0 as Any } ?? NSNull(),
             ] as [String: Any],
+            "responsiveness": Self.responsivenessDump(),
             "tapProbe": tapProbeResult as Any? ?? NSNull(),
             "lastControl": lastControlResponse
                 .flatMap { try? JSONEncoder().encode($0) }
