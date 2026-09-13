@@ -157,6 +157,10 @@ final class LightingAdvisor {
 
     func analyze() {
         guard !isAnalyzing else { return }
+        guard !MemoryPressureMonitor.shared.blocksHeavyWork else {
+            lastErrorMessage = String(localized: "記憶體壓力過高，AI 引擎會再佔用幾百 MB——先關掉一些 App 再試")
+            return
+        }
         guard let photoURL = diagram.backgroundImageURL else {
             lastErrorMessage = String(localized: "請先匯入桌面照片")
             return

@@ -25,10 +25,13 @@ struct SettingsView: View {
             Tab("備份", systemImage: "icloud") {
                 BackupSettingsTab()
             }
+            Tab("診斷", systemImage: "stethoscope") {
+                DiagnosticsSettingsTab()
+            }
         }
-        // 500 而非 460：六個英文分頁名（General…Analysis Engine…Backup）在 460 會把
-        // 最後一頁擠進工具列的 » 溢出選單
-        .frame(width: 500, height: 420)
+        // 560：七個英文分頁名（General…Analysis Engine…Backup、Diagnostics）；
+        // 太窄會把最後幾頁擠進工具列的 » 溢出選單（460 放六頁就已經放不下）
+        .frame(width: 560, height: 420)
         .environment(appState)
     }
 }
@@ -1412,5 +1415,131 @@ private struct BackupSettingsTab: View {
         } message: {
             Text("這會蓋掉目前的設定。匯入前會先把現況另存一份，檔名帶「-before-import」。")
         }
+    }
+}
+
+// MARK: - 診斷
+
+/// 回應性診斷（Batch F）：主執行緒、記憶體壓力、最慢的操作與佇列高水位。
+/// 與 `/v1/health` 同一份來源，每兩秒更新；「拷貝摘要」給回報問題時直接貼。
+private struct DiagnosticsSettingsTab: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 2)) { _ in
+            let report = DiagnosticsReport.current()
+            Form {
+                Section("主執行緒") {
+                    LabeledContent("狀態") {
+                        Label(
+                            report.responsive ? String(localized: "正常回應") : String(localized: "目前沒有回應"),
+                            systemImage: report.responsive ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                        )
+                        .foregroundStyle(report.responsive ? .green : .orange)
+                    }
+                    LabeledContent("卡住（超過 2 秒）") { Text("\(report.hangCount) 次") }
+                    LabeledContent("延遲（超過 0.5 秒）") { Text("\(report.lagCount) 次") }
+                    LabeledContent("最長停頓") { Text(report.longestStall) }
+                }
+                Section("記憶體壓力") {
+                    LabeledContent("目前") { Text(report.pressureText) }
+                    Text("壓力嚴重時暫停自動備份，也不啟動 AI 引擎；手動操作照常。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Section("最慢的操作") {
+                    if report.operations.isEmpty {
+                        Text("還沒有紀錄").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(report.operations) { operation in
+                            LabeledContent(operation.name) {
+                                Text("\(operation.longest)（\(operation.count) 次）")
+                                    .monospacedDigit()
+                            }
+                            .font(.caption)
+                        }
+                    }
+                }
+                Section {
+                    HStack {
+                        Button("拷貝摘要") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(report.plainText, forType: .string)
+                        }
+                        Button("在 Finder 顯示紀錄") {
+                            NSWorkspace.shared.activateFileViewerSelecting([DiagnosticLog.shared.fileURL])
+                        }
+                        Spacer()
+                    }
+                }
+            }
+            .formStyle(.grouped)
+        }
+    }
+}
+
+/// 診斷分頁的一份快照。拷貝出去的文字不翻譯——回報問題時要對得上紀錄檔。
+private struct DiagnosticsReport {
+    struct Operation: Identifiable {
+        var id: String { name }
+        let name: String
+        let longest: String
+        let count: Int
+    }
+
+    let responsive: Bool
+    let hangCount: Int
+    let lagCount: Int
+    let longestStall: String
+    let pressure: MemoryPressureMonitor.Level
+    let operations: [Operation]
+    let plainText: String
+
+    var pressureText: String {
+        switch pressure {
+        case .normal: String(localized: "正常")
+        case .warning: String(localized: "偏高")
+        case .critical: String(localized: "嚴重")
+        }
+    }
+
+    static func current() -> DiagnosticsReport {
+        let watchdog = MainLoopWatchdog.shared
+        let loop = watchdog.snapshot()
+        let metrics = OperationMetrics.shared.snapshot()
+        let pressure = MemoryPressureMonitor.shared.level
+        let responsive = loop.running && (loop.pendingAge ?? .zero) < watchdog.configuration.thresholds.hang
+        let slowest = metrics.operations
+            .filter { $0.value.completed > 0 }
+            .sorted { $0.value.latency.maxMillis > $1.value.latency.maxMillis }
+            .prefix(8)
+        let operations = slowest.map { name, stats in
+            Operation(
+                name: name,
+                longest: OperationMetrics.format(.milliseconds(Int64(stats.latency.maxMillis.rounded()))),
+                count: stats.completed
+            )
+        }
+        let gauges = metrics.gauges
+            .filter { $0.value.highWater > 0 }
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key) \($0.value.current)/\($0.value.highWater)" }
+        let version = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        var lines = [
+            "Chorus build \(version) · \(ISO8601DateFormatter().string(from: Date()))",
+            "mainLoop responsive=\(responsive) hang=\(loop.lifetime.hangCount) lag=\(loop.lifetime.lagCount) "
+                + "longest=\(OperationMetrics.format(loop.lifetime.longestStall)) "
+                + "p95<=\(loop.lifetime.latency.percentile(0.95).map { "\(Int($0.rounded())) ms" } ?? "-")",
+            "memoryPressure=\(MemoryPressureMonitor.name(pressure))",
+        ]
+        lines += operations.map { "\($0.name) max=\($0.longest) n=\($0.count)" }
+        if !gauges.isEmpty { lines.append("queues(current/high) " + gauges.joined(separator: " ")) }
+        return DiagnosticsReport(
+            responsive: responsive,
+            hangCount: loop.lifetime.hangCount,
+            lagCount: loop.lifetime.lagCount,
+            longestStall: OperationMetrics.format(loop.lifetime.longestStall),
+            pressure: pressure,
+            operations: operations,
+            plainText: lines.joined(separator: "\n")
+        )
     }
 }

@@ -241,6 +241,22 @@
         }
       }
     },
+    "%@（%lld 次）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (%lld times)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@（%lld 次）"
+          }
+        }
+      }
+    },
     "%@（跨機）" : {
       "localizations" : {
         "en" : {
@@ -405,6 +421,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld 条 · %@"
+          }
+        }
+      }
+    },
+    "%lld 次" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld times"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 次"
           }
         }
       }
@@ -1646,6 +1678,22 @@
         }
       }
     },
+    "主執行緒" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Main Thread"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主线程"
+          }
+        }
+      }
+    },
     "亮度 %lld%%" : {
       "localizations" : {
         "en" : {
@@ -2010,6 +2058,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "值不能为空"
+          }
+        }
+      }
+    },
+    "偏高" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elevated"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "偏高"
           }
         }
       }
@@ -2731,6 +2795,22 @@
         }
       }
     },
+    "卡住（超過 2 秒）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hangs (over 2 s)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "卡住（超过 2 秒）"
+          }
+        }
+      }
+    },
     "原聲" : {
       "localizations" : {
         "en" : {
@@ -3303,6 +3383,22 @@
         }
       }
     },
+    "嚴重" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Critical"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "严重"
+          }
+        }
+      }
+    },
     "回到 100%" : {
       "localizations" : {
         "en" : {
@@ -3347,6 +3443,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 Finder 中显示"
+          }
+        }
+      }
+    },
+    "在 Finder 顯示紀錄" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Log in Finder"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Finder 中显示日志"
           }
         }
       }
@@ -3507,6 +3619,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "增益超过 100%，超出部分会经过 soft limiter 防止削波"
+          }
+        }
+      }
+    },
+    "壓力嚴重時暫停自動備份，也不啟動 AI 引擎；手動操作照常。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Under critical pressure, automatic backups pause and AI engines won't start. Manual actions still work."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "压力严重时暂停自动备份，也不启动 AI 引擎；手动操作照常。"
           }
         }
       }
@@ -4695,6 +4823,22 @@
         }
       }
     },
+    "延遲（超過 0.5 秒）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lags (over 0.5 s)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "延迟（超过 0.5 秒）"
+          }
+        }
+      }
+    },
     "建議" : {
       "localizations" : {
         "en" : {
@@ -5107,6 +5251,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "拖移以标示此设备在桌面上的实际位置"
+          }
+        }
+      }
+    },
+    "拷貝摘要" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Summary"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拷贝摘要"
           }
         }
       }
@@ -5687,6 +5847,22 @@
         }
       }
     },
+    "最慢的操作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Slowest Operations"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最慢的操作"
+          }
+        }
+      }
+    },
     "最暗亮度" : {
       "localizations" : {
         "en" : {
@@ -5699,6 +5875,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "最暗亮度"
+          }
+        }
+      }
+    },
+    "最長停頓" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Longest Stall"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最长停顿"
           }
         }
       }
@@ -6131,6 +6323,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在确认系统音频录制权限——播放任何声音即可完成检查"
+          }
+        }
+      }
+    },
+    "正常" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Normal"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正常"
+          }
+        }
+      }
+    },
+    "正常回應" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Responsive"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正常响应"
           }
         }
       }
@@ -6803,6 +7027,22 @@
         }
       }
     },
+    "目前" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前"
+          }
+        }
+      }
+    },
     "目前有音訊的 App：" : {
       "localizations" : {
         "en" : {
@@ -6895,6 +7135,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前没有可逐段对照的均衡——应用会建立一组 10 段。"
+          }
+        }
+      }
+    },
+    "目前沒有回應" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not Responding"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前无响应"
           }
         }
       }
@@ -8264,6 +8520,38 @@
         }
       }
     },
+    "記憶體壓力" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memory Pressure"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内存压力"
+          }
+        }
+      }
+    },
+    "記憶體壓力過高，AI 引擎會再佔用幾百 MB——先關掉一些 App 再試" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memory pressure is critical and an AI engine would use hundreds of MB more. Quit some apps and try again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内存压力过高，AI 引擎还会再占用几百 MB——先关掉一些 App 再试"
+          }
+        }
+      }
+    },
     "設定 → AI 引擎：確認 CLI 已安裝或指定路徑" : {
       "localizations" : {
         "en" : {
@@ -8308,6 +8596,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "设为默认输出设备"
+          }
+        }
+      }
+    },
+    "診斷" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diagnostics"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "诊断"
           }
         }
       }
@@ -9060,6 +9364,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "还没有任何场景"
+          }
+        }
+      }
+    },
+    "還沒有紀錄" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No records yet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有记录"
           }
         }
       }

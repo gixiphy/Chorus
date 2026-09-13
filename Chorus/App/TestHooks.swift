@@ -229,6 +229,12 @@ final class TestHooks {
             if let spec = info["value"] {
                 FaultRegistry.shared.apply(spec: spec)
             }
+        case "memoryPressure":
+            // value ＝ normal／warning／critical：模擬系統記憶體壓力事件
+            let levels: [String: MemoryPressureMonitor.Level] = ["normal": .normal, "warning": .warning, "critical": .critical]
+            if let level = info["value"].flatMap({ levels[$0] }) {
+                MemoryPressureMonitor.shared.report(level)
+            }
         case "blockMainThread":
             // value ＝ 秒數。刻意佔住主執行緒，驗證卡住時背景的 /v1/health 仍回得出來
             if let seconds = info["value"].flatMap(Double.init) {
@@ -556,6 +562,7 @@ final class TestHooks {
                 ] as [String: Any])
             }),
             "gauges": metrics.gauges.mapValues { ["current": $0.current, "highWater": $0.highWater] },
+            "memoryPressure": MemoryPressureMonitor.name(MemoryPressureMonitor.shared.level),
             "faults": Dictionary(uniqueKeysWithValues: FaultRegistry.shared.active.map {
                 ($0.key.rawValue, String(describing: $0.value))
             }),

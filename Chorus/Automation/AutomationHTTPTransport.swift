@@ -394,6 +394,7 @@ final class AutomationHTTPTransport: @unchecked Sendable {
                 "longestStallMs": loop.lifetime.longestStall.millis,
                 "p95UpperMs": upper(loop.lifetime.latency),
             ] as [String: Any],
+            "memoryPressure": MemoryPressureMonitor.name(MemoryPressureMonitor.shared.level),
             "operations": operations,
             "gauges": metrics.gauges.mapValues { ["current": $0.current, "highWater": $0.highWater] },
         ]

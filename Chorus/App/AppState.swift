@@ -48,6 +48,7 @@ final class AppState {
         FaultRegistry.shared.configure(arguments: ProcessInfo.processInfo.arguments)
         #endif
         MainLoopWatchdog.shared.start()
+        MemoryPressureMonitor.shared.start()
         // 每一步之後打點：選單出來之前主執行緒花在哪裡（Batch F）
         var timeline = StartupTimeline()
         self.instance = instance

@@ -94,6 +94,10 @@ final class AudioTuningAdvisor {
 
     func analyze(target: AudioTuningTarget, request: String) {
         guard !isAnalyzing else { return }
+        guard !MemoryPressureMonitor.shared.blocksHeavyWork else {
+            lastErrorMessage = String(localized: "記憶體壓力過高，AI 引擎會再佔用幾百 MB——先關掉一些 App 再試")
+            return
+        }
         guard let engine = registry?.activeEngine else {
             lastErrorMessage = String(localized: "未找到可用的 AI 引擎（設定 → AI 引擎）")
             lastErrorAssist = .openEngineSettings

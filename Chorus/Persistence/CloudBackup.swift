@@ -62,6 +62,9 @@ final class CloudBackup {
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private unowned let scenes: SceneStore
     @ObservationIgnored private let timing: Timing
+    @ObservationIgnored private let pressure: MemoryPressureMonitor
+    /// 自動備份正因記憶體壓力暫停中（只在進出時各寫一行紀錄）。
+    @ObservationIgnored private var deferredByPressure = false
 
     private struct Revision {
         let number: Int
@@ -86,8 +89,15 @@ final class CloudBackup {
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private static let log = ChorusLog(category: "backup")
 
-    init(files: CloudBackupFiles, settings: SettingsStore, scenes: SceneStore, timing: Timing = Timing()) {
+    init(
+        files: CloudBackupFiles,
+        settings: SettingsStore,
+        scenes: SceneStore,
+        timing: Timing = Timing(),
+        pressure: MemoryPressureMonitor = .shared
+    ) {
         worker = BackupIOWorker(files: files)
+        self.pressure = pressure
         self.settings = settings
         self.scenes = scenes
         self.timing = timing
@@ -212,8 +222,18 @@ final class CloudBackup {
     }
 
     /// 自動備份的一拍。**內容沒變就不寫**；等這一輪寫完才返回。
+    /// 記憶體壓力 critical 時整拍跳過（手動「立即備份」不受影響）。
     func tick() async {
-        guard settings.cloudBackupEnabled, await ensureAvailability() else { return }
+        guard settings.cloudBackupEnabled else { return }
+        guard !pressure.blocksHeavyWork else {
+            if !deferredByPressure {
+                deferredByPressure = true
+                Self.log.notice("記憶體壓力 critical：自動備份暫停，恢復後下一拍補上")
+            }
+            return
+        }
+        deferredByPressure = false
+        guard await ensureAvailability() else { return }
         let current = snapshot()
         let known = [lastWritten, writing?.backup, pending?.backup].compactMap { $0 }
         if let newest = known.last, newest.hasSameContent(as: current) {

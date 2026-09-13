@@ -271,6 +271,10 @@ final class UITranslator {
     /// 翻譯（或補翻）目標語言。`onlyMissing` 為 true 時保留既有譯文、只送缺的。
     func translate(onlyMissing: Bool) {
         guard !isRunning else { return }
+        guard !MemoryPressureMonitor.shared.blocksHeavyWork else {
+            phase = .failed(String(localized: "記憶體壓力過高，AI 引擎會再佔用幾百 MB——先關掉一些 App 再試"))
+            return
+        }
         guard let engine = registry.activeEngine else {
             phase = .failed(String(localized: "未找到可用的 AI 引擎（設定 → AI 引擎）"))
             return
