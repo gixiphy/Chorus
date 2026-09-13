@@ -64,6 +64,12 @@ final class SoftDisconnectClient {
     @discardableResult
     func setEnabled(_ enabled: Bool, displayID: CGDirectDisplayID) -> Bool {
         guard isAvailable else { return false }
+        return OperationMetrics.shared.measure("display.softDisconnect") {
+            configure(enabled, displayID: displayID)
+        }
+    }
+
+    private func configure(_ enabled: Bool, displayID: CGDirectDisplayID) -> Bool {
         var config: UnsafeMutableRawPointer?
         guard begin(&config) == 0, config != nil else { return false }
         guard configureEnabled(config, displayID, enabled) == 0 else {

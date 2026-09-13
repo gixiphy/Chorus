@@ -1,5 +1,7 @@
+import ChorusCore
 import CoreAudio
 import Foundation
+import Synchronization
 
 /// 所有 CoreAudio 呼叫限制在單一 serial queue（AudioObjectSetPropertyData 有
 /// 阻塞主執行緒的已知案例）。對外以 AsyncStream 送出完整 snapshot；
@@ -37,6 +39,19 @@ final class AudioWorker: @unchecked Sendable {
     private var snapshotScheduled = false
 
     private let listenerBlock: AudioObjectPropertyListenerBlock
+
+    private enum Property: Hashable, Sendable {
+        case volume
+        case balance
+    }
+
+    private struct PropertyKey: Hashable, Sendable {
+        let deviceID: AudioObjectID
+        let property: Property
+    }
+
+    /// 還沒寫進 HAL 的音量／平衡（每個裝置每個屬性只留最新值）。
+    private let pendingProperties = Mutex(LatestValueMailbox<PropertyKey, Double>())
 
     init() {
         var storedContinuation: AsyncStream<Snapshot>.Continuation!
@@ -82,48 +97,73 @@ final class AudioWorker: @unchecked Sendable {
     // MARK: - 控制（fire-and-forget，UI 端樂觀更新）
 
     func setVolume(_ deviceID: AudioObjectID, to value: Double) {
-        enqueue(measuring: "audio.set") {
-            let clamped = Float32(min(max(value, 0), 1))
-            let main = CoreAudioProperty.address(
-                CoreAudioProperty.virtualMainVolume,
-                scope: kAudioObjectPropertyScopeOutput
-            )
-            if CoreAudioProperty.isSettable(deviceID, main) {
-                CoreAudioProperty.set(deviceID, main, to: clamped)
-                return
-            }
-            // fallback：逐 channel 設 VolumeScalar
-            for channel: AudioObjectPropertyElement in [1, 2] {
-                let scalar = CoreAudioProperty.address(
-                    kAudioDevicePropertyVolumeScalar,
-                    scope: kAudioObjectPropertyScopeOutput,
-                    element: channel
-                )
-                if CoreAudioProperty.isSettable(deviceID, scalar) {
-                    CoreAudioProperty.set(deviceID, scalar, to: clamped)
-                }
-            }
-        }
+        submit(value, for: PropertyKey(deviceID: deviceID, property: .volume))
     }
 
     /// 原生左右平衡（−1…+1）。vmbc 優先（逐聲道音量的裝置），
     /// 退而寫 stereo pan（內建喇叭）。呼叫端已確認 `canSetBalance`。
     func setBalance(_ deviceID: AudioObjectID, to balance: Double) {
-        enqueue(measuring: "audio.set") {
-            let halValue = Float32((min(max(balance, -1), 1) + 1) / 2) // −1…+1 → 0…1
-            let vmbc = CoreAudioProperty.address(
-                CoreAudioProperty.virtualMainBalance, scope: kAudioObjectPropertyScopeOutput
-            )
-            if CoreAudioProperty.isSettable(deviceID, vmbc) {
-                CoreAudioProperty.set(deviceID, vmbc, to: halValue)
-                return
+        submit(balance, for: PropertyKey(deviceID: deviceID, property: .balance))
+    }
+
+    /// 音量與平衡是「只要最後一個值」的狀態：排進 queue 之前就合併，拖曳滑桿時
+    /// HAL 慢下來也不會堆出一整串過時的中間值。一輪只排一次 worker。
+    private func submit(_ value: Double, for key: PropertyKey) {
+        let schedule = pendingProperties.withLock { $0.put(value, for: key) }
+        if schedule {
+            enqueue(measuring: "audio.set") { self.applyPendingPropertiesLocked() }
+        }
+    }
+
+    /// 只能在 queue 上呼叫。
+    private func applyPendingPropertiesLocked() {
+        for (key, value) in pendingProperties.withLock({ $0.take() }) {
+            switch key.property {
+            case .volume: applyVolumeLocked(key.deviceID, value)
+            case .balance: applyBalanceLocked(key.deviceID, value)
             }
-            let pan = CoreAudioProperty.address(
-                kAudioDevicePropertyStereoPan, scope: kAudioObjectPropertyScopeOutput
+        }
+    }
+
+    /// 只能在 queue 上呼叫。
+    private func applyVolumeLocked(_ deviceID: AudioObjectID, _ value: Double) {
+        let clamped = Float32(min(max(value, 0), 1))
+        let main = CoreAudioProperty.address(
+            CoreAudioProperty.virtualMainVolume,
+            scope: kAudioObjectPropertyScopeOutput
+        )
+        if CoreAudioProperty.isSettable(deviceID, main) {
+            CoreAudioProperty.set(deviceID, main, to: clamped)
+            return
+        }
+        // fallback：逐 channel 設 VolumeScalar
+        for channel: AudioObjectPropertyElement in [1, 2] {
+            let scalar = CoreAudioProperty.address(
+                kAudioDevicePropertyVolumeScalar,
+                scope: kAudioObjectPropertyScopeOutput,
+                element: channel
             )
-            if CoreAudioProperty.isSettable(deviceID, pan) {
-                CoreAudioProperty.set(deviceID, pan, to: halValue)
+            if CoreAudioProperty.isSettable(deviceID, scalar) {
+                CoreAudioProperty.set(deviceID, scalar, to: clamped)
             }
+        }
+    }
+
+    /// 只能在 queue 上呼叫。
+    private func applyBalanceLocked(_ deviceID: AudioObjectID, _ balance: Double) {
+        let halValue = Float32((min(max(balance, -1), 1) + 1) / 2) // −1…+1 → 0…1
+        let vmbc = CoreAudioProperty.address(
+            CoreAudioProperty.virtualMainBalance, scope: kAudioObjectPropertyScopeOutput
+        )
+        if CoreAudioProperty.isSettable(deviceID, vmbc) {
+            CoreAudioProperty.set(deviceID, vmbc, to: halValue)
+            return
+        }
+        let pan = CoreAudioProperty.address(
+            kAudioDevicePropertyStereoPan, scope: kAudioObjectPropertyScopeOutput
+        )
+        if CoreAudioProperty.isSettable(deviceID, pan) {
+            CoreAudioProperty.set(deviceID, pan, to: halValue)
         }
     }
 

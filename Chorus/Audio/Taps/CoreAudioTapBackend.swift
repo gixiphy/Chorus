@@ -99,6 +99,10 @@ final class CoreAudioTapBackend: TapBackend {
     nonisolated static let aggregateUIDPrefix = "com.hermes.Chorus.tap"
 
     func defaultOutputDeviceUID() -> String? {
+        OperationMetrics.shared.measure("audio.hal.query") { queryDefaultOutputDeviceUID() }
+    }
+
+    private func queryDefaultOutputDeviceUID() -> String? {
         guard let deviceID = CoreAudioProperty.get(
             AudioObjectID(kAudioObjectSystemObject),
             CoreAudioProperty.address(kAudioHardwarePropertyDefaultOutputDevice),
@@ -110,6 +114,10 @@ final class CoreAudioTapBackend: TapBackend {
     /// 有輸出串流的裝置。輸入裝置（麥克風）與純輸入的 aggregate 不算——
     /// 把它們列進路由選單只會讓使用者選到一個沒有聲音出來的目標。
     func outputDeviceUIDs() -> [String] {
+        OperationMetrics.shared.measure("audio.hal.query") { queryOutputDeviceUIDs() }
+    }
+
+    private func queryOutputDeviceUIDs() -> [String] {
         let objects = CoreAudioProperty.getArray(
             AudioObjectID(kAudioObjectSystemObject),
             CoreAudioProperty.address(kAudioHardwarePropertyDevices),
@@ -200,11 +208,26 @@ final class CoreAudioTapBackend: TapBackend {
 
     // MARK: - session 組裝
 
+    /// tap、aggregate、IOProc 的建立與啟動目前都在主執行緒上同步執行；
+    /// `audio.tap.create` 量的就是它們佔住主執行緒的時間（搬不搬出去，看這個數字）。
     private func makeSession(
         description: CATapDescription,
         outputDeviceUID: String,
         kind: TapSessionKind,
         initialGain: Float = 1
+    ) throws -> any TapSession {
+        try OperationMetrics.shared.measure("audio.tap.create") {
+            try assembleSession(
+                description: description, outputDeviceUID: outputDeviceUID, kind: kind, initialGain: initialGain
+            )
+        }
+    }
+
+    private func assembleSession(
+        description: CATapDescription,
+        outputDeviceUID: String,
+        kind: TapSessionKind,
+        initialGain: Float
     ) throws -> any TapSession {
         var tapID = AudioObjectID(kAudioObjectUnknown)
         let createStatus = AudioHardwareCreateProcessTap(description, &tapID)
@@ -765,10 +788,12 @@ private final class CoreAudioTapSession: TapSession {
         }
         // AudioDeviceStop 是同步的：回來之後不會再有回呼在跑，
         // 這時候釋放 EQ 區塊不需要延遲（context 的 deinit 會收尾）
-        AudioDeviceStop(aggregateID, procID)
-        AudioDeviceDestroyIOProcID(aggregateID, procID)
-        AudioHardwareDestroyAggregateDevice(aggregateID)
-        AudioHardwareDestroyProcessTap(tapID)
+        OperationMetrics.shared.measure("audio.tap.destroy") {
+            _ = AudioDeviceStop(aggregateID, procID)
+            _ = AudioDeviceDestroyIOProcID(aggregateID, procID)
+            _ = AudioHardwareDestroyAggregateDevice(aggregateID)
+            _ = AudioHardwareDestroyProcessTap(tapID)
+        }
         self.procID = nil
     }
 }

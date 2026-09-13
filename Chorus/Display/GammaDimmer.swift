@@ -45,7 +45,9 @@ final class GammaDimmer {
             guard let original = originals[displayID] ?? capture(displayID) else { return }
             blackedOut.insert(displayID)
             var zero = [CGGammaValue](repeating: 0, count: Int(original.sampleCount))
-            CGSetDisplayTransferByTable(displayID, original.sampleCount, &zero, &zero, &zero)
+            OperationMetrics.shared.measure("display.gamma") {
+                _ = CGSetDisplayTransferByTable(displayID, original.sampleCount, &zero, &zero, &zero)
+            }
         } else {
             guard blackedOut.remove(displayID) != nil else { return }
             restore(displayID)
@@ -65,7 +67,9 @@ final class GammaDimmer {
         var red = original.red.map { $0 * scale }
         var green = original.green.map { $0 * scale }
         var blue = original.blue.map { $0 * scale }
-        CGSetDisplayTransferByTable(displayID, original.sampleCount, &red, &green, &blue)
+        OperationMetrics.shared.measure("display.gamma") {
+            _ = CGSetDisplayTransferByTable(displayID, original.sampleCount, &red, &green, &blue)
+        }
     }
 
     func restore(_ displayID: CGDirectDisplayID) {
@@ -73,7 +77,9 @@ final class GammaDimmer {
         var red = original.red
         var green = original.green
         var blue = original.blue
-        CGSetDisplayTransferByTable(displayID, original.sampleCount, &red, &green, &blue)
+        OperationMetrics.shared.measure("display.gamma") {
+            _ = CGSetDisplayTransferByTable(displayID, original.sampleCount, &red, &green, &blue)
+        }
     }
 
     func restoreAll() {

@@ -48,7 +48,8 @@ final class DisplayServicesClient: @unchecked Sendable {
     func brightness(for displayID: CGDirectDisplayID) -> Double? {
         guard let getFn else { return nil }
         var value: Float = 0
-        guard getFn(displayID, &value) == 0 else { return nil }
+        let status = OperationMetrics.shared.measure("display.services") { getFn(displayID, &value) }
+        guard status == 0 else { return nil }
         return Double(value)
     }
 
@@ -56,7 +57,8 @@ final class DisplayServicesClient: @unchecked Sendable {
     func setBrightness(_ value: Double, for displayID: CGDirectDisplayID) -> Bool {
         guard let setFn else { return false }
         let clamped = Float(min(max(value, 0), 1))
-        guard setFn(displayID, clamped) == 0 else { return false }
+        let status = OperationMetrics.shared.measure("display.services") { setFn(displayID, clamped) }
+        guard status == 0 else { return false }
         // 通知系統，讓系統亮度 OSD／設定同步顯示新值
         changedFn?(displayID, Double(clamped))
         return true
