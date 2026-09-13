@@ -69,8 +69,17 @@ final class PeerConnection: PeerTransport, @unchecked Sendable {
     func send(_ envelope: Envelope) async throws {
         let data = try EnvelopeCoding.encode(envelope)
         // sync.send 的在途數就是「送出去還沒被網路層收下」的積壓
+        let framed = framed
         try await OperationMetrics.shared.measureAsync("sync.send") {
-            try await FaultRegistry.shared.inject(.syncSend)
+            do {
+                try await FaultRegistry.shared.inject(
+                    .syncSend, limit: FramedNWConnection.sendTimeout, abandonIf: { framed.isClosed }
+                )
+            } catch is FaultRegistry.LimitReached {
+                // 與真的送不出去同一個結果：期限到、連線關掉
+                framed.close()
+                throw FramedConnectionError.sendTimedOut
+            }
             try await framed.send(data)
         }
     }

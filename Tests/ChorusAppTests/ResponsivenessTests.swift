@@ -53,6 +53,21 @@ struct FaultRegistryTests {
         try await faults.inject(.syncHello)
     }
 
+    @Test("非同步注入遵守呼叫端期限：超過 limit 丟 LimitReached，abandonIf 為真就放手")
+    func asyncLimitAndAbandon() async throws {
+        let faults = FaultRegistry(hangLimit: .seconds(30))
+        faults.set(.syncSend, .hang)
+        let started = ContinuousClock.now
+        await #expect(throws: FaultRegistry.LimitReached(point: .syncSend)) {
+            try await faults.inject(.syncSend, limit: .milliseconds(150))
+        }
+        #expect(ContinuousClock.now - started < .seconds(2))
+
+        let abandoned = ContinuousClock.now
+        try await faults.inject(.syncSend, limit: .seconds(10), abandonIf: { true })
+        #expect(ContinuousClock.now - abandoned < .seconds(1))
+    }
+
     @Test("apply(spec:) 解析失敗不改狀態")
     func applySpec() {
         let faults = FaultRegistry()

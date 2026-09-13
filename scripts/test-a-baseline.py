@@ -296,9 +296,21 @@ def sync_view(data):
     }
 
 
-def stuck_connecting(view):
-    """狀態寫著連線中，手上卻沒有任何進行中的撥號或 hello——沒有東西會讓它離開這個狀態。"""
+def looks_stuck(view):
     return "connecting" in view["states"] and view["connectInFlight"] == 0 and view["helloInFlight"] == 0
+
+
+def stuck_connecting(inst, samples=3, interval=1.5):
+    """狀態寫著連線中，手上卻沒有任何進行中的撥號或 hello——沒有東西會讓它離開這個狀態。
+
+    單一快照可能剛好落在「開新連線、計量還沒開始」的瞬間，連續幾次都這樣才算。
+    """
+    for index in range(samples):
+        if not looks_stuck(sync_view(dump(inst))):
+            return False
+        if index + 1 < samples:
+            time.sleep(interval)
+    return True
 
 
 def scenario_peer_fault(name, fault, clear, title):
@@ -320,7 +332,7 @@ def scenario_peer_fault(name, fault, clear, title):
     a, b = sync_view(dump("A")), sync_view(dump("B"))
     both_connected = "connected" in a["states"] and "connected" in b["states"]
     hello_waiting = max(a["helloOldestMs"], b["helloOldestMs"]) >= 20_000
-    stuck = stuck_connecting(a) or stuck_connecting(b)
+    stuck = stuck_connecting("A") or stuck_connecting("B")
     # 正常退避（1、2、4、8、16 秒）30 秒內最多撥 5 次左右；遠超過就是沒有退避的重撥迴圈
     churn = a["helloOutcomes"].get("failure", 0) - failures_before
 

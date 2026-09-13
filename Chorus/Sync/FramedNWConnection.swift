@@ -1,17 +1,33 @@
 import Foundation
 import Network
+import Synchronization
+
+enum FramedConnectionError: Error, Equatable {
+    /// 連線已關閉，不再接受送出。
+    case closed
+    /// 送出沒有在期限內被網路層收下；連線已隨之關閉。
+    case sendTimedOut
+    /// payload 超過單一 frame 上限（對方也會因此斷線，不送）。
+    case payloadTooLarge
+}
 
 /// NWConnection + 4-byte big-endian length prefix 的封裝：raw frame 進出。
 /// 同步通道（TLS-PSK + Envelope JSON）與配對通道（明文 + PairingMessage JSON）共用。
+///
+/// 收尾規則：`finish`（stream 結束＋`onClose`）**只發生一次**，不論是本機 close、
+/// 對方斷線還是送出逾時先到；關閉之後的 send 立刻丟錯。
 final class FramedNWConnection: @unchecked Sendable {
     /// 單一 frame 上限；超過視為協定破壞，直接斷線。
-    private static let maxFrameLength = 1 << 20
+    static let maxFrameLength = 1 << 20
+    /// 送出期限：`contentProcessed` 只代表本機網路層收下了，不代表對方已經套用。
+    static let sendTimeout: Duration = .seconds(5)
 
     let incoming: AsyncStream<Data>
     private let incomingContinuation: AsyncStream<Data>.Continuation
 
     private let connection: NWConnection
     private let queue: DispatchQueue
+    private let finished = Atomic(false)
 
     /// 連線關閉（任何原因）時觸發一次。
     private let onClose: @Sendable () -> Void
@@ -26,6 +42,8 @@ final class FramedNWConnection: @unchecked Sendable {
     }
 
     var remoteEndpoint: NWEndpoint? { connection.currentPath?.remoteEndpoint }
+
+    var isClosed: Bool { finished.load(ordering: .sequentiallyConsistent) }
 
     /// 對方的 host 字串（記錄手動端點用）。
     var remoteHostString: String? {
@@ -85,20 +103,30 @@ final class FramedNWConnection: @unchecked Sendable {
         receiveNextFrame()
     }
 
-    func send(_ payload: Data) async throws {
+    /// 送出一個 frame。期限內網路層沒收下就關閉連線並丟 `sendTimedOut`——
+    /// 送不出去的連線留著只會讓後面的訊息越堆越多。
+    func send(_ payload: Data, timeout: Duration = sendTimeout) async throws {
+        guard !isClosed else { throw FramedConnectionError.closed }
+        guard payload.count <= Self.maxFrameLength else { throw FramedConnectionError.payloadTooLarge }
         var frame = Data(capacity: payload.count + 4)
         var length = UInt32(payload.count).bigEndian
         withUnsafeBytes(of: &length) { frame.append(contentsOf: $0) }
         frame.append(payload)
         let connection = connection
+        let queue = queue
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            connection.send(content: frame, completion: .contentProcessed { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
+            let box = ResumeOnce(continuation)
+            // DispatchWorkItem 的 cancel 是執行緒安全的；完成回呼只拿它來取消計時
+            nonisolated(unsafe) let deadline = DispatchWorkItem { [weak self] in
+                if box.resume(.failure(FramedConnectionError.sendTimedOut)) {
+                    self?.close()
                 }
+            }
+            connection.send(content: frame, completion: .contentProcessed { error in
+                deadline.cancel()
+                box.resume(error.map { .failure($0) } ?? .success(()))
             })
+            queue.asyncAfter(deadline: .now() + timeout.millis / 1_000, execute: deadline)
         }
     }
 
@@ -108,6 +136,8 @@ final class FramedNWConnection: @unchecked Sendable {
     }
 
     private func finish() {
+        guard finished.compareExchange(expected: false, desired: true, ordering: .sequentiallyConsistent).exchanged
+        else { return }
         incomingContinuation.finish()
         onClose()
     }
@@ -138,7 +168,7 @@ final class FramedNWConnection: @unchecked Sendable {
     }
 }
 
-/// CheckedContinuation 只允許 resume 一次；NW state handler 可能多次觸發。
+/// CheckedContinuation 只允許 resume 一次；NW state handler 與逾時可能都會觸發。
 private final class ResumeOnce: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Void, any Error>?
@@ -147,7 +177,9 @@ private final class ResumeOnce: @unchecked Sendable {
         self.continuation = continuation
     }
 
-    func resume(_ result: Result<Void, any Error>) {
+    /// 回傳這一次是不是真的 resume 了（false ＝ 另一條路先到）。
+    @discardableResult
+    func resume(_ result: Result<Void, any Error>) -> Bool {
         lock.lock()
         let taken = continuation
         continuation = nil
@@ -156,5 +188,6 @@ private final class ResumeOnce: @unchecked Sendable {
         case .success: taken?.resume()
         case let .failure(error): taken?.resume(throwing: error)
         }
+        return taken != nil
     }
 }

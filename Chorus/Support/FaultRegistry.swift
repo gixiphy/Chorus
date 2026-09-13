@@ -15,6 +15,11 @@ final class FaultRegistry: @unchecked Sendable {
         var errorDescription: String? { "注入的故障：\(point.rawValue)" }
     }
 
+    /// 故障持續超過呼叫端給的 `limit`：呼叫端應當成自己的期限到了處理。
+    struct LimitReached: Error, Equatable {
+        let point: FaultPoint
+    }
+
     /// `hang` 的安全上限：忘了解除時，測試行程不會永遠卡著。
     let hangLimit: Duration
 
@@ -88,20 +93,33 @@ final class FaultRegistry: @unchecked Sendable {
     }
 
     /// 非同步呼叫點：用 Task.sleep 等，可被取消。
-    func inject(_ point: FaultPoint) async throws {
+    ///
+    /// 真的卡住的 I/O 會被呼叫端自己的期限或連線關閉結束，注入的故障也要一樣：
+    /// 超過 `limit` 丟 `LimitReached`；`abandonIf` 為真（例如連線已關）就提早返回。
+    func inject(
+        _ point: FaultPoint,
+        limit: Duration? = nil,
+        abandonIf: (@Sendable () -> Bool)? = nil
+    ) async throws {
         guard let behavior = behavior(for: point) else { return }
+        let started = ContinuousClock.now
+        let target: Duration
         switch behavior {
         case .fail:
             throw InjectedFault(point: point)
         case .withhold:
             return
         case let .delay(duration):
-            try await Task.sleep(for: duration)
+            target = duration
         case .hang:
-            let deadline = ContinuousClock.now + hangLimit
-            while self.behavior(for: point) == .hang, ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(100))
+            target = hangLimit
+        }
+        while ContinuousClock.now - started < target, self.behavior(for: point) == behavior {
+            if abandonIf?() == true { return }
+            if let limit, ContinuousClock.now - started >= limit {
+                throw LimitReached(point: point)
             }
+            try await Task.sleep(for: .milliseconds(50))
         }
     }
 
