@@ -73,7 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 結束 Chorus 一定還原限時場景（與 B3 的螢幕電源同態度）：
             // 使用者不該因為關掉 Chorus 就被留在「Slack 靜音、螢幕 30%」
             timed("focus") { AppStateRegistry.focus?.shutdown() }
-            // 自動備份是 60 秒一拍——結束前把最後那一分鐘的變更補上
+            // 只停排程、不碰 iCloud Drive：CloudDocs 卡住時結束不能跟著卡。
+            // 還沒寫出去的變更在 UserDefaults 裡，下次啟動第一拍補上
             timed("cloud") { AppStateRegistry.cloudBackup?.shutdown() }
             timed("display") { AppStateRegistry.displayManager?.shutdown() }
             timed("keepAwake") { AppStateRegistry.keepAwake?.shutdown() }

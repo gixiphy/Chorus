@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""Batch A 回應性基線：用故障注入重現幾種事故，記下現況數字。
+"""回應性基線與驗收：用故障注入重現事故，對照方案的驗收目標。
 
 兩個 Debug 實例（假光感、假 tap、暫存備份目錄），不寫實體螢幕、不碰使用者
-真的 iCloud Drive。每個情境回報「有沒有重現」與量到的數字；報告另存 JSON，
-之後的批次拿同一支腳本對照改善幅度。
+真的 iCloud Drive。每個情境記下量到的數字，並判定有沒有達到驗收目標；
+報告另存 JSON。Batch A 在修正前跑出的是「全部未達標」的基線。
 
     python3 scripts/test-a-baseline.py                  # 全部情境
     python3 scripts/test-a-baseline.py idle cloud exit  # 只跑指定情境
     python3 scripts/test-a-baseline.py --report out.json
 
-情境：
-  idle   靜置 30 秒的主迴圈延遲（正常基準）
-  cloud  備份寫入延遲 4 秒 → 主執行緒是否被卡住、卡多久
-  exit   備份寫入延遲 4 秒時正常結束 → 退出收尾花多久、卡在哪一步
-  hello  對端連線 ready 後不送 hello（心跳照送）→ 撥號方是否卡在「連線中」、
-         解除後能否自己恢復
-  silent 對端連線 ready 後什麼都送不出去（sync.send 卡住）→ hello 是否無期限等待
-         hello／silent 需要區域網路權限，會先走一次配對
+情境與驗收目標：
+  idle   靜置 30 秒：主迴圈 P95 上界 ≤ 100 ms、沒有卡住
+  cloud  備份寫入延遲 4 秒時觸發備份：期間沒有 >500 ms 的主執行緒延遲，備份仍會完成
+  exit   備份寫入延遲 4 秒時正常結束：quit 到行程退出 < 2 秒
+  hello  對端連線 ready 後不送 hello（心跳照送）：不卡在「連線中」、30 秒內
+         hello 失敗 ≤ 8 次（有退避）、解除後 60 秒內自己恢復
+  silent 對端連線 ready 後什麼都送不出去（sync.send 卡住）：hello 等待 < 10 秒、
+         不卡在「連線中」、解除後 60 秒內自己恢復
+  hello／silent 需要區域網路權限，會先走一次配對
 
 百分位取自固定桶直方圖，是**上界**（所在桶的上界，並以最大值封頂）。
 """
@@ -144,9 +145,9 @@ def say(text):
     print(text, flush=True)
 
 
-def record(name, reproduced, metrics, note=""):
-    report["scenarios"][name] = {"reproduced": reproduced, "metrics": metrics, "note": note}
-    mark = "🔁 重現" if reproduced else "⚪ 未重現"
+def record(name, target_met, metrics, note=""):
+    report["scenarios"][name] = {"targetMet": target_met, "metrics": metrics, "note": note}
+    mark = "✅ 達標" if target_met else "❌ 未達標"
     say(f"  {mark}  {note}")
     for key, value in metrics.items():
         say(f"      {key}: {value}")
@@ -183,11 +184,11 @@ def scenario_idle():
     loop = main_loop(dump("A"))
     stop("A")
     latency = loop.get("latencyMs", {})
-    record("idle", False, {
+    record("idle", (latency.get("p95") or 0) <= 100 and loop.get("hangCount") == 0, {
         "samples": latency.get("count"), "p50UpperMs": latency.get("p50"),
         "p95UpperMs": latency.get("p95"), "p99UpperMs": latency.get("p99"), "maxMs": latency.get("max"),
         "lagCount": loop.get("lagCount"), "hangCount": loop.get("hangCount"),
-    }, "正常基準（含啟動列舉），不是故障情境")
+    }, "正常基準（含啟動列舉）")
 
 
 def scenario_cloud():
@@ -199,18 +200,22 @@ def scenario_cloud():
     time.sleep(3)
     before = main_loop(dump("A"))
     notify("A", "cloudBackupNow")
-    ok, data = wait_for("A", lambda d: operation(d, "cloud.write").get("completed", 0) >= 1
-                        and main_loop(d).get("hangCount", 0) > before.get("hangCount", 0), 20)
-    data = data or dump("A")
+    completed, _ = wait_for("A", lambda d: operation(d, "cloud.write").get("completed", 0) >= 1, 20)
+    time.sleep(2)  # 等 watchdog 把可能的停頓記完
+    data = dump("A")
     stop("A")
     loop = main_loop(data)
     write = operation(data, "cloud.write")
-    stall = loop.get("longestStallMs") or 0
-    record("cloud", ok and stall >= 3000, {
-        "longestMainStallMs": round(stall),
-        "hangCountDelta": loop.get("hangCount", 0) - before.get("hangCount", 0),
+    lag_delta = loop.get("lagCount", 0) - before.get("lagCount", 0)
+    hang_delta = loop.get("hangCount", 0) - before.get("hangCount", 0)
+    record("cloud", completed and lag_delta == 0 and hang_delta == 0, {
+        "backupCompleted": completed,
+        "mainLagDelta": lag_delta,
+        "mainHangDelta": hang_delta,
+        "longestMainStallMs": round(loop.get("longestStallMs") or 0),
         "cloudWriteMaxMs": round(write.get("latencyMs", {}).get("max", 0)),
-    }, "cloud.write 在主執行緒同步執行：寫入卡多久，介面就停多久" if ok else "沒有量到主執行緒停頓")
+    }, "寫入卡住期間主執行緒照常回應" if lag_delta == 0 and hang_delta == 0
+       else "cloud.write 拖住了主執行緒")
 
 
 def scenario_exit():
@@ -242,11 +247,12 @@ def scenario_exit():
     exit_line = next((line for line in log_lines_since("A", offset) if "結束收尾：" in line), "")
     match = re.search(r"cloud ([\d.]+ (?:ms|s))", exit_line)
     total = re.search(r"（共 ([\d.]+ (?:ms|s))）", exit_line)
-    record("exit", exited and wall >= 3.5, {
+    record("exit", exited and wall < 2.0, {
         "quitToExitSeconds": round(wall, 2),
         "exitCloudStep": match.group(1) if match else None,
         "exitCoordinatorTotal": total.group(1) if total else None,
-    }, "結束時同步補寫備份，退出等完寫入才走" if exit_line else "紀錄檔裡找不到收尾耗時那一行")
+    }, ("退出沒有等 iCloud Drive" if wall < 2.0 else "退出被收尾拖住") if exit_line
+       else "紀錄檔裡找不到收尾耗時那一行")
 
 
 def pair_instances():
@@ -335,16 +341,20 @@ def scenario_peer_fault(name, fault, clear, title):
         findings.append("hello 沒有期限，session 一直掛在等待")
     if stuck:
         findings.append("撥號方停在「連線中」且沒有任何在途工作，不會再重撥")
-    if churn >= 10:
+    if churn > 8:
         findings.append(f"{observe} 秒內 hello 失敗 {churn} 次，重撥沒有退避")
     if recovered_after is None:
         findings.append(f"解除故障 {recover_window} 秒內沒有自己恢復")
-    record(name, not both_connected and (hello_waiting or stuck or churn >= 10), {
+    hello_limit_ms = 10_000
+    longest_hello = max(a["helloOldestMs"], b["helloOldestMs"])
+    target_met = (not stuck and churn <= 8 and recovered_after is not None
+                  and (name != "silent" or longest_hello < hello_limit_ms))
+    record(name, target_met, {
         "A": a, "B": b,
         "helloFailuresDuringObserve": churn,
         "recoveredAfterClearSeconds": recovered_after,
         "afterClear": {"A": after_a, "B": after_b},
-    }, "；".join(findings) or "沒有重現卡住")
+    }, "；".join(findings) or "有期限、有退避，解除後自己恢復")
 
 
 def scenario_hello():
@@ -390,10 +400,9 @@ def main():
     with open(path, "w") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
     say(f"\n報告：{path}")
-    faulted = [s for s in selected if s != "idle"]
-    reproduced = [s for s in faulted if report["scenarios"].get(s, {}).get("reproduced")]
-    say(f"故障情境重現 {len(reproduced)}/{len(faulted)}")
-    return 0 if len(reproduced) == len(faulted) else 1
+    met = [s for s in selected if report["scenarios"].get(s, {}).get("targetMet")]
+    say(f"達標 {len(met)}/{len(selected)}")
+    return 0 if len(met) == len(selected) else 1
 
 
 if __name__ == "__main__":

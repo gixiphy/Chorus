@@ -1,3 +1,4 @@
+import AppKit
 import ChorusCore
 import Foundation
 import Observation
@@ -12,39 +13,94 @@ import OSLog
 ///
 /// 因此這裡**不是同步**：別台的設定不會自己跑過來。使用者第一次看到「同步」
 /// 兩個字會預期「全部一樣」，所以 UI 從頭到尾不用那個詞。
+///
+/// **主執行緒不等 iCloud Drive**：所有檔案操作交給 `BackupIOWorker`，每件都有期限。
+/// 寫入同時只有一件在跑、只留最新一份待寫；逾時就標「稍後重試」並退避，
+/// 不在卡住的那件後面疊工作。結束 App 時不寫——設定本身在 UserDefaults，
+/// 下次啟動自動備份的第一拍會補上。
 @MainActor
 @Observable
 final class CloudBackup {
+    enum Availability: Equatable {
+        /// iCloud Drive 還沒探測完（探測在 worker 上做，初始化不碰檔案）。
+        case checking
+        case available
+        case unavailable
+    }
+
     enum Status: Equatable {
         case idle
+        case working(String)
         case ok(String)
+        /// iCloud Drive 沒在期限內回應。設定仍在本機，稍後自動重試。
+        case deferred(String)
         case failed(String)
     }
 
+    struct Timing: Sendable {
+        var writeDeadline: Duration = .seconds(15)
+        var readDeadline: Duration = .seconds(15)
+        /// 自動備份檢查間隔。拖 EQ 滑桿時每半秒寫一次 iCloud Drive 只是浪費，
+        /// 而設定晚一分鐘上去沒有任何差別。
+        var tickInterval: Duration = .seconds(60)
+        /// 逾時後的重試退避（等卡住的那件做完之後才開始算）。
+        var retryBase: Duration = .seconds(5)
+        var retryMax: Duration = .seconds(120)
+    }
+
+    private(set) var availability: Availability
     private(set) var status: Status = .idle
     /// `devices/` 底下有哪些機器（含這台）。
     private(set) var files: [BackupFile] = []
     private(set) var lastBackupDate: Date?
 
-    @ObservationIgnored private let files_: CloudBackupFiles
+    let displayPath: String
+    let deviceName: String
+    @ObservationIgnored private let deviceID: String
+
+    @ObservationIgnored private let worker: BackupIOWorker
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private unowned let scenes: SceneStore
-    /// 上一次寫出去的內容。**沒變就不寫**——iCloud Drive 上的檔案每寫一次
-    /// 都會觸發一輪同步，而設定多數時間是不動的。
-    @ObservationIgnored private var lastWritten: DeviceBackup?
-    @ObservationIgnored private var tickTask: Task<Void, Never>?
-    @ObservationIgnored private static let log = ChorusLog(category: "backup")
+    @ObservationIgnored private let timing: Timing
 
-    init(files: CloudBackupFiles, settings: SettingsStore, scenes: SceneStore) {
-        files_ = files
-        self.settings = settings
-        self.scenes = scenes
-        lastBackupDate = files.lastBackupDate
+    private struct Revision {
+        let number: Int
+        let backup: DeviceBackup
     }
 
-    var isAvailable: Bool { files_.isAvailable }
-    var displayPath: String { files_.displayPath }
-    var deviceName: String { files_.deviceName }
+    /// 上一次確實寫出去的內容。**沒變就不寫**——iCloud Drive 上的檔案每寫一次
+    /// 都會觸發一輪同步，而設定多數時間是不動的。
+    @ObservationIgnored private var lastWritten: DeviceBackup?
+    /// 還沒寫出去的最新一份。中間版本沒有保留價值，只留最新。
+    @ObservationIgnored private var pending: Revision?
+    /// 正在 worker 上寫的那一份。
+    @ObservationIgnored private var writing: Revision?
+    @ObservationIgnored private var nextRevision = 0
+    @ObservationIgnored private var waiters: [(revision: Int, continuation: CheckedContinuation<Bool, Never>)] = []
+    @ObservationIgnored private var drainTask: Task<Void, Never>?
+    /// 上一件寫入逾時、正在等 worker 空下來。這段期間新的要求只更新待寫內容，
+    /// 立刻回報「稍後重試」，不陪著卡住的那件一起等。
+    @ObservationIgnored private var awaitingRecovery = false
+    @ObservationIgnored private var tickTask: Task<Void, Never>?
+    @ObservationIgnored private var probeTask: Task<Void, Never>?
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private static let log = ChorusLog(category: "backup")
+
+    init(files: CloudBackupFiles, settings: SettingsStore, scenes: SceneStore, timing: Timing = Timing()) {
+        worker = BackupIOWorker(files: files)
+        self.settings = settings
+        self.scenes = scenes
+        self.timing = timing
+        deviceName = files.deviceName
+        deviceID = files.deviceID
+        displayPath = files.displayPath
+        availability = switch files.location {
+        case let .fixed(url): url == nil ? .unavailable : .available
+        case .iCloudDrive: .checking
+        }
+    }
+
+    var isAvailable: Bool { availability == .available }
 
     // MARK: - 快照與套用
 
@@ -52,8 +108,8 @@ final class CloudBackup {
     func snapshot() -> DeviceBackup {
         DeviceBackup(
             savedAt: .now,
-            deviceName: files_.deviceName,
-            deviceID: files_.deviceID,
+            deviceName: deviceName,
+            deviceID: deviceID,
             scenes: scenes.scenes,
             deviceEQ: settings.deviceEQ,
             deviceBalance: settings.deviceBalance,
@@ -143,61 +199,152 @@ final class CloudBackup {
 
     // MARK: - 備份
 
+    /// 立即備份。回傳**這一版**有沒有確實寫進 iCloud Drive 資料夾——寫進資料夾
+    /// 不等於 Apple 伺服器已經收到。逾時回 false，但那一版仍留著、稍後自動重試。
     @discardableResult
-    func backupNow() -> Bool {
-        guard isAvailable else {
-            status = .failed(String(localized: "iCloud Drive 未啟用"))
-            return false
-        }
-        let backup = snapshot()
-        do {
-            try files_.write(backup)
-            lastWritten = backup
-            lastBackupDate = files_.lastBackupDate
-            // 不帶時間戳：「上次備份」那一列已經在講同一件事，兩行重複只是
-            // 讓使用者多讀一次（截圖驗證時發現的）
-            status = .ok(String(localized: "已備份"))
-            refresh()
-            return true
-        } catch {
-            status = .failed(String(localized: "備份失敗：\(error.localizedDescription)"))
-            Self.log.error("備份寫入失敗：\(error.localizedDescription)")
-            return false
+    func backupNow() async -> Bool {
+        guard await ensureAvailability() else { return false }
+        let revision = enqueue(snapshot())
+        if awaitingRecovery { return false }
+        return await withCheckedContinuation { continuation in
+            waiters.append((revision, continuation))
         }
     }
 
-    /// 自動備份的一拍。**內容沒變就不寫**。
-    func tick() {
-        guard settings.cloudBackupEnabled, isAvailable else { return }
+    /// 自動備份的一拍。**內容沒變就不寫**；等這一輪寫完才返回。
+    func tick() async {
+        guard settings.cloudBackupEnabled, await ensureAvailability() else { return }
         let current = snapshot()
-        if let lastWritten, lastWritten.hasSameContent(as: current) { return }
-        backupNow()
+        let known = [lastWritten, writing?.backup, pending?.backup].compactMap { $0 }
+        if let newest = known.last, newest.hasSameContent(as: current) {
+            await drainTask?.value
+            return
+        }
+        _ = enqueue(current)
+        await drainTask?.value
     }
 
     /// 開關切換或啟動時呼叫。開著就起一個節流計時器。
-    ///
-    /// 60 秒一拍而不是「每次變更立刻寫」：拖 EQ 滑桿時每半秒寫一次
-    /// iCloud Drive 只是浪費，而設定晚一分鐘上去沒有任何差別。
     func updateActivation() {
         tickTask?.cancel()
         tickTask = nil
-        guard settings.cloudBackupEnabled, isAvailable else { return }
-        // 開啟的當下先寫一次，使用者才看得到東西出現在 Finder 裡
-        tick()
+        guard settings.cloudBackupEnabled else { return }
+        let interval = timing.tickInterval
         tickTask = Task { [weak self] in
+            // 開啟的當下先寫一次，使用者才看得到東西出現在 Finder 裡
+            await self?.tick()
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
-                guard let self else { return }
-                self.tick()
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, let self else { return }
+                await self.tick()
             }
         }
     }
 
-    /// App 要結束了：把還沒寫出去的那一分鐘補上。
+    /// App 要結束了。**不碰 iCloud Drive**：CloudDocs 卡住時，結束會跟著卡。
+    /// 還沒寫出去的變更不會丟——設定本身在 UserDefaults，下次啟動自動備份的
+    /// 第一拍（這時 `lastWritten` 是空的）就會寫出目前的內容。
     func shutdown() {
         tickTask?.cancel()
         tickTask = nil
-        tick()
+        drainTask?.cancel()
+        drainTask = nil
+        awaitingRecovery = false
+        pending = nil
+        resolveWaiters(through: .max, succeeded: false)
+    }
+
+    private func enqueue(_ backup: DeviceBackup) -> Int {
+        nextRevision += 1
+        pending = Revision(number: nextRevision, backup: backup)
+        if drainTask == nil {
+            drainTask = Task { [weak self] in await self?.drain() }
+        }
+        return nextRevision
+    }
+
+    /// 一次寫一份：寫完再看有沒有更新的待寫。只有這裡會發起寫入。
+    private func drain() async {
+        var retryDelay = timing.retryBase
+        while let job = pending, !Task.isCancelled {
+            pending = nil
+            writing = job
+            status = .working(String(localized: "正在備份…"))
+            let outcome = await worker.run(deadline: timing.writeDeadline) { files -> Date? in
+                try files.write(job.backup)
+                return files.lastBackupDate
+            }
+            writing = nil
+            guard !Task.isCancelled else { break }
+            switch outcome {
+            case let .completed(.success(date)):
+                retryDelay = timing.retryBase
+                lastWritten = job.backup
+                lastBackupDate = date
+                // 不帶時間戳：「上次備份」那一列已經在講同一件事，兩行重複只是
+                // 讓使用者多讀一次（截圖驗證時發現的）
+                status = .ok(String(localized: "已備份"))
+                resolveWaiters(through: job.number, succeeded: true)
+                if pending == nil { await refresh() }
+            case let .completed(.failure(error)):
+                status = .failed(String(localized: "備份失敗：\(error.localizedDescription)"))
+                Self.log.error("備份寫入失敗：\(error.localizedDescription)")
+                resolveWaiters(through: job.number, succeeded: false)
+            case .timedOut, .busy:
+                // 這一版留著重試；期間有更新的版本進來，就讓位給新的
+                if pending == nil { pending = job }
+                status = .deferred(String(localized: "iCloud Drive 沒有回應，設定已存在本機，稍後重試"))
+                Self.log.notice("備份寫入沒有在期限內完成，\(OperationMetrics.format(retryDelay)) 後重試")
+                resolveWaiters(through: job.number, succeeded: false)
+                // 等卡住的那件真的做完，才排下一次——不在它後面疊工作
+                awaitingRecovery = true
+                let poll = min(retryDelay, .seconds(1))
+                while !worker.isIdle, !Task.isCancelled {
+                    try? await Task.sleep(for: poll)
+                }
+                try? await Task.sleep(for: retryDelay)
+                awaitingRecovery = false
+                retryDelay = min(retryDelay * 2, timing.retryMax)
+            }
+        }
+        if !Task.isCancelled { drainTask = nil }
+    }
+
+    private func resolveWaiters(through revision: Int, succeeded: Bool) {
+        let ready = waiters.filter { $0.revision <= revision }
+        waiters.removeAll { $0.revision <= revision }
+        for waiter in ready {
+            waiter.continuation.resume(returning: succeeded)
+        }
+    }
+
+    // MARK: - 探測
+
+    /// iCloud Drive 開了沒有。探測逾時就維持 `.checking`，下次再試。
+    private func ensureAvailability() async -> Bool {
+        if availability == .checking {
+            if probeTask == nil {
+                probeTask = Task { [weak self] in
+                    guard let self else { return }
+                    let outcome = await worker.run(deadline: timing.readDeadline) { $0.probeAvailability() }
+                    if case let .completed(.success(available)) = outcome {
+                        availability = available ? .available : .unavailable
+                    }
+                    probeTask = nil
+                }
+            }
+            await probeTask?.value
+        }
+        switch availability {
+        case .available:
+            return true
+        case .unavailable:
+            status = .failed(String(localized: "iCloud Drive 未啟用"))
+            return false
+        case .checking:
+            status = .deferred(String(localized: "iCloud Drive 沒有回應，稍後再試"))
+            return false
+        }
     }
 
     // MARK: - 匯入
@@ -205,17 +352,30 @@ final class CloudBackup {
     /// 匯入某一台的備份。
     ///
     /// **匯入前先把這台現況另存一份退路**（`-before-import`）：這個動作會蓋掉
-    /// 目前的設定，而使用者按下去的那一刻多半沒想清楚這件事。
+    /// 目前的設定，而使用者按下去的那一刻多半沒想清楚這件事。讀取與退路都在
+    /// worker 上做完、確認讀得到，才回主執行緒套用。
     @discardableResult
-    func importBackup(_ file: BackupFile) -> Bool {
-        guard let incoming = files_.decode(at: file.url) else {
+    func importBackup(_ file: BackupFile) async -> Bool {
+        let local = snapshot()
+        let url = file.url
+        let outcome = await worker.run(deadline: timing.readDeadline) { files -> DeviceBackup? in
+            guard let incoming = files.decode(at: url) else { return nil }
+            if let devices = files.devicesDirectory {
+                let escape = devices.appending(path: "\(local.deviceName)-before-import.json")
+                _ = try? files.write(local, to: escape)
+            }
+            return incoming
+        }
+        let incoming: DeviceBackup
+        switch outcome {
+        case let .completed(.success(decoded?)):
+            incoming = decoded
+        case .completed:
             status = .failed(String(localized: "讀取「\(file.deviceName)」的設定失敗"))
             return false
-        }
-        let local = snapshot()
-        if let devices = files_.devicesDirectory {
-            let escape = devices.appending(path: "\(local.deviceName)-before-import.json")
-            try? files_.write(local, to: escape)
+        case .timedOut, .busy:
+            status = .deferred(String(localized: "iCloud Drive 沒有回應，沒有匯入任何設定"))
+            return false
         }
 
         // 同一台（重灌後）：全套。綁機的鍵正是最想要回來的東西。
@@ -228,15 +388,40 @@ final class CloudBackup {
         status = .ok(file.isSelf
             ? String(localized: "已從「\(file.deviceName)」還原全部設定")
             : String(localized: "已從「\(file.deviceName)」匯入，跳過 \(skipped) 項綁機設定"))
-        refresh()
+        await refresh()
         return true
     }
 
-    func refresh() {
-        files = files_.scan()
-        lastBackupDate = files_.lastBackupDate
+    /// 重新掃描 `devices/`。同時只有一輪；逾時就保留上次的清單。
+    func refresh() async {
+        if let refreshTask {
+            await refreshTask.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self, await ensureAvailability() else { return }
+            let outcome = await worker.run(deadline: timing.readDeadline) { files in
+                (files.scan(), files.lastBackupDate)
+            }
+            if case let .completed(.success((scanned, date))) = outcome {
+                files = scanned
+                lastBackupDate = date
+            }
+        }
+        refreshTask = task
+        await task.value
+        refreshTask = nil
     }
 
-    func revealInFinder() { files_.revealInFinder() }
-
+    func revealInFinder() {
+        Task {
+            let outcome = await worker.run(deadline: timing.readDeadline) { $0.revealTarget() }
+            guard case let .completed(.success(target?)) = outcome else { return }
+            if target.selectsItem {
+                NSWorkspace.shared.activateFileViewerSelecting([target.url])
+            } else {
+                NSWorkspace.shared.open(target.url)
+            }
+        }
+    }
 }

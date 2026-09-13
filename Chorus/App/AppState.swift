@@ -207,8 +207,7 @@ final class AppState {
             files: CloudBackupFiles(
                 // `--cloud-root` 是 E2E 的覆寫：同機雙實例不該把東西寫進
                 // 使用者真的 iCloud Drive
-                root: instance.cloudRoot.map { URL(fileURLWithPath: $0) }
-                    ?? CloudBackupFiles.defaultRoot(),
+                location: instance.cloudRoot.map { .fixed(URL(fileURLWithPath: $0)) } ?? .iCloudDrive,
                 deviceName: instance.deviceDisplayName,
                 deviceID: instance.peerID
             ),

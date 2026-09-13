@@ -1,4 +1,3 @@
-import AppKit
 import ChorusCore
 import Foundation
 
@@ -17,11 +16,29 @@ import Foundation
 /// 而且檔案就躺在使用者自己的 iCloud Drive 裡看得到、打得開。
 /// （架構參考使用者的另一個專案 Foldwall 0.7.0，MIT；只參考做法不搬碼。）
 ///
-/// 每一次碰 CloudDocs 都經過 `metrics`（耗時基線）與 `faults`（故障注入）。
-/// 這些 I/O 目前仍在主執行緒上同步執行——量出來的就是它們拖住介面的時間。
-@MainActor
-final class CloudBackupFiles {
-    /// `Chorus/devices/` 的上一層。`nil` ＝ iCloud Drive 沒開，整個功能停用。
+/// **只在 `BackupIOWorker` 的序列 queue 上呼叫會碰檔案的方法**：每一個都可能
+/// 在 iCloud Drive 暫停時卡上好幾秒。主執行緒只拿不需要 I/O 的值（`root`、
+/// `displayPath`、名稱與身分）。每一次碰 CloudDocs 都經過 `metrics`（耗時）與
+/// `faults`（故障注入）。
+final class CloudBackupFiles: @unchecked Sendable {
+    enum Location: Sendable, Equatable {
+        /// 使用者的 iCloud Drive。有沒有開要到 worker 上探測，初始化時不碰檔案。
+        case iCloudDrive
+        /// 指定目錄（單元測試與 E2E 的 `--cloud-root`）；nil ＝ 停用。
+        case fixed(URL?)
+    }
+
+    /// 探測結果之外，Finder 要打開哪裡。
+    struct RevealTarget: Sendable {
+        let url: URL
+        /// true ＝ 在 Finder 裡選取它；false ＝ 還沒建立，打開上一層。
+        let selectsItem: Bool
+    }
+
+    static let iCloudDriveURL = URL.homeDirectory.appending(path: "Library/Mobile Documents/com~apple~CloudDocs")
+
+    let location: Location
+    /// `Chorus/devices/` 的上一層。路徑一開始就知道；iCloud Drive 開了沒有要探測。
     let root: URL?
 
     /// 這台的顯示名（檔名用它）與長期身分。
@@ -29,36 +46,43 @@ final class CloudBackupFiles {
     let deviceID: String
 
     /// 撞名時算過一次就好（判斷依據是檔案裡的 `deviceID`，不是檔名）。
+    /// 只在 worker queue 上讀寫。
     private var cachedFileName: String?
 
     private let faults: FaultRegistry
     private let metrics: OperationMetrics
 
     init(
-        root: URL?,
+        location: Location,
         deviceName: String,
         deviceID: String,
         faults: FaultRegistry = .shared,
         metrics: OperationMetrics = .shared
     ) {
-        self.root = root
+        self.location = location
+        root = switch location {
+        case .iCloudDrive: Self.iCloudDriveURL.appending(path: "Chorus")
+        case let .fixed(url): url
+        }
         self.deviceName = deviceName
         self.deviceID = deviceID
         self.faults = faults
         self.metrics = metrics
     }
 
-    /// 正式路徑：iCloud Drive 沒登入／沒開啟時那個目錄不存在，回 nil。
-    static func defaultRoot() -> URL? {
-        let drive = URL.homeDirectory.appending(path: "Library/Mobile Documents/com~apple~CloudDocs")
-        let exists = OperationMetrics.shared.measure("cloud.metadata") {
-            (try? FaultRegistry.shared.injectBlocking(.cloudMetadata)) != nil
-                && FileManager.default.fileExists(atPath: drive.path(percentEncoded: false))
+    /// 備份功能能不能用。`.fixed` 不做 I/O；`.iCloudDrive` 看 CloudDocs 目錄在不在
+    /// （沒登入／沒開啟時不存在）。worker 上呼叫。
+    func probeAvailability() -> Bool {
+        switch location {
+        case let .fixed(url):
+            return url != nil
+        case .iCloudDrive:
+            return metrics.measure("cloud.metadata") {
+                (try? faults.injectBlocking(.cloudMetadata)) != nil
+                    && FileManager.default.fileExists(atPath: Self.iCloudDriveURL.path(percentEncoded: false))
+            }
         }
-        return exists ? drive.appending(path: "Chorus") : nil
     }
-
-    var isAvailable: Bool { root != nil }
 
     var devicesDirectory: URL? { root?.appending(path: "devices") }
 
@@ -164,13 +188,13 @@ final class CloudBackupFiles {
             .sorted { $0.savedAt > $1.savedAt }
     }
 
-    func revealInFinder() {
-        guard let root else { return }
+    /// 「在 Finder 顯示」要打開哪裡。存在檢查也是 CloudDocs I/O，worker 上呼叫。
+    func revealTarget() -> RevealTarget? {
+        guard let root else { return nil }
         if FileManager.default.fileExists(atPath: root.path(percentEncoded: false)) {
-            NSWorkspace.shared.activateFileViewerSelecting([root])
-        } else {
-            NSWorkspace.shared.open(root.deletingLastPathComponent())
+            return RevealTarget(url: root, selectsItem: true)
         }
+        return RevealTarget(url: root.deletingLastPathComponent(), selectsItem: false)
     }
 }
 

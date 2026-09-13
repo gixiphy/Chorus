@@ -1289,7 +1289,7 @@ private struct BackupSettingsTab: View {
     var body: some View {
         @Bindable var settings = appState.settings
         Form {
-            if !appState.cloudBackup.isAvailable {
+            if appState.cloudBackup.availability == .unavailable {
                 Label("這台沒有啟用 iCloud Drive，備份功能停用。",
                       systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.secondary)
@@ -1307,7 +1307,7 @@ private struct BackupSettingsTab: View {
 
                 HStack {
                     Button("立即備份") {
-                        appState.cloudBackup.backupNow()
+                        Task { await appState.cloudBackup.backupNow() }
                     }
                     Button("在 Finder 顯示") {
                         appState.cloudBackup.revealInFinder()
@@ -1329,10 +1329,18 @@ private struct BackupSettingsTab: View {
                 switch appState.cloudBackup.status {
                 case .idle:
                     EmptyView()
+                case let .working(message):
+                    Label(message, systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 case let .ok(message):
                     Label(message, systemImage: "checkmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(.green)
+                case let .deferred(message):
+                    Label(message, systemImage: "clock.badge.exclamationmark")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 case let .failed(message):
                     Label(message, systemImage: "exclamationmark.circle.fill")
                         .font(.caption)
@@ -1387,7 +1395,7 @@ private struct BackupSettingsTab: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { appState.cloudBackup.refresh() }
+        .task { await appState.cloudBackup.refresh() }
         .confirmationDialog(
             pendingImport.map { String(localized: "要套用「\($0.deviceName)」的設定嗎？") } ?? "",
             isPresented: Binding(get: { pendingImport != nil },
@@ -1395,7 +1403,9 @@ private struct BackupSettingsTab: View {
             titleVisibility: .visible
         ) {
             Button("套用", role: .destructive) {
-                if let file = pendingImport { appState.cloudBackup.importBackup(file) }
+                if let file = pendingImport {
+                    Task { await appState.cloudBackup.importBackup(file) }
+                }
                 pendingImport = nil
             }
             Button("取消", role: .cancel) { pendingImport = nil }

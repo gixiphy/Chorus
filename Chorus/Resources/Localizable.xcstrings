@@ -941,6 +941,54 @@
         }
       }
     },
+    "iCloud Drive 沒有回應，沒有匯入任何設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud Drive isn't responding. No settings were imported."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud Drive 没有响应，未导入任何设置"
+          }
+        }
+      }
+    },
+    "iCloud Drive 沒有回應，稍後再試" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud Drive isn't responding. Try again later."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud Drive 没有响应，请稍后再试"
+          }
+        }
+      }
+    },
+    "iCloud Drive 沒有回應，設定已存在本機，稍後重試" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud Drive isn't responding. Your settings are saved on this Mac and will be backed up shortly."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud Drive 没有响应，设置已保存在本机，稍后重试"
+          }
+        }
+      }
+    },
     "iCloud 上還沒有任何備份。" : {
       "localizations" : {
         "en" : {
@@ -5971,6 +6019,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模型没有给出可应用的调整建议"
+          }
+        }
+      }
+    },
+    "正在備份…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Backing Up…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在备份…"
           }
         }
       }

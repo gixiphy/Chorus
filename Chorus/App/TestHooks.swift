@@ -233,18 +233,21 @@ final class TestHooks {
             // 走正常結束流程（applicationWillTerminate），量退出收尾耗時用
             NSApplication.shared.terminate(nil)
         case "cloudBackupNow":
-            appState.cloudBackup.backupNow()
+            Task { await appState.cloudBackup.backupNow() }
         case "cloudEnabled":
             appState.settings.cloudBackupEnabled = info["value"] == "1"
             appState.cloudBackup.updateActivation()
         case "cloudTick":
-            appState.cloudBackup.tick()
+            Task { await appState.cloudBackup.tick() }
         case "cloudImport":
             // value = 要匯入哪一台的 deviceName
-            appState.cloudBackup.refresh()
-            if let name = info["value"],
-               let file = appState.cloudBackup.files.first(where: { $0.deviceName == name }) {
-                appState.cloudBackup.importBackup(file)
+            let backup = appState.cloudBackup
+            Task {
+                await backup.refresh()
+                if let name = info["value"],
+                   let file = backup.files.first(where: { $0.deviceName == name }) {
+                    await backup.importBackup(file)
+                }
             }
         case "saveScene":
             // value = ControlScene JSON。captureScene 只擷取「現況」，
@@ -775,6 +778,7 @@ final class TestHooks {
             ] as [String: Any],
             "cloudBackup": [
                 "available": appState.cloudBackup.isAvailable,
+                "status": String(describing: appState.cloudBackup.status),
                 "enabled": appState.settings.cloudBackupEnabled,
                 "files": appState.cloudBackup.files.map { file in
                     ["device": file.deviceName, "isSelf": file.isSelf] as [String: Any]
