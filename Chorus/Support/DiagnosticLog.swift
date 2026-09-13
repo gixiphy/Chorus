@@ -1,6 +1,7 @@
 import ChorusCore
 import Foundation
 import OSLog
+import Synchronization
 
 /// 落地的診斷紀錄：`~/Library/Logs/Chorus/chorus.log`，2 MB 一輪、留三輪。
 ///
@@ -10,8 +11,10 @@ import OSLog
 /// 錯誤而沒有我們自己當時在做什麼。檔案是給**事後**分析用的，所以
 /// 只收 `.info` 以上；`.debug` 仍走 os_log（`log stream` 側錄用）。
 ///
-/// 寫入是同步的 `write(2)`（append 模式，單行不會交錯），**不在 realtime
-/// 執行緒呼叫**——IOProc 裡本來就沒有任何 log 呼叫，這條規矩不變。
+/// **呼叫端只排進有界緩衝**，開檔、寫入、輪替都在背景 worker 上做：磁碟忙或
+/// 卡住時不拖住主執行緒，緩衝滿了丟一般訊息、保留 error，並寫一行丟棄數
+/// （`BoundedLogBuffer`）。**不在 realtime 執行緒呼叫**——IOProc 裡本來就沒有
+/// 任何 log 呼叫，這條規矩不變。
 final class DiagnosticLog: @unchecked Sendable {
     enum Level: String, Sendable {
         case debug = "D"
@@ -55,49 +58,77 @@ final class DiagnosticLog: @unchecked Sendable {
 
     var fileURL: URL { directory.appendingPathComponent(fileName) }
 
-    private let lock = NSLock()
+    private struct Pending {
+        var buffer: BoundedLogBuffer
+        var drainScheduled = false
+        let formatter: DateFormatter
+    }
+
+    private let pending: Mutex<Pending>
+    private let queue = DispatchQueue(label: "com.hermes.Chorus.diagnostic-log", qos: .utility)
+    /// nil ＝ 用 `FaultRegistry.shared`（到寫檔時才取，避免與 shared 互相初始化）。
+    private let faults: FaultRegistry?
+
+    // 以下只在 queue 上讀寫
     private var descriptor: Int32 = -1
     private var bytesWritten = 0
-    private let formatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
-        return formatter
-    }()
+    private let workerFormatter = DiagnosticLog.makeFormatter()
 
-    init(directory: URL, fileName: String = "chorus.log", maxBytes: Int = 2_000_000, keep: Int = 3) {
+    init(
+        directory: URL,
+        fileName: String = "chorus.log",
+        maxBytes: Int = 2_000_000,
+        keep: Int = 3,
+        limits: BoundedLogBuffer.Limits = .init(),
+        faults: FaultRegistry? = nil
+    ) {
         self.directory = directory
         self.fileName = fileName
         self.maxBytes = maxBytes
         self.keep = max(1, keep)
+        self.faults = faults
+        pending = Mutex(Pending(buffer: BoundedLogBuffer(limits: limits), formatter: Self.makeFormatter()))
     }
 
     deinit {
         if descriptor >= 0 { close(descriptor) }
     }
 
+    private static func makeFormatter() -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        return formatter
+    }
+
     /// 一行：`2026-09-02 12:49:30.276 N [focus] 訊息`。訊息裡的換行改成
     /// `⏎`，讓每一行永遠是一筆——事後用 grep 與 sort 才不會被多行拆散。
+    /// 時間戳在呼叫當下取，寫檔晚一點也不會亂序。
     func write(level: Level, category: String, message: String) {
-        let stamp = lock.withLock { formatter.string(from: Date()) }
+        let now = Date()
         let flattened = message.replacingOccurrences(of: "\n", with: "⏎")
-        let line = "\(stamp) \(level.rawValue) [\(category)] \(flattened)\n"
-        guard let data = line.data(using: .utf8) else { return }
-        lock.withLock {
-            if descriptor < 0 { open() }
-            if descriptor >= 0, bytesWritten + data.count > maxBytes { rotate() }
-            guard descriptor >= 0 else { return }
-            data.withUnsafeBytes { buffer in
-                guard let base = buffer.baseAddress else { return }
-                var offset = 0
-                while offset < buffer.count {
-                    let written = Darwin.write(descriptor, base + offset, buffer.count - offset)
-                    if written <= 0 { break }
-                    offset += written
-                }
-            }
-            bytesWritten += data.count
+        let scheduleDrain = pending.withLock { pending -> Bool in
+            let line = "\(pending.formatter.string(from: now)) \(level.rawValue) [\(category)] \(flattened)\n"
+            pending.buffer.append(line, priority: level == .error ? .error : .normal)
+            guard !pending.drainScheduled else { return false }
+            pending.drainScheduled = true
+            return true
         }
+        if scheduleDrain {
+            queue.async { self.drain() }
+        }
+    }
+
+    /// 等緩衝寫完，最多 `timeout`。回傳是否在期限內寫完——磁碟卡住時不陪著等
+    /// （結束 App 用 100 ms；測試用它確定檔案已經寫進去）。
+    @discardableResult
+    func flush(timeout: Duration = .seconds(2)) -> Bool {
+        let done = DispatchSemaphore(value: 0)
+        queue.async {
+            self.drain()
+            done.signal()
+        }
+        return done.wait(timeout: .now() + timeout.millis / 1_000) == .success
     }
 
     /// 現有的輪替檔（含現用檔），新的在前。給「在 Finder 顯示」與測試用。
@@ -109,7 +140,46 @@ final class DiagnosticLog: @unchecked Sendable {
         return files.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    // MARK: - 檔案
+    // MARK: - 背景寫檔（queue 上）
+
+    private func drain() {
+        while true {
+            let batch = pending.withLock { pending -> (lines: [String], dropped: Int)? in
+                let batch = pending.buffer.drain()
+                guard !batch.lines.isEmpty || batch.dropped > 0 else {
+                    pending.drainScheduled = false
+                    return nil
+                }
+                return batch
+            }
+            guard let batch else { return }
+            for line in batch.lines {
+                append(line)
+            }
+            if batch.dropped > 0 {
+                append("\(workerFormatter.string(from: Date())) N [log] 紀錄緩衝已滿，丟棄 \(batch.dropped) 行\n")
+            }
+        }
+    }
+
+    private func append(_ line: String) {
+        guard (try? (faults ?? FaultRegistry.shared).injectBlocking(.logWrite)) != nil,
+              let data = line.data(using: .utf8)
+        else { return }
+        if descriptor < 0 { open() }
+        if descriptor >= 0, bytesWritten + data.count > maxBytes { rotate() }
+        guard descriptor >= 0 else { return }
+        data.withUnsafeBytes { buffer in
+            guard let base = buffer.baseAddress else { return }
+            var offset = 0
+            while offset < buffer.count {
+                let written = Darwin.write(descriptor, base + offset, buffer.count - offset)
+                if written <= 0 { break }
+                offset += written
+            }
+        }
+        bytesWritten += data.count
+    }
 
     private func rotatedURL(_ index: Int) -> URL {
         let base = (fileName as NSString).deletingPathExtension
@@ -117,7 +187,7 @@ final class DiagnosticLog: @unchecked Sendable {
         return directory.appendingPathComponent("\(base).\(index).\(ext)")
     }
 
-    /// 持鎖呼叫。開不了就靜靜放棄——診斷紀錄不能反過來拖垮 App。
+    /// queue 上呼叫。開不了就靜靜放棄——診斷紀錄不能反過來拖垮 App。
     private func open() {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let fd = Darwin.open(fileURL.path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
@@ -127,7 +197,7 @@ final class DiagnosticLog: @unchecked Sendable {
         bytesWritten = (attributes?[.size] as? NSNumber)?.intValue ?? 0
     }
 
-    /// 持鎖呼叫。`chorus.log → chorus.1.log → chorus.2.log`，最舊的丟掉。
+    /// queue 上呼叫。`chorus.log → chorus.1.log → chorus.2.log`，最舊的丟掉。
     private func rotate() {
         close(descriptor)
         descriptor = -1

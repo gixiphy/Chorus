@@ -17,6 +17,7 @@ struct DiagnosticLogTests {
         let directory = try makeDirectory()
         let log = DiagnosticLog(directory: directory)
         log.write(level: .notice, category: "focus", message: "限時場景開始\n第二行")
+        #expect(log.flush())
         let text = try String(contentsOf: log.fileURL, encoding: .utf8)
         let lines = text.split(separator: "\n")
         #expect(lines.count == 1)
@@ -32,6 +33,7 @@ struct DiagnosticLogTests {
         for index in 0..<12 {
             log.write(level: .info, category: "t", message: "line \(index)")
         }
+        #expect(log.flush())
         let files = log.existingFiles().map(\.lastPathComponent)
         #expect(files == ["chorus.log", "chorus.1.log", "chorus.2.log"])
         let current = try String(contentsOf: log.fileURL, encoding: .utf8)
@@ -54,11 +56,39 @@ struct DiagnosticLogTests {
         log.info("資訊")
         log.notice("通知")
         log.error("錯誤")
+        #expect(sink.flush())
         let text = try String(contentsOf: sink.fileURL, encoding: .utf8)
         #expect(!text.contains("看不見"))
         #expect(text.contains(" I [taps] 資訊"))
         #expect(text.contains(" N [taps] 通知"))
         #expect(text.contains(" E [taps] 錯誤"))
+    }
+
+    @Test("磁碟卡住時寫紀錄不阻塞；緩衝滿了丟一般訊息、留 error，並記下丟棄數")
+    func stuckDiskDoesNotBlock() throws {
+        let directory = try makeDirectory()
+        let faults = FaultRegistry(hangLimit: .seconds(10))
+        let log = DiagnosticLog(
+            directory: directory,
+            limits: .init(maxLines: 50, maxBytes: 100_000, reservedErrorLines: 5),
+            faults: faults
+        )
+        faults.set(.logWrite, .hang)
+
+        let started = ContinuousClock.now
+        for index in 0..<2_000 {
+            log.write(level: .info, category: "t", message: "line \(index)")
+        }
+        log.write(level: .error, category: "t", message: "重要錯誤")
+        #expect(ContinuousClock.now - started < .seconds(1))
+        #expect(!log.flush(timeout: .milliseconds(100)))
+
+        faults.set(.logWrite, nil)
+        #expect(log.flush())
+        let text = try String(contentsOf: log.fileURL, encoding: .utf8)
+        #expect(text.contains("重要錯誤"))
+        #expect(text.contains("紀錄緩衝已滿，丟棄"))
+        #expect(text.split(separator: "\n").count < 200)
     }
 
     @Test("測試行程寫暫存目錄，不碰使用者的 ~/Library/Logs")

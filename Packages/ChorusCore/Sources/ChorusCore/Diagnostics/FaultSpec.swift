@@ -10,6 +10,8 @@ public enum FaultPoint: String, Sendable, CaseIterable {
     /// 同步 session 的 hello：`withhold` ＝ 連線 ready 後不送 hello。
     case syncHello = "sync.hello"
     case syncSend = "sync.send"
+    /// 診斷紀錄寫檔（背景 worker 上）。
+    case logWrite = "log.write"
 
     public func supports(_ behavior: FaultBehavior) -> Bool {
         switch (self, behavior) {

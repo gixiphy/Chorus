@@ -22,18 +22,40 @@ final class FramedNWConnection: @unchecked Sendable {
     /// 送出期限：`contentProcessed` 只代表本機網路層收下了，不代表對方已經套用。
     static let sendTimeout: Duration = .seconds(5)
 
+    /// 接收背壓：還沒被上層處理完的 frame 到這個量就暫停讀取，讓 TCP 視窗把壓力
+    /// 推回對方（對方送出逾時會自己斷線重來）。上層處理完一則要呼叫 `acknowledge`。
+    struct ReceiveLimits: Sendable {
+        let frames: Int
+        let bytes: Int
+    }
+
     let incoming: AsyncStream<Data>
     private let incomingContinuation: AsyncStream<Data>.Continuation
 
     private let connection: NWConnection
     private let queue: DispatchQueue
     private let finished = Atomic(false)
+    private let receiveLimits: ReceiveLimits?
+
+    private struct Backlog {
+        var frames = 0
+        var bytes = 0
+        var paused = false
+    }
+
+    private let backlog = Mutex(Backlog())
 
     /// 連線關閉（任何原因）時觸發一次。
     private let onClose: @Sendable () -> Void
 
-    init(connection: NWConnection, label: String, onClose: @escaping @Sendable () -> Void = {}) {
+    init(
+        connection: NWConnection,
+        label: String,
+        receiveLimits: ReceiveLimits? = nil,
+        onClose: @escaping @Sendable () -> Void = {}
+    ) {
         self.connection = connection
+        self.receiveLimits = receiveLimits
         queue = DispatchQueue(label: "com.hermes.Chorus.conn.\(label)")
         self.onClose = onClose
         var continuation: AsyncStream<Data>.Continuation!
@@ -135,6 +157,23 @@ final class FramedNWConnection: @unchecked Sendable {
         finish()
     }
 
+    /// 上層處理完一則（`receiveLimits` 為 nil 時不需要呼叫）。暫停中的讀取在額度
+    /// 回來後繼續。
+    func acknowledge(bytes: Int) {
+        guard let limits = receiveLimits else { return }
+        let resume = backlog.withLock { backlog -> Bool in
+            backlog.frames = max(0, backlog.frames - 1)
+            backlog.bytes = max(0, backlog.bytes - bytes)
+            guard backlog.paused, backlog.frames < limits.frames, backlog.bytes < limits.bytes else { return false }
+            backlog.paused = false
+            return true
+        }
+        if resume {
+            OperationMetrics.shared.adjustGauge("sync.receivePaused", by: -1)
+            queue.async { [weak self] in self?.receiveNextFrame() }
+        }
+    }
+
     private func finish() {
         guard finished.compareExchange(expected: false, desired: true, ordering: .sequentiallyConsistent).exchanged
         else { return }
@@ -143,6 +182,18 @@ final class FramedNWConnection: @unchecked Sendable {
     }
 
     private func receiveNextFrame() {
+        guard !isClosed else { return }
+        if let limits = receiveLimits {
+            let pause = backlog.withLock { backlog -> Bool in
+                guard backlog.frames >= limits.frames || backlog.bytes >= limits.bytes else { return false }
+                backlog.paused = true
+                return true
+            }
+            if pause {
+                OperationMetrics.shared.adjustGauge("sync.receivePaused", by: 1)
+                return // acknowledge 會叫回來
+            }
+        }
         connection.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] header, _, isComplete, error in
             guard let self else { return }
             guard error == nil, let header, header.count == 4 else {
@@ -159,6 +210,12 @@ final class FramedNWConnection: @unchecked Sendable {
                 guard error == nil, let payload, payload.count == length else {
                     self.finish()
                     return
+                }
+                if self.receiveLimits != nil {
+                    self.backlog.withLock { backlog in
+                        backlog.frames += 1
+                        backlog.bytes += payload.count
+                    }
                 }
                 self.incomingContinuation.yield(payload)
                 self.receiveNextFrame()

@@ -15,6 +15,8 @@ import Network
 /// - **檢查 Host 標頭**：擋 DNS rebinding（把某個網域解析到 127.0.0.1
 ///   再從網頁打過來）。
 /// - 標頭與 body 都有大小上限，避免單一連線把記憶體吃光。
+/// - 連線數、事件流數、批次指令數、待處理指令數都有上限；請求有絕對期限
+///   （見 `AutomationHTTPTransport`，連線層在背景 queue 上）。
 /// - 預設關閉（PLAN §8-6 的權限功能紀律）。
 /// `installCLISymlink` 的結果。
 enum CLIInstallOutcome {
@@ -35,18 +37,15 @@ final class ControlHTTPServer {
     @ObservationIgnored private unowned let executor: AutomationExecutor
     @ObservationIgnored private unowned let events: AutomationEventHub
     @ObservationIgnored private unowned let scenes: SceneStore
-    @ObservationIgnored private var listener: NWListener?
-    @ObservationIgnored private var eventConnections: [ObjectIdentifier: (NWConnection, UUID)] = [:]
+    /// 連線層（背景 queue）。nil ＝ 介面沒開。
+    @ObservationIgnored private var transport: AutomationHTTPTransport?
+    @ObservationIgnored private var eventSubscription: UUID?
 
     private static let tokenAccount = "automation-token"
     /// CLI 讀 token 的位置。權限 600——內容等同介面的鑰匙。
     private static var configURL: URL {
         URL(fileURLWithPath: NSString(string: "~/.config/chorus/config.json").expandingTildeInPath)
     }
-    /// 標頭區上限 16 KB、body 上限 256 KB——自動化請求都是小 JSON，
-    /// 給到這個量已經很寬鬆，再多就是有人在灌。
-    private static let maxHeaderBytes = 16 * 1024
-    private static let maxBodyBytes = 256 * 1024
 
     init(
         settings: SettingsStore,
@@ -80,6 +79,7 @@ final class ControlHTTPServer {
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         let token = Data(bytes).base64EncodedString()
         keychain.set(Data(token.utf8), forAccount: Self.tokenAccount)
+        transport?.updateToken(token)
         if isRunning { writeConfigFile() }
         return token
     }
@@ -123,27 +123,33 @@ final class ControlHTTPServer {
     }
 
     private func start() {
-        guard listener == nil else { return }
+        guard transport == nil else { return }
         lastError = nil
-        currentToken() // 開啟即確保 token 存在
+        let token = currentToken() // 開啟即確保 token 存在
         guard let port = NWEndpoint.Port(rawValue: settings.automationServerPort) else {
             lastError = "無效的 port"
             return
         }
-        let parameters = NWParameters.tcp
-        // 只在回送介面上聽——這是整個 HTTP 介面的安全前提
-        parameters.requiredInterfaceType = .loopback
-        parameters.allowLocalEndpointReuse = true
+        let handlers = AutomationHTTPTransport.Handlers(
+            state: { @MainActor [weak self] in
+                self?.stateResponse() ?? Self.unavailable
+            },
+            scenes: { @MainActor [weak self] in
+                self?.scenesResponse() ?? Self.unavailable
+            },
+            execute: { @MainActor [weak self] requests, isBatch in
+                await self?.executeResponse(requests, isBatch: isBatch) ?? Self.unavailable
+            },
+            eventStreamsActive: { [weak self] active in
+                Task { @MainActor in self?.setEventStreamsActive(active) }
+            }
+        )
+        let created = AutomationHTTPTransport(token: token, handlers: handlers)
         do {
-            let created = try NWListener(using: parameters, on: port)
-            created.stateUpdateHandler = { state in
-                Task { @MainActor [weak self] in self?.handleListenerState(state) }
+            try created.start(port: port) { [weak self] state in
+                Task { @MainActor in self?.handleListenerState(state) }
             }
-            created.newConnectionHandler = { connection in
-                Task { @MainActor [weak self] in self?.accept(connection) }
-            }
-            created.start(queue: .main)
-            listener = created
+            transport = created
             writeConfigFile()
         } catch {
             lastError = "\(error)"
@@ -181,13 +187,9 @@ final class ControlHTTPServer {
     }
 
     private func stop() {
-        for (connection, token) in eventConnections.values {
-            events.unsubscribe(token)
-            connection.cancel()
-        }
-        eventConnections = [:]
-        listener?.cancel()
-        listener = nil
+        setEventStreamsActive(false)
+        transport?.stop()
+        transport = nil
         isRunning = false
         removeConfigFile()
     }
@@ -195,12 +197,12 @@ final class ControlHTTPServer {
     private func handleListenerState(_ state: NWListener.State) {
         switch state {
         case .ready:
-            isRunning = true
+            isRunning = transport != nil
         case let .failed(error):
             lastError = "\(error)"
             isRunning = false
-            listener?.cancel()
-            listener = nil
+            transport?.stop()
+            transport = nil
         case .cancelled:
             isRunning = false
         default:
@@ -208,234 +210,56 @@ final class ControlHTTPServer {
         }
     }
 
-    // MARK: - 連線處理
+    // MARK: - 路由（主執行緒；連線層在 AutomationHTTPTransport）
 
-    private func accept(_ connection: NWConnection) {
-        connection.start(queue: .main)
-        receive(connection, buffer: Data())
+    private static let unavailable = AutomationHTTPTransport.Response(
+        status: 503, json: AutomationHTTPTransport.errorJSON("unavailable", "自動化介面正在關閉")
+    )
+
+    private func stateResponse() -> AutomationHTTPTransport.Response {
+        jsonResponse(executor.execute(
+            ControlRequest(verb: .get, target: .allDisplays)
+        ).merging(with: [
+            executor.execute(ControlRequest(verb: .get, target: .allDevices)),
+            // 逐 App 音訊未啟用時這一則會失敗——merging 只收成功的結果，
+            // 所以功能沒開的機器拿到的 state 就是少了這一段，不是整包壞掉
+            executor.execute(ControlRequest(verb: .get, target: .allApps)),
+            executor.execute(ControlRequest(verb: .get, target: .system)),
+        ]))
     }
 
-    private func receive(_ connection: NWConnection, buffer: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { chunk, _, isComplete, error in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                guard error == nil else {
-                    self.close(connection)
-                    return
-                }
-                var accumulated = buffer
-                if let chunk { accumulated.append(chunk) }
-                if accumulated.count > Self.maxHeaderBytes + Self.maxBodyBytes {
-                    self.respond(connection, status: 413, json: #"{"ok":false,"error":{"code":"tooLarge","message":"請求過大"}}"#)
-                    return
-                }
-                switch HTTPRequestParser.parse(accumulated) {
-                case .incomplete:
-                    if isComplete {
-                        self.close(connection)
-                    } else {
-                        self.receive(connection, buffer: accumulated)
-                    }
-                case let .malformed(reason):
-                    self.respond(connection, status: 400, json: Self.errorJSON("badRequest", reason))
-                case let .complete(request):
-                    self.handle(request, on: connection)
-                }
-            }
-        }
+    /// 場景清單給 CLI 的 `chorus scenes`；內容一併回，
+    /// 呼叫端想看某個場景到底會做什麼不必再問一次。
+    private func scenesResponse() -> AutomationHTTPTransport.Response {
+        jsonResponse(scenes.scenes)
     }
 
-    private func handle(_ request: HTTPRequestParser.Request, on connection: NWConnection) {
-        // DNS rebinding 防線：只接受指向本機的 Host
-        guard Self.isLocalHost(request.headers["host"]) else {
-            respond(connection, status: 403, json: Self.errorJSON("badHost", "Host 標頭不是本機位址"))
-            return
+    /// executeAsync：限時場景要先把 peer 現值問回來，其餘請求原樣同步。
+    private func executeResponse(_ requests: [ControlRequest], isBatch: Bool) async -> AutomationHTTPTransport.Response {
+        var responses: [ControlResponse] = []
+        for request in requests {
+            responses.append(await executor.executeAsync(request))
         }
-        guard let provided = Self.bearerToken(request.headers["authorization"]),
-              Self.constantTimeEquals(provided, currentToken())
-        else {
-            respond(connection, status: 401, json: Self.errorJSON("unauthorized", "缺少或錯誤的 Bearer token"))
-            return
-        }
-
-        switch (request.method, request.path) {
-        case ("GET", "/v1/state"):
-            respondJSON(connection, encodable: executor.execute(
-                ControlRequest(verb: .get, target: .allDisplays)
-            ).merging(with: [
-                executor.execute(ControlRequest(verb: .get, target: .allDevices)),
-                // 逐 App 音訊未啟用時這一則會失敗——merging 只收成功的結果，
-                // 所以功能沒開的機器拿到的 state 就是少了這一段，不是整包壞掉
-                executor.execute(ControlRequest(verb: .get, target: .allApps)),
-                executor.execute(ControlRequest(verb: .get, target: .system)),
-            ]))
-
-        case ("POST", "/v1/command"):
-            handleCommand(request.body, on: connection)
-
-        case ("GET", "/v1/scenes"):
-            // 場景清單給 CLI 的 `chorus scenes`；內容一併回，
-            // 呼叫端想看某個場景到底會做什麼不必再問一次。
-            respondJSON(connection, encodable: scenes.scenes)
-
-        case ("GET", "/v1/events"):
-            startEventStream(on: connection)
-
-        default:
-            respond(connection, status: 404, json: Self.errorJSON(
-                "notFound",
-                "可用端點：POST /v1/command、GET /v1/state、GET /v1/scenes、GET /v1/events"
-            ))
-        }
+        return isBatch ? jsonResponse(responses) : jsonResponse(responses.first ?? .failure(.unsupported("空請求")))
     }
 
-    private func handleCommand(_ body: Data, on connection: NWConnection) {
-        let decoder = JSONDecoder()
-        // 單筆或陣列都收——場景與批次操作要能一次送完
-        if let requests = try? decoder.decode([ControlRequest].self, from: body) {
-            // executeAsync：限時場景要先把 peer 現值問回來，其餘請求原樣同步
-            Task { @MainActor in
-                var responses: [ControlResponse] = []
-                for request in requests {
-                    responses.append(await executor.executeAsync(request))
-                }
-                respondJSON(connection, encodable: responses)
-            }
-            return
-        }
-        do {
-            let request = try decoder.decode(ControlRequest.self, from: body)
-            Task { @MainActor in
-                respondJSON(connection, encodable: await executor.executeAsync(request))
-            }
-        } catch {
-            respond(connection, status: 400, json: Self.errorJSON(
-                "badRequest",
-                "無法解析的請求：\(error.localizedDescription)"
-            ))
-        }
-    }
-
-    // MARK: - SSE
-
-    private func startEventStream(on connection: NWConnection) {
-        let head = """
-        HTTP/1.1 200 OK\r
-        Content-Type: text/event-stream\r
-        Cache-Control: no-cache\r
-        Connection: keep-alive\r
-        \r
-
-        """
-        connection.send(content: Data(head.utf8), completion: .contentProcessed { _ in })
-        let token = events.subscribe { [weak self] json in
-            guard let self else { return }
-            self.sendEvent(json, on: connection)
-        }
-        eventConnections[ObjectIdentifier(connection)] = (connection, token)
-        // 對端關閉時要收掉訂閱，否則會一直對死連線寫入
-        connection.stateUpdateHandler = { state in
-            Task { @MainActor [weak self] in
-                switch state {
-                case .cancelled, .failed:
-                    self?.closeEventStream(connection)
-                default:
-                    break
-                }
-            }
-        }
-    }
-
-    private func sendEvent(_ json: String, on connection: NWConnection) {
-        connection.send(content: Data("data: \(json)\n\n".utf8), completion: .contentProcessed { error in
-            guard error != nil else { return }
-            Task { @MainActor [weak self] in self?.closeEventStream(connection) }
-        })
-    }
-
-    private func closeEventStream(_ connection: NWConnection) {
-        guard let (_, token) = eventConnections.removeValue(forKey: ObjectIdentifier(connection)) else { return }
-        events.unsubscribe(token)
-        connection.cancel()
-    }
-
-    // MARK: - 回應
-
-    private func respondJSON(_ connection: NWConnection, encodable: some Encodable) {
+    private func jsonResponse(_ encodable: some Encodable) -> AutomationHTTPTransport.Response {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.withoutEscapingSlashes]
         let data = (try? encoder.encode(encodable)) ?? Data("{}".utf8)
-        respond(connection, status: 200, json: String(decoding: data, as: UTF8.self))
+        return .init(status: 200, json: String(decoding: data, as: UTF8.self))
     }
 
-    private func respond(_ connection: NWConnection, status: Int, json: String) {
-        let body = Data(json.utf8)
-        let head = """
-        HTTP/1.1 \(status) \(Self.reason(status))\r
-        Content-Type: application/json; charset=utf-8\r
-        Content-Length: \(body.count)\r
-        Connection: close\r
-        \r
-
-        """
-        var payload = Data(head.utf8)
-        payload.append(body)
-        connection.send(content: payload, completion: .contentProcessed { _ in
-            connection.cancel()
-        })
-    }
-
-    private func close(_ connection: NWConnection) {
-        closeEventStream(connection)
-        connection.cancel()
-    }
-
-    // MARK: - 小工具
-
-    private static func reason(_ status: Int) -> String {
-        switch status {
-        case 200: "OK"
-        case 400: "Bad Request"
-        case 401: "Unauthorized"
-        case 403: "Forbidden"
-        case 404: "Not Found"
-        case 413: "Payload Too Large"
-        default: "Error"
+    /// 有事件流訂閱者時才接上事件來源——沒人聽就不必每次變更都編碼一次 JSON。
+    private func setEventStreamsActive(_ active: Bool) {
+        if active, eventSubscription == nil, let transport {
+            eventSubscription = events.subscribe { [weak transport] json in
+                transport?.publish(json)
+            }
+        } else if !active, let token = eventSubscription {
+            events.unsubscribe(token)
+            eventSubscription = nil
         }
-    }
-
-    private static func errorJSON(_ code: String, _ message: String) -> String {
-        let payload = ["ok": false, "error": ["code": code, "message": message]] as [String: Any]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
-            return #"{"ok":false}"#
-        }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    private static func isLocalHost(_ host: String?) -> Bool {
-        guard let host else { return false }
-        // 去掉 port
-        let name = host.split(separator: ":").first.map(String.init)?.lowercased() ?? ""
-        return name == "127.0.0.1" || name == "localhost" || name == "[::1]" || name == "::1"
-    }
-
-    private static func bearerToken(_ header: String?) -> String? {
-        guard let header else { return nil }
-        let parts = header.split(separator: " ", maxSplits: 1)
-        guard parts.count == 2, parts[0].lowercased() == "bearer" else { return nil }
-        return String(parts[1]).trimmingCharacters(in: .whitespaces)
-    }
-
-    /// 定時比對：避免以回應時間逐字元猜出 token。
-    private static func constantTimeEquals(_ lhs: String, _ rhs: String) -> Bool {
-        let left = Array(lhs.utf8)
-        let right = Array(rhs.utf8)
-        guard left.count == right.count else { return false }
-        var difference: UInt8 = 0
-        for index in left.indices {
-            difference |= left[index] ^ right[index]
-        }
-        return difference == 0
     }
 }
 

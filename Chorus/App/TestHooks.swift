@@ -229,6 +229,11 @@ final class TestHooks {
             if let spec = info["value"] {
                 FaultRegistry.shared.apply(spec: spec)
             }
+        case "blockMainThread":
+            // value ＝ 秒數。刻意佔住主執行緒，驗證卡住時背景的 /v1/health 仍回得出來
+            if let seconds = info["value"].flatMap(Double.init) {
+                Thread.sleep(forTimeInterval: min(seconds, 60))
+            }
         case "quit":
             // 走正常結束流程（applicationWillTerminate），量退出收尾耗時用
             NSApplication.shared.terminate(nil)

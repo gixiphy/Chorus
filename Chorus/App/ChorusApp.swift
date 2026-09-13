@@ -85,5 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // 翻譯／顧問還在跑的 CLI：不收的話會被 launchd 收養，一個 150MB 賴著不走
         CLIProcessRunner.killAll()
+        // 紀錄是背景寫的：把最後幾行補進檔案，但磁碟卡住時不陪著等
+        DiagnosticLog.shared.flush(timeout: .milliseconds(100))
     }
 }

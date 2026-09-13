@@ -11,6 +11,7 @@ struct SyncTransportTests {
         private let connections = Mutex<[NWConnection]>([])
         func append(_ connection: NWConnection) { connections.withLock { $0.append(connection) } }
         func cancelAll() { connections.withLock { $0.forEach { $0.cancel() } } }
+        var first: NWConnection? { connections.withLock { $0.first } }
     }
 
     /// 只接受連線、完全不讀的對端。
@@ -42,6 +43,14 @@ struct SyncTransportTests {
             accepted.cancelAll()
         }
 
+        func waitForAccepted() async throws -> NWConnection {
+            for _ in 0..<200 {
+                if let connection = accepted.first { return connection }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            throw FramedConnectionError.closed
+        }
+
         deinit {
             cancelAccepted()
             listener.cancel()
@@ -54,9 +63,15 @@ struct SyncTransportTests {
         var count: Int { value.withLock { $0 } }
     }
 
-    private func connect(to port: NWEndpoint.Port, onClose: @escaping @Sendable () -> Void = {}) async throws -> FramedNWConnection {
+    private func connect(
+        to port: NWEndpoint.Port,
+        receiveLimits: FramedNWConnection.ReceiveLimits? = nil,
+        onClose: @escaping @Sendable () -> Void = {}
+    ) async throws -> FramedNWConnection {
         let connection = NWConnection(host: "127.0.0.1", port: port, using: .tcp)
-        let framed = FramedNWConnection(connection: connection, label: "test", onClose: onClose)
+        let framed = FramedNWConnection(
+            connection: connection, label: "test", receiveLimits: receiveLimits, onClose: onClose
+        )
         try await framed.start(timeout: .seconds(5))
         return framed
     }
@@ -126,5 +141,38 @@ struct SyncTransportTests {
         #expect(framed.isClosed)
         try await Task.sleep(for: .milliseconds(100))
         #expect(closes.count == 1)
+    }
+
+    @Test("接收背壓：上層沒處理完就暫停讀取，處理完才繼續")
+    func receivePausesUntilAcknowledged() async throws {
+        let listener = try SilentListener()
+        let port = try await listener.start()
+        let framed = try await connect(to: port, receiveLimits: .init(frames: 4, bytes: 1 << 20))
+        defer { framed.close() }
+        let server = try await listener.waitForAccepted()
+
+        for index in 0..<20 {
+            var frame = Data()
+            var length = UInt32(1).bigEndian
+            withUnsafeBytes(of: &length) { frame.append(contentsOf: $0) }
+            frame.append(UInt8(index))
+            server.send(content: frame, completion: .contentProcessed { _ in })
+        }
+
+        let counter = Counter()
+        let reader = Task {
+            for await _ in framed.incoming {
+                counter.increment()
+            }
+        }
+        defer { reader.cancel() }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(counter.count == 4)
+
+        for _ in 0..<4 {
+            framed.acknowledge(bytes: 1)
+        }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(counter.count == 8)
     }
 }

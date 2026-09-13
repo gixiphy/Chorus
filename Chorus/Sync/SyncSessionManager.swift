@@ -238,15 +238,13 @@ final class SyncSessionManager {
     /// 廣播 envelope 給所有已連線 peer。
     func broadcast(_ envelope: Envelope) {
         for session in sessions.values {
-            let connection = session.connection
-            Task { try? await connection.send(envelope) }
+            session.connection.enqueue(envelope)
         }
     }
 
-    /// 送給特定 peer。每次送出都有期限（見 FramedNWConnection.sendTimeout）。
+    /// 送給特定 peer。走每個 peer 的有界 outbox（可取代的狀態合併、放不下就斷線重新同步）。
     func send(_ envelope: Envelope, to peerID: String) {
-        guard let connection = sessions[peerID]?.connection else { return }
-        Task { try? await connection.send(envelope) }
+        sessions[peerID]?.connection.enqueue(envelope)
     }
 
     var connectedPeerIDs: [String] { Array(sessions.keys) }
@@ -416,6 +414,7 @@ final class SyncSessionManager {
         }
         while let envelope = await iterator.next(isolation: #isolation) {
             handleEnvelope(peerID: hello.peerID, envelope)
+            connection.markConsumed()
         }
         handleClosed(connection, peerID: hello.peerID, generation: sessionGeneration)
     }

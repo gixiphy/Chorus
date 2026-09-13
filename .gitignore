@@ -16,6 +16,7 @@ dist/
 .b4-work/
 .b6-work/
 .a-work/
+.d-work/
 
 # xcodebuild clean 會把中繼產物倒進 repo 根目錄
 *.o
