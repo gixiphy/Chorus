@@ -273,6 +273,22 @@
         }
       }
     },
+    "%@：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@：%@"
+          }
+        }
+      }
+    },
     "%@：%@（原值未知）" : {
       "localizations" : {
         "en" : {
@@ -294,7 +310,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@：%u／max %u"
+            "value" : "%@: %u/max %u"
           }
         },
         "zh-Hans" : {
@@ -306,6 +322,7 @@
       }
     },
     "%@：讀取失敗（螢幕不支援讀或通道不通）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -437,6 +454,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld 次"
+          }
+        }
+      }
+    },
+    "%lld 秒後還原" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restoring in %lld s"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 秒后恢复"
           }
         }
       }
@@ -802,6 +835,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "DP/HDMI 屏幕音频没有系统音量，macOS 会停用 Touch Bar／控制中心／音量键。安装虚拟输出设备后，将其设为默认输出：系统音量 UI 全部恢复，音频转发至屏幕；支持 DDC 的屏幕直接镜像硬件音量（不损音质），其余使用数字衰减。"
+          }
+        }
+      }
+    },
+    "EDID：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "EDID: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "EDID：%@"
+          }
+        }
+      }
+    },
+    "EDID：unknown" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "EDID: unknown"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "EDID：unknown"
+          }
+        }
+      }
+    },
+    "HDR：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HDR: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HDR：%@"
           }
         }
       }
@@ -1229,6 +1310,22 @@
         }
       }
     },
+    "▲ DDC queue 卡住：已回傳快取快照，未再追加讀取。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "▲ DDC queue is stuck: returned a cached snapshot without adding more reads."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "▲ DDC queue 卡住：已返回缓存快照，未再追加读取。"
+          }
+        }
+      }
+    },
     "▲ 亮度可用但音量 0x62 不通：此螢幕不支援 DDC 音量。可在選單列該音訊裝置上按右鍵標記「不支援 DDC 音量」，滑桿會誠實停用。" : {
       "localizations" : {
         "en" : {
@@ -1241,6 +1338,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "▲ 亮度可用但音量 0x62 不通：此屏幕不支持 DDC 音量。可在菜单栏该音频设备上按右键标记“不支持 DDC 音量”，滑块会如实停用。"
+          }
+        }
+      }
+    },
+    "▲ 診斷逾時：部分 VCP 未讀完。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "▲ Diagnostics timed out: some VCP reads did not finish."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "▲ 诊断超时：部分 VCP 未读完。"
           }
         }
       }
@@ -1646,6 +1759,22 @@
         }
       }
     },
+    "不支援或讀取失敗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not supported or read failed"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不支持或读取失败"
+          }
+        }
+      }
+    },
     "不會備份的" : {
       "localizations" : {
         "en" : {
@@ -2042,6 +2171,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "根据环境光自动调整亮度"
+          }
+        }
+      }
+    },
+    "保留" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留"
           }
         }
       }
@@ -3035,6 +3180,22 @@
         }
       }
     },
+    "只記住偏好，重新連接時不會自動套用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remembers the preference only; it is not applied automatically on reconnect"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只记住偏好，重新连接时不会自动应用"
+          }
+        }
+      }
+    },
     "可一次選多張（最多 %lld 張）：第一張作為配置圖背景與座標基準，其餘為分析用補充視角。拍不同照明情境（白天／夜晚／只開掛燈）並各自標註，分析會更準" : {
       "localizations" : {
         "en" : {
@@ -3543,7 +3704,24 @@
         }
       }
     },
+    "場景內 trialDisplayMode 的模式格式無效" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid mode format for trialDisplayMode in the scene"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "场景内 trialDisplayMode 的模式格式无效"
+          }
+        }
+      }
+    },
     "場景內不支援 perform" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3555,6 +3733,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "场景中不支持 perform"
+          }
+        }
+      }
+    },
+    "場景內僅支援 trialDisplayMode，其餘 perform 已略過" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only trialDisplayMode is supported in scenes; the other perform actions were skipped"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "场景内仅支持 trialDisplayMode，其余 perform 已跳过"
           }
         }
       }
@@ -3587,6 +3781,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "应用场景失败"
+          }
+        }
+      }
+    },
+    "場景預檢失敗：%@ 沒有模式 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scene precheck failed: %@ has no mode %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "场景预检失败：%@ 没有模式 %@"
           }
         }
       }
@@ -3767,6 +3977,22 @@
         }
       }
     },
+    "套用後讀回不符，已中止" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Read-back after applying did not match; aborted"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用后读回不符，已中止"
+          }
+        }
+      }
+    },
     "套用貼上的內容" : {
       "localizations" : {
         "en" : {
@@ -3779,6 +4005,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "应用粘贴的内容"
+          }
+        }
+      }
+    },
+    "套用顯示模式失敗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not apply the display mode"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用显示模式失败"
           }
         }
       }
@@ -4543,6 +4785,38 @@
         }
       }
     },
+    "已是此模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Already in this mode"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已是此模式"
+          }
+        }
+      }
+    },
+    "已有進行中的模式試用，請先確認或還原" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A mode trial is already in progress; confirm or restore it first"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已有进行中的模式试用，请先确认或恢复"
+          }
+        }
+      }
+    },
     "已標記為不支援 DDC 音量（右鍵可重新啟用）" : {
       "localizations" : {
         "en" : {
@@ -4787,6 +5061,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "布尔值请使用 on/off、true/false、1/0"
+          }
+        }
+      }
+    },
+    "常用／HiDPI" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Common/HiDPI"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "常用／HiDPI"
           }
         }
       }
@@ -6039,6 +6329,38 @@
         }
       }
     },
+    "未讀取" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not read"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未读取"
+          }
+        }
+      }
+    },
+    "未讀取（整體期限已到）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not read (overall deadline reached)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未读取（整体期限已到）"
+          }
+        }
+      }
+    },
     "未連接的裝置（%@）" : {
       "localizations" : {
         "en" : {
@@ -6083,6 +6405,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "本机的 AI CLI，供光环境顾问、调音顾问与界面翻译共用。检测到什么列什么，Chorus 不经手任何密钥，计费在你自己的订阅上。"
+          }
+        }
+      }
+    },
+    "格式：1920x1080@60 或 1512x982@120p3024x1964" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Format: 1920x1080@60 or 1512x982@120p3024x1964"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "格式：1920x1080@60 或 1512x982@120p3024x1964"
           }
         }
       }
@@ -6211,6 +6549,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模型没有给出可应用的调整建议"
+          }
+        }
+      }
+    },
+    "模式確認必須在被控制的 Mac 上操作（可見倒數視窗）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mode confirmation must be done on the Mac being controlled, which shows the countdown window"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模式确认必须在被控制的 Mac 上操作（可见倒计时窗口）"
+          }
+        }
+      }
+    },
+    "模式試用失敗，已暫停後續場景動作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mode trial failed; the remaining scene actions were paused"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模式试用失败，已暂停后续场景动作"
           }
         }
       }
@@ -6371,6 +6741,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此 CLI 的 headless 读图流程尚未打通，接入层完成后开放选用"
+          }
+        }
+      }
+    },
+    "此螢幕沒有相符的模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This display has no matching mode"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此显示器没有相符的模式"
           }
         }
       }
@@ -6771,6 +7157,22 @@
         }
       }
     },
+    "無法讀取目前模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not read the current mode"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取当前模式"
+          }
+        }
+      }
+    },
     "無法連線到對方" : {
       "localizations" : {
         "en" : {
@@ -6783,6 +7185,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法连接到对方"
+          }
+        }
+      }
+    },
+    "無法還原到試用前的模式，請手動選擇" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not restore the mode from before the trial; select one manually"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法恢复到试用前的模式，请手动选择"
+          }
+        }
+      }
+    },
+    "無法開始模式試用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not start the mode trial"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法开始模式试用"
           }
         }
       }
@@ -7151,6 +7585,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前无响应"
+          }
+        }
+      }
+    },
+    "目前沒有進行中的模式試用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No mode trial is in progress"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前没有进行中的模式试用"
           }
         }
       }
@@ -7535,6 +7985,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "等待对方确认…"
+          }
+        }
+      }
+    },
+    "系統已找不到此模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The system can no longer find this mode"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统已找不到此模式"
           }
         }
       }
@@ -8504,6 +8970,22 @@
         }
       }
     },
+    "記住此模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remember This Mode"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "记住此模式"
+          }
+        }
+      }
+    },
     "記住目前的照片、節點位置與亮度設定；之後接上同一組螢幕會自動切換。" : {
       "localizations" : {
         "en" : {
@@ -8648,6 +9130,22 @@
         }
       }
     },
+    "試用中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On Trial"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "试用中"
+          }
+        }
+      }
+    },
     "試聽" : {
       "localizations" : {
         "en" : {
@@ -8708,6 +9206,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请先导入桌面照片"
+          }
+        }
+      }
+    },
+    "請先開啟螢幕再切換模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn on the display before switching modes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先开启显示器再切换模式"
           }
         }
       }
@@ -8984,6 +9498,22 @@
         }
       }
     },
+    "輸入源 0x60：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Input source 0x60: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入源 0x60：%@"
+          }
+        }
+      }
+    },
     "輸入源 0x60：%@（raw %u）" : {
       "localizations" : {
         "en" : {
@@ -9001,6 +9531,7 @@
       }
     },
     "輸入源 0x60：讀取失敗（螢幕不支援讀或通道不通）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9252,6 +9783,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "连接中断"
+          }
+        }
+      }
+    },
+    "進階模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advanced Modes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高级模式"
+          }
+        }
+      }
+    },
+    "逾時" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Timed out"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "超时"
           }
         }
       }
@@ -9688,6 +10251,54 @@
         }
       }
     },
+    "鏡像組：第一版僅供檢視，不能切換模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mirror set: this first version is view-only and cannot switch modes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "镜像组：第一版仅供查看，不能切换模式"
+          }
+        }
+      }
+    },
+    "鏡像顯示器不能切換模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mirrored displays cannot switch modes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "镜像显示器不能切换模式"
+          }
+        }
+      }
+    },
+    "鏡像顯示器第一版僅供檢視，不能切換模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mirrored displays are view-only in this first version and cannot switch modes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "镜像显示器第一版仅供查看，不能切换模式"
+          }
+        }
+      }
+    },
     "鏡射" : {
       "localizations" : {
         "en" : {
@@ -9700,6 +10311,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "镜像"
+          }
+        }
+      }
+    },
+    "長亮尚未生效，正在重試" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep awake is not active yet; retrying"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "常亮尚未生效，正在重试"
           }
         }
       }
@@ -10386,6 +11013,86 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "显示器"
+          }
+        }
+      }
+    },
+    "顯示模式控制尚未就緒" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display mode control is not ready yet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示模式控制尚未就绪"
+          }
+        }
+      }
+    },
+    "顯示模式操作需要唯一的螢幕目標（請用 --display-uuid 或名稱縮小範圍）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display mode actions need a single display target (narrow it down with --display-uuid or a name)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示模式操作需要唯一的显示器目标（请用 --display-uuid 或名称缩小范围）"
+          }
+        }
+      }
+    },
+    "顯示模式試用（由模式交易自行還原）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display mode trial (the mode transaction restores it itself)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示模式试用（由模式事务自行恢复）"
+          }
+        }
+      }
+    },
+    "顯示模式跨機需雙方宣告 displayModes.v1；第一版請在目標機本機執行（確認必須在可見 UI 上操作）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cross-machine display modes require both sides to declare displayModes.v1; in this first version, run it locally on the target Mac (confirmation must happen in visible UI)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示模式跨设备需双方声明 displayModes.v1；第一版请在目标设备本机运行（确认必须在可见 UI 上操作）"
+          }
+        }
+      }
+    },
+    "顯示設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display Settings"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示设置"
           }
         }
       }
