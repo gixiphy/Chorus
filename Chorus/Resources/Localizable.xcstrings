@@ -9704,6 +9704,22 @@
         }
       }
     },
+    "長亮尚未生效，正在重試" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep awake is not active yet; retrying"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "常亮尚未生效，正在重试"
+          }
+        }
+      }
+    },
     "長亮期間只擋螢幕待機，機器仍會照系統設定進入睡眠。" : {
       "localizations" : {
         "en" : {
