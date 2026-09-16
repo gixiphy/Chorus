@@ -344,13 +344,18 @@ private struct DDCDiagnosticsRow: View {
             }
             lines.append(format(String(localized: "亮度 0x10"), diag.brightness))
             lines.append(format(String(localized: "對比 0x12"), diag.contrast))
-            if let input = diag.inputSource {
-                lines.append(String(localized: "輸入源 0x60：\(InputSource.describe(input.current))（raw \(input.current)）"))
+            if case let .value(current, _) = diag.inputSource {
+                lines.append(String(localized: "輸入源 0x60：\(InputSource.describe(current))（raw \(current)）"))
             } else {
-                lines.append(String(localized: "輸入源 0x60：讀取失敗（螢幕不支援讀或通道不通）"))
+                lines.append(String(localized: "輸入源 0x60：\(describeStatus(diag.inputSource))"))
             }
             lines.append(format(String(localized: "音量 0x62"), diag.volume))
             lines.append(format(String(localized: "靜音 0x8D"), diag.mute))
+            if let edid = diag.edid {
+                lines.append(String(localized: "EDID：\(edid.summaryLine)"))
+            } else {
+                lines.append(String(localized: "EDID：unknown"))
+            }
             let failures = diag.failureCounts.filter { $0.value > 0 }
             if !failures.isEmpty {
                 lines.append(String(localized: "寫入失敗計數：") + failures
@@ -358,29 +363,55 @@ private struct DDCDiagnosticsRow: View {
                     .sorted()
                     .joined(separator: String(localized: "、")))
             }
+            if diag.queueStuck {
+                lines.append(String(localized: "▲ DDC queue 卡住：已回傳快取快照，未再追加讀取。"))
+            } else if diag.incomplete {
+                lines.append(String(localized: "▲ 診斷逾時：部分 VCP 未讀完。"))
+            }
             lines.append(contentsOf: troubleshootingHints(diag))
             result = lines.joined(separator: "\n")
             running = false
         }
     }
 
-    private func format(_ name: String, _ value: (current: UInt16, max: UInt16)?) -> String {
-        if let value { return String(localized: "\(name)：\(value.current)／max \(value.max)") }
-        return String(localized: "\(name)：讀取失敗（螢幕不支援讀或通道不通）")
+    private func format(_ name: String, _ status: DDCController.VCPReadStatus) -> String {
+        switch status {
+        case let .value(current, max):
+            return String(localized: "\(name)：\(current)／max \(max)")
+        default:
+            return String(localized: "\(name)：\(describeStatus(status))")
+        }
+    }
+
+    private func describeStatus(_ status: DDCController.VCPReadStatus) -> String {
+        switch status {
+        case .value:
+            return ""
+        case .unsupported:
+            return String(localized: "不支援或讀取失敗")
+        case .timedOut:
+            return String(localized: "逾時")
+        case .skipped:
+            return String(localized: "未讀取（整體期限已到）")
+        case .notRead:
+            return String(localized: "未讀取")
+        }
     }
 
     /// 硬體怪癖知識庫（B1/B2 實測累積）：依讀值與失敗計數給對症提示。
     private func troubleshootingHints(_ diag: DDCController.Diagnostics) -> [String] {
         var hints: [String] = []
         let anyReadable = [diag.brightness, diag.contrast, diag.inputSource, diag.volume, diag.mute]
-            .contains { $0 != nil }
+            .contains { if case .value = $0 { return true }; return false }
         if diag.hasService, !anyReadable {
             // 實測（Mac mini 內建 HDMI × Q34E2G5）：I2C 端點在、寫入被 ACK、
             // 讀取全滅＝轉換晶片本地假成功，螢幕實際收不到指令
             hints.append(String(localized: "▲ 讀取全滅但服務存在：寫入很可能是「假成功」（轉換晶片本地 ACK、不透傳）。改用 DP／USB-C 直連，或螢幕若有第二輸入埠可換埠。"))
         }
         let volumeWriteFailures = diag.failureCounts[DDCController.VCP.volume] ?? 0
-        if diag.brightness != nil, diag.volume == nil || volumeWriteFailures > 0 {
+        let brightnessOK = if case .value = diag.brightness { true } else { false }
+        let volumeMissing = if case .value = diag.volume { false } else { true }
+        if brightnessOK, volumeMissing || volumeWriteFailures > 0 {
             hints.append(String(localized: "▲ 亮度可用但音量 0x62 不通：此螢幕不支援 DDC 音量。可在選單列該音訊裝置上按右鍵標記「不支援 DDC 音量」，滑桿會誠實停用。"))
         }
         if diag.hasService, anyReadable {

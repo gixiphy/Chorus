@@ -137,6 +137,7 @@ final class CloudBackup {
             forceSoftwareDimming: Array(settings.forceSoftwareDimming),
             subZeroDimming: Array(settings.subZeroDimming),
             disableDDCRead: Array(settings.disableDDCRead),
+            displayModePreferences: Array(settings.displayModePreferences.values),
             autoBrightnessEnabled: settings.autoBrightnessEnabled,
             ambientCurve: settings.ambientCurve,
             ambientDisplayOffsets: settings.ambientDisplayOffsets,
@@ -183,6 +184,11 @@ final class CloudBackup {
         settings.forceSoftwareDimming = Set(backup.forceSoftwareDimming)
         settings.subZeroDimming = Set(backup.subZeroDimming)
         settings.disableDDCRead = Set(backup.disableDDCRead)
+        if let prefs = backup.displayModePreferences {
+            settings.displayModePreferences = Dictionary(
+                uniqueKeysWithValues: prefs.map { ($0.displayUUID, $0) }
+            )
+        }
         settings.autoBrightnessEnabled = backup.autoBrightnessEnabled
         settings.ambientCurve = backup.ambientCurve
         settings.ambientDisplayOffsets = backup.ambientDisplayOffsets

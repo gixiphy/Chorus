@@ -29,6 +29,7 @@ final class SettingsStore {
         static let subZeroDimming = "chorus.display.subZeroDimming"
         static let disableDDCRead = "chorus.display.disableDDCRead"
         static let lastBrightness = "chorus.display.lastBrightness"
+        static let modePreferences = "chorus.display.modePreferences"
         static let lastVolume = "chorus.audio.lastVolume"
         static let syncBrightness = "chorus.sync.brightness"
         static let syncVolume = "chorus.sync.volume"
@@ -109,6 +110,18 @@ final class SettingsStore {
             persistDebounced(Key.lastBrightness) { [weak self] in
                 guard let self else { return }
                 self.defaults.set(self.lastBrightness, forKey: Key.lastBrightness)
+            }
+        }
+    }
+
+    /// 顯示模式偏好（UUID → preference）。不自動套用；需明確選項才 applyOnReconnect。
+    var displayModePreferences: [String: DisplayModePreference] {
+        didSet {
+            persistDebounced(Key.modePreferences) { [weak self] in
+                guard let self else { return }
+                if let data = try? JSONEncoder().encode(self.displayModePreferences) {
+                    self.defaults.set(data, forKey: Key.modePreferences)
+                }
             }
         }
     }
@@ -463,6 +476,12 @@ final class SettingsStore {
         subZeroDimming = Set(defaults.stringArray(forKey: Key.subZeroDimming) ?? [])
         disableDDCRead = Set(defaults.stringArray(forKey: Key.disableDDCRead) ?? [])
         lastBrightness = (defaults.dictionary(forKey: Key.lastBrightness) as? [String: Double]) ?? [:]
+        if let data = defaults.data(forKey: Key.modePreferences),
+           let prefs = try? JSONDecoder().decode([String: DisplayModePreference].self, from: data) {
+            displayModePreferences = prefs
+        } else {
+            displayModePreferences = [:]
+        }
         lastVolume = (defaults.dictionary(forKey: Key.lastVolume) as? [String: Double]) ?? [:]
         syncBrightnessEnabled = defaults.object(forKey: Key.syncBrightness) as? Bool ?? true
         syncVolumeEnabled = defaults.object(forKey: Key.syncVolume) as? Bool ?? true
@@ -555,6 +574,20 @@ final class SettingsStore {
 
     func setLastBrightness(_ value: Double, for uuid: String) {
         lastBrightness[uuid] = value
+    }
+
+    func displayModePreference(for uuid: String) -> DisplayModePreference? {
+        displayModePreferences[uuid]
+    }
+
+    func setDisplayModePreference(_ preference: DisplayModePreference?) {
+        if let preference {
+            displayModePreferences[preference.displayUUID] = preference
+        }
+    }
+
+    func clearDisplayModePreference(for uuid: String) {
+        displayModePreferences[uuid] = nil
     }
 
     func lastVolume(for uid: String) -> Double? {

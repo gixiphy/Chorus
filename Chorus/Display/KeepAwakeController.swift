@@ -4,6 +4,39 @@ import Foundation
 import IOKit.pwr_mgt
 import Observation
 
+@MainActor
+protocol KeepAwakeAsserting {
+    func create(type: String, reason: String) -> IOPMAssertionID?
+    func isActive(_ id: IOPMAssertionID) -> Bool
+    func release(_ id: IOPMAssertionID)
+}
+
+struct SystemKeepAwakeAssertions: KeepAwakeAsserting {
+    func create(type: String, reason: String) -> IOPMAssertionID? {
+        var id: IOPMAssertionID = 0
+        let result = IOPMAssertionCreateWithName(
+            type as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), reason as CFString, &id
+        )
+        guard result == kIOReturnSuccess else {
+            ChorusLog.display.error("Keep awake assertion failed: type=\(type), IOReturn=\(result)")
+            return nil
+        }
+        return id
+    }
+
+    func isActive(_ id: IOPMAssertionID) -> Bool {
+        guard let properties = IOPMAssertionCopyProperties(id)?.takeRetainedValue() as? [String: Any] else {
+            return false
+        }
+        let level = (properties[kIOPMAssertionLevelKey] as? NSNumber)?.uint32Value
+        return level == UInt32(kIOPMAssertionLevelOn)
+    }
+
+    func release(_ id: IOPMAssertionID) {
+        IOPMAssertionRelease(id)
+    }
+}
+
 /// 螢幕長亮（M9）。公開 API `IOPMAssertionCreateWithName`，無需任何權限。
 ///
 /// 兩檔：
@@ -25,6 +58,8 @@ final class KeepAwakeController {
     /// 目前是否真的持有 assertion（模式啟用但條件不成立時為 false，
     /// 例如綁定的螢幕被拔掉、計時器已到期）。
     private(set) var isHolding = false
+    /// 條件成立，但 macOS 未接受所有必要的防睡眠請求。
+    private(set) var activationFailed = false
     /// 計時模式的剩餘秒數（其餘模式為 nil）。
     /// 存成 property 而非 computed——選單要每秒重繪倒數，得是可觀察的變更。
     private(set) var remainingSeconds: Double?
@@ -44,40 +79,49 @@ final class KeepAwakeController {
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private weak var displayManager: DisplayManager?
     @ObservationIgnored private var startedAt: Double?
-    @ObservationIgnored private var displayAssertion: IOPMAssertionID = 0
-    @ObservationIgnored private var systemAssertion: IOPMAssertionID = 0
+    @ObservationIgnored private let assertions: any KeepAwakeAsserting
+    @ObservationIgnored private let now: () -> Double
+    @ObservationIgnored private var displayAssertion: IOPMAssertionID?
+    @ObservationIgnored private var systemAssertion: IOPMAssertionID?
     @ObservationIgnored private var tickTask: Task<Void, Never>?
+    @ObservationIgnored private var wakeObservers: [NSObjectProtocol] = []
     /// 只有綁定 App 模式才掛：其餘模式不必為每次 App 啟動／結束醒來。
     @ObservationIgnored private var appObservers: [NSObjectProtocol] = []
 
     init(
         settings: SettingsStore,
         displayManager: DisplayManager,
-        agentActivity: AgentActivityMonitor = AgentActivityMonitor()
+        agentActivity: AgentActivityMonitor = AgentActivityMonitor(),
+        assertions: any KeepAwakeAsserting = SystemKeepAwakeAssertions(),
+        now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.settings = settings
         self.displayManager = displayManager
         self.agentActivity = agentActivity
+        self.assertions = assertions
+        self.now = now
         alsoPreventSystemSleep = settings.keepAwakePreventsSystemSleep
         agentActivity.onWorkingChanged = { [weak self] in self?.reevaluate() }
     }
 
     func activate(_ mode: KeepAwakeMode) {
         self.mode = mode
-        startedAt = mode == .off ? nil : Self.now
+        startedAt = mode == .off ? nil : now()
         updateAppObservers()
+        updateWakeObservers()
         updateAgentMonitor()
         reevaluate()
-        // 計時模式需要輪詢到期；其餘模式靠事件驅動即可
+        // 長亮期間持續核對 assertion；建立失敗或失效後仍須重試。
         tickTask?.cancel()
         tickTask = nil
-        if case .duration = mode {
+        if mode != .off {
+            let interval: Duration
+            if case .duration = mode { interval = .seconds(1) } else { interval = .seconds(10) }
             tickTask = Task { [weak self] in
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(1))
-                    guard let self else { return }
+                    do { try await Task.sleep(for: interval) } catch { return }
+                    guard !Task.isCancelled, let self, self.mode != .off else { return }
                     self.reevaluate()
-                    if !self.isHolding { return }
                 }
             }
         }
@@ -101,16 +145,12 @@ final class KeepAwakeController {
 
     /// App 結束前釋放（核心其實也會自動回收，但明確釋放比較乾淨）。
     func shutdown() {
-        tickTask?.cancel()
-        removeAppObservers()
-        agentActivity.stop()
-        release(&displayAssertion)
-        release(&systemAssertion)
-        isHolding = false
+        deactivate()
     }
 
-    private func reevaluate() {
-        remainingSeconds = KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: startedAt, now: Self.now)
+    func reevaluate() {
+        let currentTime = now()
+        remainingSeconds = KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: startedAt, now: currentTime)
         let connected = Set(displayManager?.displays.map(\.uuid) ?? [])
         // 執行中 App 清單每次現查——只有綁定 App 模式會走到，
         // 而那個模式是事件驅動的，不會每秒問一次。
@@ -119,13 +159,13 @@ final class KeepAwakeController {
         let shouldHold = KeepAwakePlanner.shouldHoldAssertion(
             mode: mode,
             startedAt: startedAt,
-            now: Self.now,
+            now: currentTime,
             connectedDisplayUUIDs: connected,
             runningAppBundleIDs: running,
             agentsWorking: agentActivity.isWorking
         )
+        let plan = KeepAwakePlanner.assertionPlan(mode: mode, alsoPreventSystemSleep: alsoPreventSystemSleep)
         if shouldHold {
-            let plan = KeepAwakePlanner.assertionPlan(mode: mode, alsoPreventSystemSleep: alsoPreventSystemSleep)
             if plan.preventsDisplaySleep {
                 hold(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep, reason: "Chorus 螢幕長亮")
             } else {
@@ -145,9 +185,29 @@ final class KeepAwakeController {
                 mode = .off
                 startedAt = nil
                 remainingSeconds = nil
+                tickTask?.cancel()
+                updateWakeObservers()
             }
         }
         isHolding = shouldHold
+            && (!plan.preventsDisplaySleep || displayAssertion != nil)
+            && (!plan.preventsSystemSleep || systemAssertion != nil)
+        activationFailed = shouldHold && !isHolding
+    }
+
+    private func updateWakeObservers() {
+        let center = NSWorkspace.shared.notificationCenter
+        guard mode != .off else {
+            wakeObservers.forEach { center.removeObserver($0) }
+            wakeObservers = []
+            return
+        }
+        guard wakeObservers.isEmpty else { return }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            wakeObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reevaluate() }
+            })
+        }
     }
 
     /// Agent 模式進出時開／關目錄輪詢。
@@ -184,24 +244,19 @@ final class KeepAwakeController {
         appObservers = []
     }
 
-    private func hold(_ id: inout IOPMAssertionID, type: String, reason: String) {
-        guard id == 0 else { return }
-        var created: IOPMAssertionID = 0
-        let result = IOPMAssertionCreateWithName(
-            type as CFString,
-            IOPMAssertionLevel(kIOPMAssertionLevelOn),
-            reason as CFString,
-            &created
-        )
-        guard result == kIOReturnSuccess else { return }
-        id = created
+    private func hold(_ id: inout IOPMAssertionID?, type: String, reason: String) {
+        if let existing = id {
+            guard !assertions.isActive(existing) else { return }
+            assertions.release(existing)
+            id = nil
+            ChorusLog.display.notice("Keep awake assertion inactive; recreating type=\(type)")
+        }
+        id = assertions.create(type: type, reason: reason)
     }
 
-    private func release(_ id: inout IOPMAssertionID) {
-        guard id != 0 else { return }
-        IOPMAssertionRelease(id)
-        id = 0
+    private func release(_ id: inout IOPMAssertionID?) {
+        guard let existing = id else { return }
+        assertions.release(existing)
+        id = nil
     }
-
-    private static var now: Double { ProcessInfo.processInfo.systemUptime }
 }

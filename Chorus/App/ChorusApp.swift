@@ -53,6 +53,14 @@ struct ChorusApp: App {
             }
         }
         .windowResizability(.contentSize)
+
+        WindowGroup("顯示設定", id: "displaySettings", for: String.self) { $uuid in
+            if let uuid {
+                DisplaySettingsView(displayUUID: uuid)
+                    .environment(appState)
+            }
+        }
+        .windowResizability(.contentSize)
     }
 }
 

@@ -614,6 +614,9 @@ private struct KeepAwakeRow: View {
 
     private var statusCaption: String {
         let keepAwake = appState.keepAwake
+        if keepAwake.activationFailed {
+            return String(localized: "長亮尚未生效，正在重試")
+        }
         switch keepAwake.mode {
         case .off:
             return String(localized: "螢幕會照系統設定待機")

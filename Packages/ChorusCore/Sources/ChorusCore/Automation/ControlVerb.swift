@@ -26,4 +26,12 @@ public enum ControlAction: String, Codable, Sendable, CaseIterable, Hashable {
     case suggestOffsets
     /// 提前結束進行中的限時場景並還原（B7）。走的是與倒數走完完全同一條路。
     case endScene
+    /// 列出顯示器可用模式；目標必須是唯一一台螢幕。
+    case listDisplayModes
+    /// 試用顯示模式；`value`＝`DisplayModeValueCoding` 字串；目標必須唯一。
+    case trialDisplayMode
+    /// 確認進行中的模式試用（僅本機可見確認；遠端不可代按保留）。
+    case confirmDisplayMode
+    /// 取消／還原進行中的模式試用。
+    case cancelDisplayMode
 }

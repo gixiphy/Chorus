@@ -65,14 +65,7 @@ struct ChorusCLI {
                 let verb = ControlVerb(rawValue: subcommand)!
                 try await send(try parse(verb: verb, arguments: arguments), config: config, json: jsonOutput)
             case "perform":
-                guard let raw = arguments.first, let action = ControlAction(rawValue: raw) else {
-                    fail("用法：chorus perform <\(ControlAction.allCases.map(\.rawValue).joined(separator: "|"))> [引數]")
-                }
-                let target = arguments.dropFirst().first { !$0.hasPrefix("--") }
-                try await send(
-                    ControlRequest(verb: .perform, target: .system, value: target, action: action),
-                    config: config, json: jsonOutput
-                )
+                try await send(try parsePerform(arguments: arguments), config: config, json: jsonOutput)
             default:
                 fail("未知的子指令「\(subcommand)」。執行 chorus help 看用法")
             }
@@ -169,6 +162,93 @@ struct ChorusCLI {
         )
     }
 
+    /// `perform <動作> [引數] [目標旗標…]`
+    ///
+    /// - `runScene`：位置參數＝場景名；目標預設 system
+    /// - `listDisplayModes`／`trialDisplayMode`：需要唯一螢幕目標；後者引數＝模式字串
+    /// - `confirmDisplayMode`／`cancelDisplayMode`：無引數（確認僅本機可見 UI）
+    private static func parsePerform(arguments: [String]) throws(CLIError) -> ControlRequest {
+        guard let raw = arguments.first, let action = ControlAction(rawValue: raw) else {
+            throw CLIError(
+                "用法：chorus perform <\(ControlAction.allCases.map(\.rawValue).joined(separator: "|"))> [引數] [目標]"
+            )
+        }
+        var target: ControlTarget?
+        var peer: String?
+        var positional: [String] = []
+
+        var index = 1
+        while index < arguments.count {
+            let token = arguments[index]
+            index += 1
+            func nextValue() throws(CLIError) -> String {
+                guard index < arguments.count else {
+                    throw CLIError("「\(token)」少了值")
+                }
+                defer { index += 1 }
+                return arguments[index]
+            }
+
+            if token == "--peer" {
+                peer = try nextValue()
+            } else if valuedTargetFlags.contains(token) || valuelessTargetFlags.contains(token) {
+                let argument = valuelessTargetFlags.contains(token) ? nil : try nextValue()
+                target = targetFlag(token, argument: argument)
+            } else if token.hasPrefix("--") {
+                throw CLIError("無法辨識的參數「\(token)」")
+            } else {
+                positional.append(token)
+            }
+        }
+
+        let value: String?
+        let resolvedTarget: ControlTarget
+        switch action {
+        case .runScene:
+            value = positional.first
+            resolvedTarget = target ?? .system
+            if positional.count > 1 {
+                throw CLIError("perform runScene 只需一個場景名稱")
+            }
+        case .listDisplayModes:
+            guard positional.isEmpty else {
+                throw CLIError("listDisplayModes 不吃位置參數；請用 --display-uuid／--display 指定螢幕")
+            }
+            guard let target else {
+                throw CLIError("listDisplayModes 需要唯一螢幕目標，例如 --display-uuid <uuid>")
+            }
+            value = nil
+            resolvedTarget = target
+        case .trialDisplayMode:
+            guard let mode = positional.first else {
+                throw CLIError("用法：chorus perform trialDisplayMode <模式> --display-uuid <uuid>")
+            }
+            if positional.count > 1 {
+                throw CLIError("trialDisplayMode 只需一個模式字串（例 1920x1080@60）")
+            }
+            guard let target else {
+                throw CLIError("trialDisplayMode 需要唯一螢幕目標，例如 --display-uuid <uuid>")
+            }
+            value = mode
+            resolvedTarget = target
+        case .confirmDisplayMode, .cancelDisplayMode,
+             .restoreAllPower, .refresh, .suggestOffsets, .endScene:
+            if !positional.isEmpty {
+                throw CLIError("perform \(action.rawValue) 不需要位置參數")
+            }
+            value = nil
+            resolvedTarget = target ?? .system
+        }
+
+        return ControlRequest(
+            verb: .perform,
+            target: resolvedTarget,
+            value: value,
+            action: action,
+            peer: peer
+        )
+    }
+
     // MARK: - 送出與輸出
 
     private static func send(_ request: ControlRequest, config: Config, json: Bool) async throws {
@@ -240,7 +320,7 @@ struct ChorusCLI {
           chorus set    [目標] --<屬性> <值>
           chorus get    [目標] [--<屬性>]
           chorus toggle [目標] --<屬性>
-          chorus perform <動作> [引數]
+          chorus perform <動作> [引數] [目標]
           chorus scene  <名稱> [--for 25m]
           chorus scene  --end
           chorus scenes
@@ -258,8 +338,12 @@ struct ChorusCLI {
         屬性：
           \(ControlProperty.allCases.map { "--\($0.rawValue)" }.joined(separator: "  "))
 
+        動作（perform）：
+          \(ControlAction.allCases.map(\.rawValue).joined(separator: "  "))
+
         值：0.8、80%、+10%、-0.1、on/off、30m／1h／forever、MCCS 代碼
             逐 App 音量最高 400%（超過 100% 的部分會過 soft limiter）
+            顯示模式：1920x1080@60 或 HiDPI 1512x982@120p3024x1964
 
         選項：
           --json    輸出原始 JSON（給腳本用）
@@ -273,9 +357,15 @@ struct ChorusCLI {
           chorus set --app com.apple.Music --volume 40%
           chorus toggle --app-like Music --mute
           chorus set --peer 客廳 --app com.spotify.client --mute on
+          chorus perform listDisplayModes --display-uuid <uuid>
+          chorus perform trialDisplayMode 1920x1080@60 --display-uuid <uuid>
+          chorus perform cancelDisplayMode
           chorus listen
           chorus scene 工作 --for 25m
           chorus scene --end
+
+        顯示模式試用：確認（保留）必須在本機可見倒數視窗操作；
+        CLI 可發起、列模式、取消。跨機模式控制第一版請在目標機本機執行。
 
         限時場景（`--for`）：套用前先記住場景會動到的每一個值，時間到
         自動放回去。提前結束（`--end`）與結束 Chorus 走同一條還原路。

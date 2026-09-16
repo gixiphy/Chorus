@@ -12,16 +12,30 @@ import Observation
 final class DisplayManager {
     private(set) var displays: [DisplayModel] = []
 
-    @ObservationIgnored let ddc = DDCController()
-    @ObservationIgnored private let displayServices = DisplayServicesClient()
-    @ObservationIgnored private let gamma = GammaDimmer()
+    @ObservationIgnored let ddc: DDCController
+    @ObservationIgnored private let displayServices: DisplayServicesClient
+    @ObservationIgnored private let gamma: GammaDimmer
     @ObservationIgnored private let softDisconnect = SoftDisconnectClient()
+    @ObservationIgnored private let modeClient = DisplayModeClient()
+    @ObservationIgnored private let hdrClient = HDRClient()
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private var screenObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var pollerTask: Task<Void, Never>?
+    @ObservationIgnored private var nativeReadbackTask: Task<Void, Never>?
+    @ObservationIgnored private let changeMonitor = DisplayChangeMonitor()
+    @ObservationIgnored private var refreshPolicy = DisplayRefreshPolicy()
+    @ObservationIgnored private var refreshState = DisplayRefreshPolicy.State()
+    @ObservationIgnored private let reconcilePolicy = BrightnessReconcile()
+    @ObservationIgnored private let clockOrigin = SuspendingClock.now
+    @ObservationIgnored private var localWrites: [String: BrightnessReconcile.LocalWrite] = [:]
+    @ObservationIgnored private var lastPublishedBrightness: [String: Double] = [:]
+    @ObservationIgnored private var isShutDown = false
+    /// 拓撲／刷新世代（模式交易對帳用）。
+    private(set) var topologyGeneration: UInt64 = 0
     @ObservationIgnored weak var coordinator: ControlCoordinator?
+    @ObservationIgnored weak var configurationController: DisplayConfigurationController?
     @ObservationIgnored weak var autoController: AutoBrightnessController?
     /// DDC 能力分類完成後回呼音訊層重算橋接（音訊 snapshot 常比 DDC 探測先到）。
     @ObservationIgnored weak var audioManager: AudioDeviceManager?
@@ -42,30 +56,57 @@ final class DisplayManager {
     /// 靠 kCGConfigureForAppOnly 還原）。refresh 時一律補回清單。
     @ObservationIgnored private var poweredOffModels: [String: DisplayModel] = [:]
 
-    init(settings: SettingsStore) {
+    init(
+        settings: SettingsStore,
+        ddc: DDCController = DDCController(),
+        displayServices: DisplayServicesClient = DisplayServicesClient(),
+        gamma: GammaDimmer = GammaDimmer()
+    ) {
         self.settings = settings
+        self.ddc = ddc
+        self.displayServices = displayServices
+        self.gamma = gamma
+    }
+
+    private var monotonicNow: Duration {
+        clockOrigin.duration(to: .now)
     }
 
     /// 睡醒後螢幕 scaler／I2C 尚未就緒，貿然讀寫會失敗甚至誤判能力。
     /// 此期間 DDC 寫入延後、能力重探測也等這麼久才跑。
     private static let wakeSettleDelay: TimeInterval = 3.0
 
+    /// 原生亮度鍵快速讀回：50ms 首讀，必要時 150／300ms 補讀。
+    private static let nativeReadbackDelays: [Duration] = [
+        .milliseconds(50), .milliseconds(150), .milliseconds(300)
+    ]
+
     func start() {
+        isShutDown = false
         ddc.setPersistentFailureHandler { displayID in
             Task { @MainActor in
                 AppStateRegistry.displayManager?.handleDDCFailure(displayID)
             }
         }
-        scheduleRefresh()
+        scheduleRefresh(reason: .userForce)
         startBrightnessPoller()
+        changeMonitor.start { [weak self] event in
+            guard let self, !self.isShutDown else { return }
+            for reason in event.reasons {
+                self.noteDisplayEvent(reason: reason, displayIDs: [event.displayID])
+            }
+        }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
         ) { _ in
             MainActor.assumeIsolated {
-                ChorusLog.display.notice("螢幕參數變更（didChangeScreenParameters）→ 重新列舉")
-                AppStateRegistry.displayManager?.scheduleRefresh()
+                ChorusLog.display.notice("螢幕參數變更（didChangeScreenParameters）→ 合併刷新")
+                AppStateRegistry.displayManager?.noteDisplayEvent(
+                    reason: .unrecognizedAppKit,
+                    displayIDs: []
+                )
             }
         }
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -80,27 +121,112 @@ final class DisplayManager {
         AppStateRegistry.displayManager = self
     }
 
-    /// 螢幕喚醒：DDC 寫入延後、重新分類也等靜置期過後才做
-    /// （太早探測會把還沒醒的螢幕誤判成不支援 DDC）。
+    /// 螢幕喚醒：DDC 寫入延後；刷新最早開始時間為不可被一般通知縮短的絕對期限。
     private func handleScreensWake() {
         ChorusLog.display.notice("螢幕喚醒 → DDC 延後 \(Self.wakeSettleDelay)s")
         ddc.deferWrites(for: Self.wakeSettleDelay)
-        scheduleRefresh(after: Self.wakeSettleDelay)
+        configurationController?.handleWake()
+        applyRefreshAction(refreshPolicy.noteWake(state: &refreshState, now: monotonicNow))
     }
 
+    /// 顯示事件入口（CoreGraphics monitor 與 AppKit 通知共用）。
+    func noteDisplayEvent(reason: DisplayRefreshPolicy.Reason, displayIDs: Set<CGDirectDisplayID>) {
+        guard !isShutDown else { return }
+        applyRefreshAction(
+            refreshPolicy.noteEvent(
+                state: &refreshState,
+                reason: reason,
+                displayIDs: Set(displayIDs.map { UInt32($0) }),
+                now: monotonicNow
+            )
+        )
+    }
+
+    /// 使用者明確重新偵測。
     func scheduleRefresh(after delay: TimeInterval = 0) {
-        refreshTask?.cancel()
-        refreshTask = Task {
-            if delay > 0 {
-                try? await Task.sleep(for: .seconds(delay))
-                guard !Task.isCancelled else { return }
-            }
-            await refresh()
+        // 保留舊簽名：轉成 policy 事件。delay>0 僅用於相容；喚醒請走 handleScreensWake。
+        if delay > 0 {
+            applyRefreshAction(refreshPolicy.noteWake(state: &refreshState, now: monotonicNow))
+        } else {
+            noteDisplayEvent(reason: .notification, displayIDs: [])
         }
     }
 
-    /// 重新列舉顯示器並分類能力。
+    private func scheduleRefresh(reason: DisplayRefreshPolicy.Reason) {
+        noteDisplayEvent(reason: reason, displayIDs: [])
+    }
+
+    private func applyRefreshAction(_ action: DisplayRefreshPolicy.Action) {
+        switch action {
+        case .none:
+            return
+        case let .schedule(at):
+            let delay = max(.zero, at - monotonicNow)
+            refreshTask?.cancel()
+            refreshTask = Task { [weak self] in
+                if delay > .zero {
+                    try? await Task.sleep(for: delay)
+                    guard !Task.isCancelled else { return }
+                }
+                await self?.fireScheduledRefresh()
+            }
+        case let .startRefresh(generation, reasons, forceFull):
+            refreshTask?.cancel()
+            refreshTask = Task { [weak self] in
+                await self?.refresh(generation: generation, reasons: reasons, forceFull: forceFull)
+            }
+        }
+    }
+
+    private func fireScheduledRefresh() async {
+        let action = refreshPolicy.fire(state: &refreshState, now: monotonicNow)
+        switch action {
+        case .none:
+            return
+        case let .schedule(at):
+            applyRefreshAction(.schedule(at: at))
+        case let .startRefresh(generation, reasons, forceFull):
+            await refresh(generation: generation, reasons: reasons, forceFull: forceFull)
+        }
+    }
+
+    /// 重新列舉顯示器並分類能力（明確重探：完整探測，仍尊重喚醒期限）。
     func refresh() async {
+        guard !isShutDown else { return }
+        if refreshState.inFlight {
+            refreshState.pendingReasons.insert(.userForce)
+            return
+        }
+        let now = monotonicNow
+        let earliest = refreshPolicy.earliestAllowedStart(state: refreshState, now: now)
+        if now < earliest {
+            refreshState.pendingReasons.insert(.userForce)
+            if refreshState.firstPendingAt == nil { refreshState.firstPendingAt = now }
+            applyRefreshAction(.schedule(at: earliest))
+            return
+        }
+        refreshState.generation &+= 1
+        refreshState.inFlight = true
+        refreshState.pendingReasons = []
+        refreshState.pendingDisplayIDs = []
+        refreshState.firstPendingAt = nil
+        refreshState.scheduledFireAt = nil
+        await refresh(generation: refreshState.generation, reasons: [.userForce], forceFull: true)
+    }
+
+    private func refresh(
+        generation: UInt64,
+        reasons: Set<DisplayRefreshPolicy.Reason>,
+        forceFull: Bool
+    ) async {
+        defer {
+            applyRefreshAction(
+                refreshPolicy.refreshFinished(state: &refreshState, generation: generation, now: monotonicNow)
+            )
+        }
+        guard !isShutDown else { return }
+        guard generation == refreshState.generation else { return }
+
         var ids = [CGDirectDisplayID](repeating: 0, count: 16)
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(16, &ids, &count) == .success else { return }
@@ -119,8 +245,9 @@ final class DisplayManager {
                 ddcCandidates.append(id)
             }
         }
-        let ddcCapable = await ddc.refresh(displayIDs: ddcCandidates)
-        guard !Task.isCancelled else { return }
+        let ddcCapable = await ddc.refresh(displayIDs: ddcCandidates, generation: generation)
+        guard !Task.isCancelled, !isShutDown else { return }
+        guard generation == refreshState.generation else { return }
         for id in ddcCandidates {
             guard ddcCapable.contains(id) else {
                 classified.append((id, .gammaOnly, nil, nil))
@@ -144,10 +271,13 @@ final class DisplayManager {
             } else {
                 classified.append((id, .gammaOnly, nil, nil))
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, generation == refreshState.generation else { return }
         }
 
+        guard generation == refreshState.generation, !isShutDown else { return }
+
         var models: [DisplayModel] = []
+        let previousByUUID = Dictionary(uniqueKeysWithValues: displays.map { ($0.uuid, $0) })
         for (id, backend, probe, contrastProbe) in classified {
             let uuid = Self.stableUUID(for: id)
             let force = settings.forceSoftwareDimming.contains(uuid)
@@ -159,7 +289,22 @@ final class DisplayManager {
                 brightness = pipeline.sliderValue(forHardware: brightness)
                     ?? settings.lastBrightness(for: uuid) ?? 0.5
             }
+            // 以穩定身分保留使用者當前亮度（runtime ID 可能變）
+            if let previous = previousByUUID[uuid],
+               !forceFull,
+               abs(previous.brightness - brightness) > 0.005,
+               backend == previous.backend
+            {
+                brightness = previous.brightness
+            }
             let contrast: Double? = contrastProbe.flatMap { $0.max > 0 ? Double($0.current) / Double($0.max) : nil }
+            if let previous = previousByUUID[uuid], previous.uuid == uuid {
+                // 重綁 display ID，保留關機等狀態稍後處理
+                previous.rebind(displayID: id)
+            }
+            let mode = modeClient.currentMode(for: id)
+            let mirrored = modeClient.isMirrored(id)
+            let hdr = hdrClient.status(for: id)
             models.append(DisplayModel(
                 id: id,
                 uuid: uuid,
@@ -170,10 +315,14 @@ final class DisplayManager {
                 subZeroDimming: settings.subZeroDimming.contains(uuid),
                 brightness: brightness,
                 ddcBrightnessMax: probe?.max ?? 100,
-                contrast: contrast,
-                ddcContrastMax: contrastProbe?.max ?? 100,
+                contrast: contrast ?? previousByUUID[uuid]?.contrast,
+                ddcContrastMax: contrastProbe?.max ?? previousByUUID[uuid]?.ddcContrastMax ?? 100,
                 supportsDDCPower: ddcPowerCapable.contains(id),
-                powerLayer: .gammaBlackout // 下面依總數重算
+                powerLayer: .gammaBlackout, // 下面依總數重算
+                modeSummary: mode?.summary,
+                currentMode: mode,
+                isMirrored: mirrored,
+                hdrStatus: hdr == .unsupported ? nil : hdr.rawValue
             ))
         }
 
@@ -217,6 +366,8 @@ final class DisplayManager {
             return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
 
+        guard generation == refreshState.generation, !isShutDown else { return }
+
         // 已消失的顯示器丟棄 gamma 快取（關機中的除外——它們只是被我們
         // 移出 layout，快取還要用來還原）
         let newIDs = Set(models.map(\.id))
@@ -230,6 +381,8 @@ final class DisplayManager {
             let removed = displays.filter { !after.contains($0.uuid) }.map(\.name)
             ChorusLog.display.notice("顯示器清單變更：新增 \(added) 移除 \(removed) → \(models.map(\.name))")
         }
+        _ = reasons // 保留給後續診斷／metrics
+        topologyGeneration = generation
         displays = models
         reapplySoftwareDimming()
         audioManager?.refreshBridges()
@@ -238,6 +391,17 @@ final class DisplayManager {
         scenarioStore?.displaysDidChange(Set(models.map(\.uuid)))
         keepAwake?.displaysDidChange()
         automationEvents?.publish(kind: "displays", payload: ["names": models.map(\.name)])
+        configurationController?.displaysDidChange()
+    }
+
+    /// 模式套用／還原後只更新摘要，不重跑 DDC 探測。
+    func refreshModeSummaries() {
+        for model in displays where !model.isPoweredOff {
+            let mode = modeClient.currentMode(for: model.id)
+            model.currentMode = mode
+            model.modeSummary = mode?.summary
+            model.isMirrored = modeClient.isMirrored(model.id)
+        }
     }
 
     /// 使用者透過 UI 設定亮度（會廣播同步）。value 0–1。
@@ -247,7 +411,8 @@ final class DisplayManager {
         ChorusLog.display.info("亮度（使用者）\(model.name) = \(clamped.diag2)")
         model.brightness = clamped
         settings.setLastBrightness(clamped, for: model.uuid)
-        apply(model)
+        localWrites[model.uuid] = BrightnessReconcile.LocalWrite(target: clamped, writtenAt: monotonicNow)
+        apply(model, source: .localWrite)
         if let autoController, autoController.isAutoActive(for: model.uuid) {
             autoController.learnOffsetFromManualSet(uuid: model.uuid, value: clamped)
             return
@@ -264,7 +429,8 @@ final class DisplayManager {
             if let autoController, autoController.isAutoActive(for: model.uuid) { continue }
             model.brightness = clamped
             settings.setLastBrightness(clamped, for: model.uuid)
-            apply(model)
+            localWrites[model.uuid] = BrightnessReconcile.LocalWrite(target: clamped, writtenAt: monotonicNow)
+            apply(model, source: .remoteWrite)
         }
     }
 
@@ -278,7 +444,8 @@ final class DisplayManager {
         for model in displays {
             model.brightness = clamped
             settings.setLastBrightness(clamped, for: model.uuid)
-            apply(model)
+            localWrites[model.uuid] = BrightnessReconcile.LocalWrite(target: clamped, writtenAt: monotonicNow)
+            apply(model, source: .remoteWrite)
             if let autoController, autoController.isAutoActive(for: model.uuid) {
                 autoController.learnOffsetFromManualSet(uuid: model.uuid, value: clamped)
             } else {
@@ -300,7 +467,8 @@ final class DisplayManager {
         ChorusLog.display.notice("亮度（命令）\(model.name) = \(clamped.diag2)")
         model.brightness = clamped
         settings.setLastBrightness(clamped, for: model.uuid)
-        apply(model)
+        localWrites[uuid] = BrightnessReconcile.LocalWrite(target: clamped, writtenAt: monotonicNow)
+        apply(model, source: .remoteWrite)
     }
 
     func setForceSoftwareDimming(_ enabled: Bool, for model: DisplayModel) {
@@ -338,7 +506,9 @@ final class DisplayManager {
         )
     }
 
-    private func apply(_ model: DisplayModel) {
+    private func apply(_ model: DisplayModel, source: BrightnessReadSource = .localWrite) {
+        let token = OperationMetrics.shared.begin("display.brightness.apply.\(source.rawValue)")
+        defer { OperationMetrics.shared.end(token) }
         let output = pipeline(for: model).map(
             slider: model.brightness,
             hasHardwareControl: model.hasHardwareControl
@@ -359,7 +529,7 @@ final class DisplayManager {
                 break
             }
         }
-        gamma.setFactor(output.softwareFactor, for: model.id)
+        _ = gamma.setFactor(output.softwareFactor, for: model.id)
     }
 
     /// refresh 後重新套用軟體調光。
@@ -381,7 +551,7 @@ final class DisplayManager {
                 slider: model.brightness,
                 hasHardwareControl: model.hasHardwareControl
             )
-            gamma.setFactor(output.softwareFactor, for: model.id)
+            _ = gamma.setFactor(output.softwareFactor, for: model.id)
         }
     }
 
@@ -410,28 +580,83 @@ final class DisplayManager {
     /// 與 model 有落差時視為本地硬體變更 → 更新 UI 並廣播同步。
     /// （遠端套用會先更新 model，因此不會被誤判成本地變更。）
     private func startBrightnessPoller() {
+        pollerTask?.cancel()
         pollerTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                self?.pollBuiltinBrightness()
+                guard let self, !self.isShutDown else { return }
+                self.pollBuiltinBrightness()
             }
         }
     }
 
     private func pollBuiltinBrightness() {
-        for model in displays where model.backend == .displayServices {
+        for model in displays where model.backend == .displayServices && !model.isPoweredOff {
             guard let actual = displayServices.brightness(for: model.id) else { continue }
-            if abs(actual - model.brightness) > 0.005 {
-                // 自動亮度管理中：交給 controller 對帳（自身寫入收斂 vs 使用者按鍵
-                // → 差異值學習），兩種情況都只更新 model、不廣播。
-                if let autoController,
-                   autoController.handleExternalBrightnessChange(uuid: model.uuid, actual: actual) {
-                    model.brightness = actual
-                    settings.setLastBrightness(actual, for: model.uuid)
-                    continue
+            reconcileBrightness(for: model, actual: actual, source: .poll)
+        }
+    }
+
+    /// 原生亮度鍵放行後排程快速讀回。每組顯示器至多一份 pending；連按合併。
+    func scheduleNativeBrightnessReadback() {
+        guard !isShutDown else { return }
+        nativeReadbackTask?.cancel()
+        nativeReadbackTask = Task { [weak self] in
+            var previous: [String: Double] = [:]
+            for delay in Self.nativeReadbackDelays {
+                try? await Task.sleep(for: delay)
+                guard let self, !self.isShutDown, !Task.isCancelled else { return }
+                var changed = false
+                for model in self.displays where model.backend == .displayServices && !model.isPoweredOff {
+                    guard let actual = self.displayServices.brightness(for: model.id) else { continue }
+                    if let prior = previous[model.uuid], abs(prior - actual) <= 0.005 {
+                        continue
+                    }
+                    previous[model.uuid] = actual
+                    self.reconcileBrightness(for: model, actual: actual, source: .nativeKey)
+                    changed = true
                 }
-                model.brightness = actual
-                settings.setLastBrightness(actual, for: model.uuid)
+                // 已穩定則不必再補讀
+                if !changed, !previous.isEmpty { return }
+            }
+        }
+    }
+
+    /// 輪詢與快速讀回的共用對帳入口。
+    func reconcileBrightness(for model: DisplayModel, actual: Double, source: BrightnessReadSource) {
+        guard !isShutDown, !model.isPoweredOff else { return }
+        let token = OperationMetrics.shared.begin("display.brightness.reconcile.\(source.rawValue)")
+        defer { OperationMetrics.shared.end(token) }
+
+        let autoHandled = autoController?.handleExternalBrightnessChange(
+            uuid: model.uuid,
+            actual: actual,
+            source: source
+        ) ?? false
+
+        let decision = reconcilePolicy.decide(
+            modelBrightness: model.brightness,
+            actual: actual,
+            source: source,
+            localWrite: localWrites[model.uuid],
+            now: monotonicNow,
+            autoHandled: autoHandled
+        )
+
+        switch decision {
+        case .ignore:
+            return
+        case let .accept(broadcast):
+            model.brightness = actual
+            settings.setLastBrightness(actual, for: model.uuid)
+            if abs((lastPublishedBrightness[model.uuid] ?? -1) - actual) <= reconcilePolicy.epsilon {
+                return
+            }
+            lastPublishedBrightness[model.uuid] = actual
+            if let write = localWrites[model.uuid], abs(actual - write.target) <= reconcilePolicy.epsilon {
+                localWrites.removeValue(forKey: model.uuid)
+            }
+            if broadcast {
                 coordinator?.localBrightnessChanged(actual)
             }
         }
@@ -479,6 +704,9 @@ final class DisplayManager {
         // 已經是目標狀態就不重複動作。要「開」時必須現在是關的、
         // 要「關」時必須現在是開的——兩者都等價於 isPoweredOff == on。
         guard model.isPoweredOff == on else { return }
+        if !on, configurationController?.activeDisplayUUID == model.uuid {
+            configurationController?.abortForEmergencyOrQuit(reason: .cancelled)
+        }
         ChorusLog.display.notice("螢幕電源 \(on ? "開" : "關")：\(model.name) layer=\(model.powerLayer)")
         if on { powerOn(model) } else { powerOff(model) }
     }
@@ -503,6 +731,7 @@ final class DisplayManager {
     /// 回傳實際復原了幾台（手勢要據此決定是否給回饋）。
     @discardableResult
     func restoreAllDisplayPower() -> Int {
+        configurationController?.abortForEmergencyOrQuit(reason: .supersededByEmergency)
         var restored = 0
         var handled: Set<String> = []
         for model in displays where model.isPoweredOff {
@@ -583,6 +812,15 @@ final class DisplayManager {
     /// soft-disconnect 另有 kCGConfigureForAppOnly 的核心層保險（崩潰時也會還原），
     /// 這裡是正常結束路徑的明確收尾。
     func shutdown() {
+        isShutDown = true
+        configurationController?.abortForEmergencyOrQuit(reason: .quit)
+        pollerTask?.cancel()
+        pollerTask = nil
+        nativeReadbackTask?.cancel()
+        nativeReadbackTask = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        changeMonitor.stop()
         restoreAllDisplayPower()
         gamma.restoreAll()
     }

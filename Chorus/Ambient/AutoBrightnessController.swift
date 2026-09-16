@@ -155,10 +155,30 @@ final class AutoBrightnessController {
 
     // MARK: - Poller／手動調整對帳
 
-    /// Poller 發現實際亮度與 model 有落差時先問這裡。
-    /// 回傳 true 表示已處理（poller 只需更新 model、不廣播）。
-    func handleExternalBrightnessChange(uuid: String, actual: Double) -> Bool {
+    /// Poller／快速讀回發現實際亮度與 model 有落差時先問這裡。
+    /// 回傳 true 表示已處理（呼叫端只需更新 model、不廣播）。
+    ///
+    /// - 平滑／ramp 中的 poll 讀回：只吸收、不學習（避免 50ms 反覆學）。
+    /// - 原生鍵：視為使用者輸入，可打斷 ramp 並學習。
+    func handleExternalBrightnessChange(
+        uuid: String,
+        actual: Double,
+        source: BrightnessReadSource = .poll
+    ) -> Bool {
         guard isAutoActive(for: uuid) else { return false }
+        let rampActive = if let rampTask { !rampTask.isCancelled } else { false }
+        if rampActive, source != .nativeKey {
+            // 自身寫入平滑過程：更新 UI 用的 lastAutoWritten 對帳，不學差異值
+            if let written = lastAutoWritten[uuid], abs(actual - written) <= Self.settleEpsilon {
+                return true
+            }
+            // 與 ramp 中間值差較大仍不學習——等 ramp 結束後穩定再收斂
+            return true
+        }
+        if rampActive, source == .nativeKey {
+            rampTask?.cancel()
+            rampTask = nil
+        }
         if let written = lastAutoWritten[uuid], abs(actual - written) <= Self.settleEpsilon {
             // 自己寫入後 DisplayServices 內部平滑的殘值
             return true

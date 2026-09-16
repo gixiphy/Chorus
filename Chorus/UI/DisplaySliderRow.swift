@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DisplaySliderRow: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.openWindow) private var openWindow
     @Bindable var model: DisplayModel
     let manager: DisplayManager
 
@@ -49,6 +50,21 @@ struct DisplaySliderRow: View {
                 }
                 .buttonStyle(.plain)
                 .help(powerHelp)
+            }
+            if let summary = model.modeSummary, !model.isPoweredOff {
+                HStack(spacing: 6) {
+                    Text(summary)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Button("顯示設定") {
+                        openWindow(id: "displaySettings", value: model.uuid)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption2)
+                    .foregroundStyle(.tint)
+                }
             }
             HStack(spacing: SliderRow.spacing) {
                 SliderRow.leadingIcon("sun.min")

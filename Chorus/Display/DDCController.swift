@@ -52,11 +52,15 @@ final class DDCController: @unchecked Sendable {
     /// 讀取的等待期限（掃描另給 `refreshDeadline`）。期限只放開呼叫端，打斷不了 I2C。
     let readDeadline: Duration
     let refreshDeadline: Duration
+    /// 診斷五個 VCP 的整體期限。
+    let diagnosticsDeadline: Duration
     /// 測試用：在每個 queue 上的 I/O 之前呼叫（模擬 I2C 卡住）。
     private let ioHook: (@Sendable () -> Void)?
     private let origin = SuspendingClock.now
     /// 目前 queue 上那件工作從什麼時候開始跑（nil ＝ 閒著）。
     private let runningSince = Mutex<Duration?>(nil)
+    /// 服務／拓撲世代：舊工作完成後不得覆蓋較新的服務表。
+    private let serviceGeneration = Mutex<UInt64>(0)
 
     private struct WriteKey: Hashable, Sendable {
         let displayID: CGDirectDisplayID
@@ -74,10 +78,12 @@ final class DDCController: @unchecked Sendable {
     init(
         readDeadline: Duration = .seconds(3),
         refreshDeadline: Duration = .seconds(5),
+        diagnosticsDeadline: Duration = .seconds(3),
         ioHook: (@Sendable () -> Void)? = nil
     ) {
         self.readDeadline = readDeadline
         self.refreshDeadline = refreshDeadline
+        self.diagnosticsDeadline = diagnosticsDeadline
         self.ioHook = ioHook
     }
 
@@ -98,6 +104,17 @@ final class DDCController: @unchecked Sendable {
     /// 此時間點（uptime）之前不打 I2C 寫入（睡醒靜置期；pending 保留、期滿補寫）。
     private var suspendUntilUptime: TimeInterval = 0
     private var audioFailureHandler: (@Sendable (CGDirectDisplayID) -> Void)?
+    private var failureHandler: (@Sendable (CGDirectDisplayID) -> Void)?
+
+    private struct CachedDiagnosticsSnapshot: Sendable {
+        var hasService: Bool
+        var failureCounts: [UInt8: Int]
+        var transport: (upstream: String, downstream: String)?
+        var capturedAt: Duration
+    }
+
+    private let diagnosticsCache = Mutex<[CGDirectDisplayID: CachedDiagnosticsSnapshot]>([:])
+    private let diagnosticsInFlight = Mutex<[CGDirectDisplayID: Bool]>([:])
 
     /// 所有投進 queue 的工作都經過這裡，排隊中的數量才量得到（`ddc.queue`）。
     /// I2C 卡住時整條 queue 停住，這個數字會一路往上。
@@ -118,18 +135,50 @@ final class DDCController: @unchecked Sendable {
         return origin.duration(to: .now) - started > readDeadline
     }
 
+    /// 音訊類 VCP（0x62/0x8D）持續失敗的回呼——只影響音量橋接，
+    /// 絕不連坐亮度（見 flushLocked 的分 VCP 計數）。
+    func setAudioFailureHandler(_ handler: @escaping @Sendable (CGDirectDisplayID) -> Void) {
+        enqueue { self.audioFailureHandler = handler }
+    }
+
+    /// 註冊「DDC 持續失敗」回呼（呼叫端負責降級到軟體調光）。
+    func setPersistentFailureHandler(_ handler: @escaping @Sendable (CGDirectDisplayID) -> Void) {
+        enqueue { self.failureHandler = handler }
+    }
+
+    /// 目前服務世代（MainActor 刷新對帳用）。
+    var currentGeneration: UInt64 {
+        serviceGeneration.withLock { $0 }
+    }
+
     /// 在 queue 上做事並等結果，最多 `deadline`；到期回 `fallback`，晚到的結果丟掉。
+    /// `generation` 非 nil 時，執行前／提交前核對世代，過期則回 fallback。
     private func awaitQueue<T: Sendable>(
         _ name: String,
         deadline: Duration,
         fallback: T,
+        generation: UInt64? = nil,
         _ work: @escaping @Sendable () -> T
     ) async -> T {
         await withCheckedContinuation { continuation in
             let gate = DDCResultGate(continuation)
+            let deadlineInstant = origin.duration(to: .now) + deadline
             enqueue {
+                if self.origin.duration(to: .now) >= deadlineInstant {
+                    _ = gate.resume(fallback)
+                    return
+                }
+                if let generation, self.serviceGeneration.withLock({ $0 }) != generation {
+                    _ = gate.resume(fallback)
+                    return
+                }
                 self.ioHook?()
-                gate.resume(OperationMetrics.shared.measure(name, work))
+                let result = OperationMetrics.shared.measure(name, work)
+                if let generation, self.serviceGeneration.withLock({ $0 }) != generation {
+                    _ = gate.resume(fallback)
+                    return
+                }
+                gate.resume(result)
             }
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + deadline.millis / 1_000) {
                 if gate.resume(fallback) {
@@ -139,43 +188,51 @@ final class DDCController: @unchecked Sendable {
         }
     }
 
-    /// 音訊類 VCP（0x62/0x8D）持續失敗的回呼——只影響音量橋接，
-    /// 絕不連坐亮度（見 flushLocked 的分 VCP 計數）。
-    func setAudioFailureHandler(_ handler: @escaping @Sendable (CGDirectDisplayID) -> Void) {
-        enqueue { self.audioFailureHandler = handler }
-    }
-    private var failureHandler: (@Sendable (CGDirectDisplayID) -> Void)?
-
-    /// 註冊「DDC 持續失敗」回呼（呼叫端負責降級到軟體調光）。
-    func setPersistentFailureHandler(_ handler: @escaping @Sendable (CGDirectDisplayID) -> Void) {
-        enqueue { self.failureHandler = handler }
-    }
-
     /// 重新掃描 IORegistry 並配對 display ID ↔ IOAVService。
+    /// 未變的服務保留 pending／lastWritten／失敗計數；真正替換時只失效該服務快取。
     /// 回傳有 DDC 能力的 display ID 集合。
-    func refresh(displayIDs: [CGDirectDisplayID]) async -> Set<CGDirectDisplayID> {
-        await awaitQueue("ddc.refresh", deadline: refreshDeadline, fallback: []) {
-                guard AppleSiliconDDC.isArm64 else {
-                    self.services = [:]
-                    return []
-                }
-                let matches = AppleSiliconDDC.getServiceMatches(displayIDs: displayIDs)
-                var refreshed: [CGDirectDisplayID: IOAVService] = [:]
-                self.transports = [:]
-                for match in matches where !match.dummy && !match.discouraged {
-                    if let service = match.service {
-                        refreshed[match.displayID] = service
-                        self.transports[match.displayID] = (
-                            match.serviceDetails.transportUpstream,
-                            match.serviceDetails.transportDownstream
-                        )
-                    }
-                }
-                self.services = refreshed
+    func refresh(displayIDs: [CGDirectDisplayID], generation: UInt64? = nil) async -> Set<CGDirectDisplayID> {
+        let gen = generation ?? serviceGeneration.withLock { value in
+            value &+= 1
+            return value
+        }
+        if generation != nil {
+            serviceGeneration.withLock { $0 = gen }
+        }
+        return await awaitQueue("ddc.refresh", deadline: refreshDeadline, fallback: [], generation: gen) {
+            guard AppleSiliconDDC.isArm64 else {
+                self.services = [:]
                 self.pendingWrites = [:]
                 self.lastWritten = [:]
                 self.writeFailureCounts = [:]
-                return Set(refreshed.keys)
+                self.transports = [:]
+                self.publishDiagnosticsCacheLocked()
+                return []
+            }
+            let matches = AppleSiliconDDC.getServiceMatches(displayIDs: displayIDs)
+            var refreshed: [CGDirectDisplayID: IOAVService] = [:]
+            var newTransports: [CGDirectDisplayID: (upstream: String, downstream: String)] = [:]
+            for match in matches where !match.dummy && !match.discouraged {
+                if let service = match.service {
+                    refreshed[match.displayID] = service
+                    newTransports[match.displayID] = (
+                        match.serviceDetails.transportUpstream,
+                        match.serviceDetails.transportDownstream
+                    )
+                }
+            }
+
+            let oldIDs = Set(self.services.keys)
+            let newIDs = Set(refreshed.keys)
+            for id in oldIDs where !newIDs.contains(id) {
+                self.pendingWrites.removeValue(forKey: id)
+                self.lastWritten.removeValue(forKey: id)
+                self.writeFailureCounts.removeValue(forKey: id)
+            }
+            self.services = refreshed
+            self.transports = newTransports
+            self.publishDiagnosticsCacheLocked()
+            return newIDs
         }
     }
 
@@ -256,7 +313,10 @@ final class DDCController: @unchecked Sendable {
             let settled = now - self.lastRequestUptime >= Self.settleQuiet
             let overdue = now - self.lastFlushUptime >= Self.maxLatency
             if !suspended, settled || overdue {
+                let started = self.origin.duration(to: .now)
+                self.runningSince.withLock { $0 = started }
                 OperationMetrics.shared.measure("ddc.flush") { self.flushLocked(now: now) }
+                self.runningSince.withLock { $0 = nil }
             }
             if !self.pendingWrites.isEmpty {
                 self.scheduleTickLocked()
@@ -275,6 +335,7 @@ final class DDCController: @unchecked Sendable {
         for (displayID, vcpValues) in batch {
             guard let service = services[displayID] else { continue }
             for (vcp, value) in vcpValues {
+                self.ioHook?()
                 if AppleSiliconDDC.write(service: service, command: vcp, value: value) {
                     writeFailureCounts[displayID]?[vcp] = 0
                     lastWritten[displayID, default: [:]][vcp] = value
@@ -300,49 +361,212 @@ final class DDCController: @unchecked Sendable {
                 }
             }
         }
+        publishDiagnosticsCacheLocked()
     }
 
     // MARK: - 診斷
 
+    enum VCPReadStatus: Sendable, Equatable {
+        case value(current: UInt16, max: UInt16)
+        case unsupported
+        case timedOut
+        case skipped
+        case notRead
+
+        var tuple: (current: UInt16, max: UInt16)? {
+            if case let .value(current, max) = self { return (current, max) }
+            return nil
+        }
+    }
+
     struct Diagnostics: Sendable {
         let hasService: Bool
         let failureCounts: [UInt8: Int]
-        let brightness: (current: UInt16, max: UInt16)?
-        let contrast: (current: UInt16, max: UInt16)?
-        let inputSource: (current: UInt16, max: UInt16)?
-        let volume: (current: UInt16, max: UInt16)?
-        let mute: (current: UInt16, max: UInt16)?
+        let brightness: VCPReadStatus
+        let contrast: VCPReadStatus
+        let inputSource: VCPReadStatus
+        let volume: VCPReadStatus
+        let mute: VCPReadStatus
         /// IORegistry Transport（上游/下游）；DP→HDMI ＝ 轉換晶片、不透傳 DDC。
         let transport: (upstream: String, downstream: String)?
+        let snapshotAge: Duration?
+        let snapshotStale: Bool
+        let incomplete: Bool
+        let queueStuck: Bool
+        /// EDID 摘要（不含完整序號／原始區塊）。
+        let edid: EDIDSummary?
     }
 
-    /// 設定頁「DDC 診斷」：服務配對狀態＋五個 VCP 的讀值＋失敗計數。
-    /// 純讀取，不寫入。
+    /// 設定頁「DDC 診斷」：快取服務快照立即提供；五個 VCP 共用整體期限。
+    /// 同一顯示器同時只跑一份；queue 卡住時不再追加。
     func diagnostics(_ displayID: CGDirectDisplayID) async -> Diagnostics {
-        let (hasService, failures, transport) = await withCheckedContinuation { continuation in
-            enqueue {
-                continuation.resume(returning: (
-                    self.services[displayID] != nil,
-                    self.writeFailureCounts[displayID] ?? [:],
-                    self.transports[displayID]
-                ))
-            }
+        let stuck = isStuck
+        let cached = diagnosticsCache.withLock { $0[displayID] }
+        let now = origin.duration(to: .now)
+        let snapshotAge = cached.map { now - $0.capturedAt }
+        let snapshotStale = snapshotAge.map { $0 > diagnosticsDeadline } ?? true
+
+        if stuck {
+            return Diagnostics(
+                hasService: cached?.hasService ?? false,
+                failureCounts: cached?.failureCounts ?? [:],
+                brightness: .notRead,
+                contrast: .notRead,
+                inputSource: .notRead,
+                volume: .notRead,
+                mute: .notRead,
+                transport: cached?.transport,
+                snapshotAge: snapshotAge,
+                snapshotStale: snapshotStale,
+                incomplete: true,
+                queueStuck: true,
+                edid: nil
+            )
         }
-        let brightness = await read(displayID, vcp: VCP.brightness)
-        let contrast = await read(displayID, vcp: VCP.contrast)
-        let inputSource = await read(displayID, vcp: VCP.inputSource)
-        let volume = await read(displayID, vcp: VCP.volume)
-        let mute = await read(displayID, vcp: VCP.mute)
+
+        let shouldRun = diagnosticsInFlight.withLock { inflight -> Bool in
+            if inflight[displayID] == true { return false }
+            inflight[displayID] = true
+            return true
+        }
+        if !shouldRun {
+            return Diagnostics(
+                hasService: cached?.hasService ?? false,
+                failureCounts: cached?.failureCounts ?? [:],
+                brightness: .notRead,
+                contrast: .notRead,
+                inputSource: .notRead,
+                volume: .notRead,
+                mute: .notRead,
+                transport: cached?.transport,
+                snapshotAge: snapshotAge,
+                snapshotStale: snapshotStale,
+                incomplete: true,
+                queueStuck: false,
+                edid: nil
+            )
+        }
+        defer { diagnosticsInFlight.withLock { $0[displayID] = false } }
+
+        let snapshot: CachedDiagnosticsSnapshot = await awaitQueue(
+            "ddc.diagnostics.snapshot",
+            deadline: min(readDeadline, diagnosticsDeadline),
+            fallback: cached ?? CachedDiagnosticsSnapshot(
+                hasService: false,
+                failureCounts: [:],
+                transport: nil,
+                capturedAt: now
+            )
+        ) {
+            let snap = CachedDiagnosticsSnapshot(
+                hasService: self.services[displayID] != nil,
+                failureCounts: self.writeFailureCounts[displayID] ?? [:],
+                transport: self.transports[displayID],
+                capturedAt: self.origin.duration(to: .now)
+            )
+            self.diagnosticsCache.withLock { $0[displayID] = snap }
+            return snap
+        }
+
+        let deadline = ContinuousClock.now.advanced(by: diagnosticsDeadline)
+        var incomplete = false
+
+        func readOne(_ vcp: UInt8) async -> VCPReadStatus {
+            if ContinuousClock.now >= deadline {
+                incomplete = true
+                return .skipped
+            }
+            let remaining = ContinuousClock.now.duration(to: deadline)
+            guard !isStuck else {
+                incomplete = true
+                return .timedOut
+            }
+            let value: (current: UInt16, max: UInt16)? = await withCheckedContinuation { continuation in
+                let gate = DDCResultGate(continuation)
+                let readDeadline = min(self.readDeadline, remaining)
+                let deadlineInstant = self.origin.duration(to: .now) + readDeadline
+                self.enqueue {
+                    if self.origin.duration(to: .now) >= deadlineInstant {
+                        _ = gate.resume(nil)
+                        return
+                    }
+                    self.ioHook?()
+                    let result: (current: UInt16, max: UInt16)?
+                    if let service = self.services[displayID] {
+                        result = OperationMetrics.shared.measure("ddc.read") {
+                            AppleSiliconDDC.read(service: service, command: vcp)
+                        }
+                    } else {
+                        result = nil
+                    }
+                    gate.resume(result)
+                }
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + readDeadline.millis / 1_000) {
+                    if gate.resume(nil) {
+                        OperationMetrics.shared.end(
+                            OperationMetrics.shared.begin("ddc.read.timeout"),
+                            .timeout
+                        )
+                    }
+                }
+            }
+            if ContinuousClock.now >= deadline, value == nil {
+                incomplete = true
+                return .timedOut
+            }
+            if let value { return .value(current: value.current, max: value.max) }
+            return .unsupported
+        }
+
+        let brightness = await readOne(VCP.brightness)
+        let contrast = await readOne(VCP.contrast)
+        let inputSource = await readOne(VCP.inputSource)
+        let volume = await readOne(VCP.volume)
+        let mute = await readOne(VCP.mute)
+
+        let edid: EDIDSummary? = await awaitQueue(
+            "ddc.diagnostics.edid",
+            deadline: max(.milliseconds(100), min(readDeadline, max(.zero, ContinuousClock.now.duration(to: deadline)))),
+            fallback: nil
+        ) {
+            guard let service = self.services[displayID] else { return nil }
+            self.ioHook?()
+            guard let bytes = AppleSiliconDDC.readEDID(service: service) else { return nil }
+            return EDIDParser.parse(bytes)
+        }
+
+        let age = origin.duration(to: .now) - snapshot.capturedAt
         return Diagnostics(
-            hasService: hasService,
-            failureCounts: failures,
+            hasService: snapshot.hasService,
+            failureCounts: snapshot.failureCounts,
             brightness: brightness,
             contrast: contrast,
             inputSource: inputSource,
             volume: volume,
             mute: mute,
-            transport: transport
+            transport: snapshot.transport,
+            snapshotAge: age,
+            snapshotStale: age > diagnosticsDeadline,
+            incomplete: incomplete,
+            queueStuck: false,
+            edid: edid
         )
+    }
+
+    /// 只能在 queue 上呼叫：把目前服務狀態寫進快取。
+    private func publishDiagnosticsCacheLocked() {
+        let now = origin.duration(to: .now)
+        var cache: [CGDirectDisplayID: CachedDiagnosticsSnapshot] = [:]
+        let ids = Set(services.keys).union(writeFailureCounts.keys).union(transports.keys)
+        for id in ids {
+            cache[id] = CachedDiagnosticsSnapshot(
+                hasService: services[id] != nil,
+                failureCounts: writeFailureCounts[id] ?? [:],
+                transport: transports[id],
+                capturedAt: now
+            )
+        }
+        diagnosticsCache.withLock { $0 = cache }
     }
 }
 

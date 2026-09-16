@@ -151,6 +151,35 @@ public class AppleSiliconDDC: NSObject {
       && reply[4] == command  // 回的正是我們問的那個 VCP
   }
 
+  /// 讀取指定顯示器配對服務的 EDID（優先 IORegistry CFData，其次 I2C 0x50）。
+  /// 回傳原始位元組；呼叫端負責解析。失敗回 nil。
+  static public func readEDID(service: IOAVService?, registryEntry: io_service_t = 0) -> [UInt8]? {
+    if registryEntry != 0,
+       let unmanaged = IORegistryEntryCreateCFProperty(
+         registryEntry, "EDID" as CFString, kCFAllocatorDefault, IOOptionBits(kIORegistryIterateRecursively)
+       ),
+       let data = unmanaged.takeRetainedValue() as? Data,
+       data.count >= 128
+    {
+      return [UInt8](data)
+    }
+    guard let service else { return nil }
+    // DDC EDID 位址 0x50；一次讀 128 bytes base block
+    var block = [UInt8](repeating: 0, count: 128)
+    let ok = IOAVServiceReadI2C(service, 0x50, 0, &block, 128) == 0
+    guard ok, block[0] == 0x00, block[1] == 0xFF else { return nil }
+    let extensions = Int(block[126])
+    guard extensions > 0 else { return block }
+    var all = block
+    for index in 1...min(extensions, 3) {
+      var extra = [UInt8](repeating: 0, count: 128)
+      let offset = UInt32(index * 128)
+      guard IOAVServiceReadI2C(service, 0x50, offset, &extra, 128) == 0 else { break }
+      all.append(contentsOf: extra)
+    }
+    return all
+  }
+
   // DDC checksum calculator
   static func checksum(chk: UInt8, data: inout [UInt8], start: Int, end: Int) -> UInt8 {
     var chkd: UInt8 = chk

@@ -81,6 +81,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
     public var forceSoftwareDimming: [String]
     public var subZeroDimming: [String]
     public var disableDDCRead: [String]
+    /// 顯示模式偏好；跨機匯入不自動綁定。nil＝舊備份缺欄位。
+    public var displayModePreferences: [DisplayModePreference]?
     public var autoBrightnessEnabled: Bool
     public var ambientCurve: AmbientCurve
     public var ambientDisplayOffsets: [String: Double]
@@ -129,6 +131,7 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         forceSoftwareDimming: [String] = [],
         subZeroDimming: [String] = [],
         disableDDCRead: [String] = [],
+        displayModePreferences: [DisplayModePreference]? = nil,
         autoBrightnessEnabled: Bool = false,
         ambientCurve: AmbientCurve = AmbientCurve(),
         ambientDisplayOffsets: [String: Double] = [:],
@@ -173,6 +176,7 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         self.forceSoftwareDimming = forceSoftwareDimming.sorted()
         self.subZeroDimming = subZeroDimming.sorted()
         self.disableDDCRead = disableDDCRead.sorted()
+        self.displayModePreferences = displayModePreferences
         self.autoBrightnessEnabled = autoBrightnessEnabled
         self.ambientCurve = ambientCurve
         self.ambientDisplayOffsets = ambientDisplayOffsets
@@ -276,6 +280,7 @@ public enum BackupPortability {
         // 顯示器 UUID 為鍵的硬體怪癖與環境光設定：另一台的顯示器不是這幾台
         "forceSoftwareDimming", "subZeroDimming", "disableDDCRead",
         "ambientDisplayOffsets", "ambientExcludedDisplays",
+        "displayModePreferences",
         // 裝置 UID 為鍵：同理
         "hiddenAudioDevices", "audioBridgeDisabled", "excludedDevices",
         "softwareVolumeDevices", "outputPriority", "virtualTargetUID",
@@ -322,6 +327,7 @@ public extension DeviceBackup {
         result.forceSoftwareDimming = local.forceSoftwareDimming
         result.subZeroDimming = local.subZeroDimming
         result.disableDDCRead = local.disableDDCRead
+        result.displayModePreferences = local.displayModePreferences
         result.ambientDisplayOffsets = local.ambientDisplayOffsets
         result.ambientExcludedDisplays = local.ambientExcludedDisplays
         result.hiddenAudioDevices = local.hiddenAudioDevices

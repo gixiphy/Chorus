@@ -23,6 +23,7 @@ final class AppState {
     let virtualDriver: VirtualAudioDriverController
     let keepAwake: KeepAwakeController
     let emergencyRestore: EmergencyRestoreMonitor
+    let displayConfiguration: DisplayConfigurationController
     let automation: AutomationExecutor
     let sceneStore: SceneStore
     /// 限時場景（B7）：套用場景 → 倒數 → 結束時原樣放回去。
@@ -119,8 +120,9 @@ final class AppState {
 
         timeline.mark("advisor")
         // 能力（含 "als"）要在 sessionManager.start() 之前設定，Bonjour TXT 與 hello 才帶得到
-        var capabilities = ["display", "audio"]
+        var capabilities = ["display", "audio", "displayModes.v1"]
         if sensor.isAvailable { capabilities.append("als") }
+        // HDR 寫入未驗證前不宣告 displayHDR.v1；狀態仍可在本機 UI 顯示
         sessionManager.localCapabilities = capabilities
         pairing.localCapabilities = capabilities
 
@@ -144,6 +146,7 @@ final class AppState {
 
         keepAwake = KeepAwakeController(settings: settings, displayManager: displayManager)
         emergencyRestore = EmergencyRestoreMonitor(displayManager: displayManager)
+        displayConfiguration = DisplayConfigurationController(displayManager: displayManager)
 
         timeline.mark("keepAwake")
         displayManager.autoController = autoBrightness
@@ -151,6 +154,8 @@ final class AppState {
         displayManager.scenarioStore = scenarios
         displayManager.keepAwake = keepAwake
         displayManager.emergencyRestore = emergencyRestore
+        displayManager.configurationController = displayConfiguration
+        displayConfiguration.attach(displayManager: displayManager)
         AppStateRegistry.scenarioStore = scenarios
         AppStateRegistry.keepAwake = keepAwake
         coordinator.attachAutoController(autoBrightness)
@@ -210,7 +215,8 @@ final class AppState {
             coordinator: coordinator,
             pairedPeers: pairedPeers,
             sessionManager: sessionManager,
-            scenes: sceneStore
+            scenes: sceneStore,
+            displayConfiguration: displayConfiguration
         )
 
         timeline.mark("automation")

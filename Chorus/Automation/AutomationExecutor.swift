@@ -21,6 +21,8 @@ final class AutomationExecutor {
     private unowned let pairedPeers: PairedPeersStore
     private unowned let sessionManager: SyncSessionManager
     private unowned let scenes: SceneStore
+    /// 顯示模式試用（D5／D7）。
+    private weak var displayConfiguration: DisplayConfigurationController?
     /// 限時場景（B7-2）。**weak**：controller 反過來 unowned 持有 executor，
     /// 兩邊都強持有就是一個環。組裝順序上 controller 也比 executor 晚建立。
     weak var focus: FocusSessionController?
@@ -36,7 +38,8 @@ final class AutomationExecutor {
         coordinator: ControlCoordinator,
         pairedPeers: PairedPeersStore,
         sessionManager: SyncSessionManager,
-        scenes: SceneStore
+        scenes: SceneStore,
+        displayConfiguration: DisplayConfigurationController? = nil
     ) {
         self.settings = settings
         self.displayManager = displayManager
@@ -49,6 +52,11 @@ final class AutomationExecutor {
         self.pairedPeers = pairedPeers
         self.sessionManager = sessionManager
         self.scenes = scenes
+        self.displayConfiguration = displayConfiguration
+    }
+
+    func attachDisplayConfiguration(_ controller: DisplayConfigurationController) {
+        displayConfiguration = controller
     }
 
     /// 單一入口。所有錯誤都轉成帶 hint 的回應，不往外拋——
@@ -57,6 +65,14 @@ final class AutomationExecutor {
         do {
             let validated = try ControlRequestValidator.validate(request)
             if let peer = validated.peer {
+                if validated.verb == .perform,
+                   let action = validated.action,
+                   [.listDisplayModes, .trialDisplayMode, .confirmDisplayMode, .cancelDisplayMode].contains(action)
+                {
+                    throw ControlError.unsupported(
+                        String(localized: "顯示模式跨機需雙方宣告 displayModes.v1；第一版請在目標機本機執行（確認必須在可見 UI 上操作）")
+                    )
+                }
                 return try forward(validated, toPeerNamed: peer)
             }
             return try .success(runLocally(validated))
@@ -123,8 +139,173 @@ final class AutomationExecutor {
             return try endFocus()
         case .suggestOffsets:
             throw ControlError.unsupported(String(localized: "suggestOffsets 尚未接上顧問管線（B4-4）"))
+        case .listDisplayModes:
+            return try listDisplayModes(target: request.target)
+        case .trialDisplayMode:
+            return try trialDisplayMode(target: request.target, value: request.actionArgument)
+        case .confirmDisplayMode:
+            return try confirmDisplayMode(remote: request.peer != nil)
+        case .cancelDisplayMode:
+            return try cancelDisplayMode()
         case nil:
             throw ControlError.missingAction
+        }
+    }
+
+    // MARK: - 顯示模式（D7）
+
+    private func requireUniqueDisplay(_ target: ControlTarget) throws(ControlError) -> DisplayModel {
+        let models = try resolveDisplays(target)
+        guard models.count == 1, let model = models.first else {
+            throw ControlError.badValue(
+                "",
+                hint: String(localized: "顯示模式操作需要唯一的螢幕目標（請用 --display-uuid 或名稱縮小範圍）")
+            )
+        }
+        return model
+    }
+
+    private func listDisplayModes(target: ControlTarget) throws(ControlError) -> [ControlResult] {
+        guard let configuration = displayConfiguration else {
+            throw ControlError.unsupported(String(localized: "顯示模式控制尚未就緒"))
+        }
+        let model = try requireUniqueDisplay(target)
+        let catalog = configuration.catalog(for: model)
+        var results: [ControlResult] = [
+            ControlResult(
+                target: model.name,
+                property: "currentMode",
+                value: catalog.current.map { .string(DisplayModeValueCoding.encode($0)) } ?? .null
+            ),
+            ControlResult(
+                target: model.name,
+                property: "writable",
+                value: .bool(catalog.writable)
+            ),
+        ]
+        for entry in catalog.entries {
+            results.append(ControlResult(
+                target: model.name,
+                property: entry.isCurrent ? "mode.current" : (entry.isCommon ? "mode.common" : "mode.advanced"),
+                value: .string(DisplayModeValueCoding.encode(entry.mode))
+            ))
+        }
+        return results
+    }
+
+    private func trialDisplayMode(target: ControlTarget, value: String?) throws(ControlError) -> [ControlResult] {
+        guard let configuration = displayConfiguration else {
+            throw ControlError.unsupported(String(localized: "顯示模式控制尚未就緒"))
+        }
+        let model = try requireUniqueDisplay(target)
+        guard let text = value?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty,
+              let candidate = DisplayModeValueCoding.decode(text)
+        else {
+            throw ControlError.badValue(
+                value ?? "",
+                hint: String(localized: "格式：1920x1080@60 或 1512x982@120p3024x1964")
+            )
+        }
+        let catalog = configuration.catalog(for: model)
+        guard let resolved = DisplayModeCatalog.resolve(preference: candidate, in: catalog.entries.map(\.mode)) else {
+            throw ControlError.badValue(text, hint: String(localized: "此螢幕沒有相符的模式"))
+        }
+        guard configuration.beginTrial(displayUUID: model.uuid, candidate: resolved) else {
+            throw ControlError.unsupported(
+                configuration.lastErrorMessage ?? String(localized: "無法開始模式試用")
+            )
+        }
+        return modeTransactionResults(configuration, displayName: model.name)
+    }
+
+    private func confirmDisplayMode(remote: Bool) throws(ControlError) -> [ControlResult] {
+        // 第一版：遠端不可代按「保留」，必須在被控 Mac 上可見確認
+        if remote {
+            throw ControlError.unsupported(String(localized: "模式確認必須在被控制的 Mac 上操作（可見倒數視窗）"))
+        }
+        guard let configuration = displayConfiguration, configuration.isActive else {
+            throw ControlError.unsupported(String(localized: "目前沒有進行中的模式試用"))
+        }
+        configuration.confirm()
+        return modeTransactionResults(configuration, displayName: configuration.activeDisplayUUID ?? "display")
+    }
+
+    private func cancelDisplayMode() throws(ControlError) -> [ControlResult] {
+        guard let configuration = displayConfiguration,
+              configuration.isActive || configuration.phase == .recoveryNeeded
+        else {
+            throw ControlError.unsupported(String(localized: "目前沒有進行中的模式試用"))
+        }
+        configuration.cancel()
+        return modeTransactionResults(configuration, displayName: configuration.activeDisplayUUID ?? "display")
+    }
+
+    private func modeTransactionResults(
+        _ configuration: DisplayConfigurationController,
+        displayName: String
+    ) -> [ControlResult] {
+        var results = [
+            ControlResult(target: displayName, property: "phase", value: .string(configuration.phase.rawValue)),
+        ]
+        if let candidate = configuration.candidateMode {
+            results.append(ControlResult(
+                target: displayName,
+                property: "candidate",
+                value: .string(DisplayModeValueCoding.encode(candidate))
+            ))
+        }
+        if let deadline = configuration.confirmationDeadline {
+            results.append(ControlResult(
+                target: displayName,
+                property: "deadline",
+                value: .string(deadline.formatted(.iso8601))
+            ))
+        }
+        if let remaining = configuration.remainingSeconds {
+            results.append(ControlResult(
+                target: displayName,
+                property: "remainingSeconds",
+                value: .number(remaining)
+            ))
+        }
+        if let reason = configuration.lastEndReason {
+            results.append(ControlResult(
+                target: displayName,
+                property: "endReason",
+                value: .string(reason.rawValue)
+            ))
+        }
+        return results
+    }
+
+    /// 場景套用前：模式相關動作需唯一目標且模式存在。
+    private func preflightScene(_ scene: ControlScene) throws(ControlError) {
+        for request in scene.requests {
+            guard request.verb == .perform,
+                  request.action == .trialDisplayMode || request.action == .listDisplayModes
+            else { continue }
+            let validated = try ControlRequestValidator.validate(request)
+            let model = try requireUniqueDisplay(validated.target)
+            if request.action == .trialDisplayMode {
+                guard let text = validated.actionArgument,
+                      let candidate = DisplayModeValueCoding.decode(text)
+                else {
+                    throw ControlError.badValue(
+                        validated.actionArgument ?? "",
+                        hint: String(localized: "場景內 trialDisplayMode 的模式格式無效")
+                    )
+                }
+                guard let configuration = displayConfiguration else {
+                    throw ControlError.unsupported(String(localized: "顯示模式控制尚未就緒"))
+                }
+                let modes = configuration.catalog(for: model).entries.map(\.mode)
+                guard DisplayModeCatalog.resolve(preference: candidate, in: modes) != nil else {
+                    throw ControlError.badValue(
+                        text,
+                        hint: String(localized: "場景預檢失敗：\(model.name) 沒有模式 \(text)")
+                    )
+                }
+            }
         }
     }
 
@@ -192,17 +373,20 @@ final class AutomationExecutor {
                 ? String(localized: "還沒有任何場景")
                 : String(localized: "目前的場景：") + scenes.scenes.map(\.name).joined(separator: String(localized: "、")))
         }
+        try preflightScene(scene)
         var results: [ControlResult] = []
         for request in scene.requests {
-            // 場景裡不執行 perform：場景包場景會無限遞迴，
-            // 與其做迴圈偵測，不如一開始就不允許。
-            guard request.verb != .perform else {
-                results.append(ControlResult(
-                    target: scene.name,
-                    property: "skipped",
-                    value: .string(String(localized: "場景內不支援 perform"))
-                ))
-                continue
+            // 場景可含 trialDisplayMode（預檢後套用）；其餘 perform 仍拒絕，
+            // 避免 runScene 包 runScene。確認必須走可見 UI，不在場景內代按。
+            if request.verb == .perform {
+                guard request.action == .trialDisplayMode else {
+                    results.append(ControlResult(
+                        target: scene.name,
+                        property: "skipped",
+                        value: .string(String(localized: "場景內僅支援 trialDisplayMode，其餘 perform 已略過"))
+                    ))
+                    continue
+                }
             }
             let response = execute(request)
             if let ok = response.results {
@@ -213,6 +397,27 @@ final class AutomationExecutor {
                     property: "error",
                     value: .string(error.message)
                 ))
+                // 模式試用失敗：暫停後續有相依動作，回報部分完成
+                if request.verb == .perform, request.action == .trialDisplayMode {
+                    results.append(ControlResult(
+                        target: scene.name,
+                        property: "partial",
+                        value: .string(String(localized: "模式試用失敗，已暫停後續場景動作"))
+                    ))
+                    break
+                }
+            }
+            // 進入待確認：暫停後續，等本機可見 UI 確認／逾時還原
+            if request.verb == .perform,
+               request.action == .trialDisplayMode,
+               displayConfiguration?.phase == .awaitingConfirmation
+            {
+                results.append(ControlResult(
+                    target: scene.name,
+                    property: "awaitingConfirmation",
+                    value: .bool(true)
+                ))
+                break
             }
         }
         return results
@@ -859,7 +1064,12 @@ extension AutomationExecutor: FocusExecuting {
         var keepAwakeRemaining: Double?
 
         for request in scene.requests {
-            // 場景內不執行 perform（runScene 已擋），快照也不看它
+            // set／toggle 進快照；trialDisplayMode 有自己的 15 秒還原，記為不可還原
+            // （限時場景到期不應再碰模式，避免覆蓋使用者確認後的配置）。
+            if request.verb == .perform, request.action == .trialDisplayMode {
+                unrestorable.append(String(localized: "顯示模式試用（由模式交易自行還原）"))
+                continue
+            }
             guard request.verb == .set || request.verb == .toggle,
                   let property = request.property
             else { continue }

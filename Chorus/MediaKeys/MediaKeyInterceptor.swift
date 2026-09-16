@@ -151,11 +151,16 @@ final class MediaKeyInterceptor {
             return true
 
         case Self.keyBrightnessUp, Self.keyBrightnessDown:
-            guard let displayManager,
-                  Self.shouldInterceptBrightness(backends: displayManager.displays.map(\.backend))
-            else { return false }
-            if key.isDown { handleBrightness(up: key.keyCode == Self.keyBrightnessUp, manager: displayManager) }
-            return true
+            guard let displayManager else { return false }
+            if Self.shouldInterceptBrightness(backends: displayManager.displays.map(\.backend)) {
+                if key.isDown { handleBrightness(up: key.keyCode == Self.keyBrightnessUp, manager: displayManager) }
+                return true
+            }
+            // 有 DisplayServices 顯示器：放行原生處理，但排程快速讀回對帳
+            if key.isDown {
+                displayManager.scheduleNativeBrightnessReadback()
+            }
+            return false
 
         default:
             return false

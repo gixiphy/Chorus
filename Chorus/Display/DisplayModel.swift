@@ -16,12 +16,17 @@ enum BrightnessBackend: String, Sendable {
 /// 單一顯示器的可觀察狀態。
 @MainActor
 @Observable
-final class DisplayModel: Identifiable {
-    let id: CGDirectDisplayID
+final class DisplayModel: @MainActor Identifiable {
     /// 跨重啟穩定的識別碼（同步協定與設定都以此為 key）。
     let uuid: String
     let name: String
     let isBuiltin: Bool
+    /// 執行期 display ID；拓撲不變但系統重編號時由 DisplayManager 更新綁定。
+    private(set) var id: CGDirectDisplayID
+
+    func rebind(displayID: CGDirectDisplayID) {
+        id = displayID
+    }
     /// DDC 持續失敗時會被 DisplayManager 降級為 .gammaOnly。
     private(set) var backend: BrightnessBackend
     /// 螢幕自報的 VCP 0x10 值域上限。多數螢幕是 100，但協定允許任意值
@@ -54,6 +59,15 @@ final class DisplayModel: Identifiable {
     /// UI 顯示的 0–1 亮度值（樂觀更新：先動 UI 再寫硬體）。
     var brightness: Double
 
+    /// 目前顯示模式摘要（D4 唯讀；nil＝尚未探測）。
+    var modeSummary: String?
+    /// 目前模式描述（供設定窗比對）。
+    var currentMode: DisplayModeDescriptor?
+    /// 是否處於鏡像組（第一版禁止寫入模式）。
+    var isMirrored: Bool = false
+    /// HDR 狀態字串（unsupported／unknown／on／off）；僅供顯示。
+    var hdrStatus: String?
+
     init(
         id: CGDirectDisplayID,
         uuid: String,
@@ -67,7 +81,11 @@ final class DisplayModel: Identifiable {
         contrast: Double? = nil,
         ddcContrastMax: UInt16 = 100,
         supportsDDCPower: Bool = false,
-        powerLayer: DisplayPowerLayer = .gammaBlackout
+        powerLayer: DisplayPowerLayer = .gammaBlackout,
+        modeSummary: String? = nil,
+        currentMode: DisplayModeDescriptor? = nil,
+        isMirrored: Bool = false,
+        hdrStatus: String? = nil
     ) {
         self.id = id
         self.uuid = uuid
@@ -82,6 +100,10 @@ final class DisplayModel: Identifiable {
         self.ddcContrastMax = max(ddcContrastMax, 1)
         self.supportsDDCPower = supportsDDCPower
         self.powerLayer = powerLayer
+        self.modeSummary = modeSummary
+        self.currentMode = currentMode
+        self.isMirrored = isMirrored
+        self.hdrStatus = hdrStatus
     }
 
     var hasHardwareControl: Bool {
