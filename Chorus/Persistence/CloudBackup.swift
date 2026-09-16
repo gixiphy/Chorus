@@ -155,7 +155,6 @@ final class CloudBackup {
             syncBrightnessEnabled: settings.syncBrightnessEnabled,
             syncVolumeEnabled: settings.syncVolumeEnabled,
             advisorEngineID: settings.advisorEngineID,
-            advisorModelIDs: settings.advisorModelIDs,
             advisorDisabledEngines: Array(settings.advisorDisabledEngines),
             advisorCustomPaths: settings.advisorCustomPaths,
             automationServerEnabled: settings.automationServerEnabled,
@@ -209,7 +208,6 @@ final class CloudBackup {
         settings.syncBrightnessEnabled = backup.syncBrightnessEnabled
         settings.syncVolumeEnabled = backup.syncVolumeEnabled
         settings.advisorEngineID = backup.advisorEngineID
-        settings.advisorModelIDs = backup.advisorModelIDs
         settings.advisorDisabledEngines = Set(backup.advisorDisabledEngines)
         settings.advisorCustomPaths = backup.advisorCustomPaths
         settings.automationServerEnabled = backup.automationServerEnabled

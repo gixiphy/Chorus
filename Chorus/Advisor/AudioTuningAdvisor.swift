@@ -12,14 +12,12 @@ protocol AudioAdviceProviding: Sendable {
 struct CLIAudioAdviceProvider: AudioAdviceProviding {
     let engine: KnownCLIEngine
     let executable: URL
-    var model: String?
     var timeout: Duration = .seconds(120)
 
     func advise(context: AudioTuningContext, sandbox: URL?) async throws -> AudioTuningAdvice {
         let run = KnownCLIEngine.RunContext(
             sandbox: sandbox,
             schemaFile: CLIAdviceExecution.writeSchema(AudioAdvicePrompt.schemaJSON(), into: sandbox),
-            model: engine.supportsModelSelection ? model : nil,
             timeout: timeout
         )
         return try await CLIAdviceExecution.perform(
@@ -57,7 +55,7 @@ struct AudioTuningResult: Identifiable {
 }
 
 /// 音訊調音顧問協調者：組 context、呼叫引擎、sanitize、套用／單層還原。
-/// 引擎選擇與模型設定**共用**光環境顧問的 registry——設定頁只有一組。
+/// 引擎選擇**共用**光環境顧問的 registry——設定頁只有一組。
 @MainActor
 @Observable
 final class AudioTuningAdvisor {
@@ -105,8 +103,7 @@ final class AudioTuningAdvisor {
         }
         let provider = CLIAudioAdviceProvider(
             engine: engine.engine,
-            executable: engine.url,
-            model: settings.advisorModelIDs[engine.id]
+            executable: engine.url
         )
         run(provider: provider, target: target, request: request)
     }

@@ -298,17 +298,41 @@ struct CLIAdviceProviderTests {
         }
     }
 
+    /// 各 codec 的最小合法輸出：stub 得回一份解得開的答案，否則測 argv 之前
+    /// 就先在 decode 那關失敗（還會多跑一次重試）。
+    private func stdoutScript(for engine: KnownCLIEngine) -> String {
+        let payload: String
+        switch engine.codec {
+        case .jsonEnvelope:
+            payload = envelopeJSON(["type": "result", "is_error": false, "result": Self.validAdviceJSON])
+        case .responseEnvelope:
+            payload = envelopeJSON(["status": "SUCCESS", "response": Self.validAdviceJSON])
+        case .textEnvelope:
+            payload = envelopeJSON(["text": Self.validAdviceJSON, "stopReason": "end_turn"])
+        case .plainStdout:
+            payload = Self.validAdviceJSON
+        }
+        return """
+        cat <<'CHORUS_EOF'
+        \(payload)
+        CHORUS_EOF
+        """
+    }
+
+    private func envelopeJSON(_ object: [String: Any]) -> String {
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        return String(data: data, encoding: .utf8)!
+    }
+
     /// 把整組 argv 逐行寫出來，斷言各引擎的呼叫契約。
     private func captureArgv(engineID: String, photos: [String]) async throws -> [String] {
         let capture = FileManager.default.temporaryDirectory
             .appendingPathComponent("chorus-argv-\(UUID().uuidString).txt")
+        let engine = KnownCLIEngine.catalog.first { $0.id == engineID }!
         let stub = try makeStub("""
         printf '%s@@ARG@@' "$@" > "\(capture.path)"
-        cat <<'CHORUS_EOF'
-        \(Self.validAdviceJSON)
-        CHORUS_EOF
+        \(stdoutScript(for: engine))
         """)
-        let engine = KnownCLIEngine.catalog.first { $0.id == engineID }!
         let provider = CLIAdviceProvider(engine: engine, executable: stub)
         _ = try await provider.advise(
             photos: photos.map { LabeledPhoto(path: $0) },
@@ -368,30 +392,6 @@ struct CLIAdviceProviderTests {
         // 附加模式不該再把路徑寫進 prompt
         let promptText = argv.last ?? ""
         #expect(!promptText.contains("/tmp/a.jpg"))
-    }
-
-    @Test("pi：有模型時帶 --model，@path 仍排在 prompt 前")
-    func piInvocationIncludesModel() {
-        let engine = KnownCLIEngine.catalog.first { $0.id == "pi" }!
-        let run = KnownCLIEngine.RunContext(
-            sandbox: nil,
-            schemaFile: nil,
-            model: "opencode-go/kimi-k2.7-code",
-            photoPaths: ["/tmp/a.jpg"]
-        )
-        let (arguments, stdin) = engine.invocation(prompt: "analyze this", run: run)
-        #expect(stdin == nil)
-        #expect(arguments.first == "-p")
-        guard let modelFlag = arguments.firstIndex(of: "--model"),
-              let photo = arguments.firstIndex(of: "@/tmp/a.jpg"),
-              let prompt = arguments.firstIndex(of: "analyze this")
-        else {
-            Issue.record("argv 形狀不符：\(arguments)")
-            return
-        }
-        #expect(arguments[modelFlag + 1] == "opencode-go/kimi-k2.7-code")
-        #expect(modelFlag < photo)
-        #expect(photo < prompt)
     }
 
     @Test("opencode：訊息必須排在 -f 前面，否則會被當成檔案路徑吃掉")
@@ -474,5 +474,104 @@ struct CLIAdviceProviderTests {
             #expect(engineID == "agy")
             #expect(detail.contains("read_file"))
         }
+    }
+
+    @Test("模型一律用 CLI 預設：目錄裡沒有一家的 argv 帶 --model／-m")
+    func noEngineAsksForAModel() {
+        for engine in KnownCLIEngine.catalog {
+            let run = KnownCLIEngine.RunContext(
+                sandbox: URL(fileURLWithPath: "/tmp/sandbox"),
+                schemaFile: URL(fileURLWithPath: "/tmp/sandbox/schema.json"),
+                photoPaths: ["/tmp/a.jpg"]
+            )
+            let (arguments, _) = engine.invocation(prompt: "analyze this", run: run)
+            #expect(!arguments.contains("--model"), "\(engine.id) 還在帶 --model")
+            #expect(!arguments.contains("-m"), "\(engine.id) 還在帶 -m")
+        }
+    }
+
+    @Test("cursor-agent：唯讀 ask 模式＋--trust，prompt 排最後")
+    func cursorAgentArgv() async throws {
+        let argv = try await captureArgv(engineID: "cursor", photos: ["/tmp/a.jpg"])
+        #expect(argv.first == "-p")
+        // --mode ask 是唯讀；--trust 免掉非 TTY 下會掛住的「信任這個目錄嗎」
+        guard let mode = argv.firstIndex(of: "--mode") else {
+            Issue.record("缺少 --mode：\(argv)")
+            return
+        }
+        #expect(argv[mode + 1] == "ask")
+        #expect(argv.contains("--trust"))
+        #expect(argv.last?.contains("attached to this message") == true)
+    }
+
+    @Test("amp：prompt 走 stdin，argv 只有 -x")
+    func ampSendsPromptOnStdin() async throws {
+        let capture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-amp-\(UUID().uuidString).txt")
+        let stub = try makeStub("""
+        cat > "\(capture.path)"
+        printf '%s@@ARGV@@' "$@" >> "\(capture.path)"
+        cat <<'CHORUS_EOF'
+        \(Self.validAdviceJSON)
+        CHORUS_EOF
+        """)
+        let amp = KnownCLIEngine.catalog.first { $0.id == "amp" }!
+        let provider = CLIAdviceProvider(engine: amp, executable: stub)
+        _ = try await provider.advise(
+            photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil
+        )
+        let dump = try String(contentsOf: capture, encoding: .utf8)
+        try? FileManager.default.removeItem(at: capture)
+        // stdin 收到 prompt，argv 只有 -x（prompt 不重複出現在參數裡）
+        #expect(dump.contains("id=display:AAA"))
+        #expect(dump.hasSuffix("-x@@ARGV@@"))
+    }
+
+    @Test("goose：extraEnvironment 合進子行程環境")
+    func gooseExtraEnvironment() async throws {
+        let capture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-goose-\(UUID().uuidString).txt")
+        let stub = try makeStub("""
+        printf '%s\n' "$GOOSE_MODE" "$GOOSE_DISABLE_SESSION_NAMING" > "\(capture.path)"
+        printf '%s@@ARG@@' "$@" >> "\(capture.path)"
+        cat <<'CHORUS_EOF'
+        \(Self.validAdviceJSON)
+        CHORUS_EOF
+        """)
+        let goose = KnownCLIEngine.catalog.first { $0.id == "goose" }!
+        #expect(goose.extraEnvironment["GOOSE_MODE"] == "chat")
+        let provider = CLIAdviceProvider(engine: goose, executable: stub)
+        _ = try await provider.advise(
+            photos: [LabeledPhoto(path: "/tmp/a.jpg")], context: context, sandbox: nil
+        )
+        let dump = try String(contentsOf: capture, encoding: .utf8)
+        try? FileManager.default.removeItem(at: capture)
+        #expect(dump.hasPrefix("chat\n1\n"))
+        #expect(dump.contains("run@@ARG@@-t@@ARG@@"))
+        #expect(dump.contains("--no-session@@ARG@@-q@@ARG@@"))
+    }
+
+    @Test("hermes：prompt 必須緊跟在 -z 後面")
+    func hermesPromptFollowsOneshotFlag() async throws {
+        // -z／--oneshot 吃 prompt 當自己的引數。把 prompt 排到別的旗標後面，
+        // hermes 0.21.3 會回「expected one argument」直接退出（實測踩過）。
+        let argv = try await captureArgv(engineID: "hermes", photos: ["/tmp/a.jpg"])
+        #expect(argv.first == "-z")
+        #expect(argv.count > 1)
+        #expect(argv[1].contains("attached to this message"))
+        #expect(argv.contains("--safe-mode"))
+        #expect(argv.contains("--ignore-rules"))
+    }
+
+    @Test("droid：exec -o json")
+    func droidArgv() async throws {
+        let argv = try await captureArgv(engineID: "droid", photos: ["/tmp/a.jpg"])
+        #expect(argv.first == "exec")
+        guard let format = argv.firstIndex(of: "-o") else {
+            Issue.record("缺少 -o：\(argv)")
+            return
+        }
+        #expect(argv[format + 1] == "json")
+        #expect(argv.last?.contains("attached to this message") == true)
     }
 }

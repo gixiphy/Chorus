@@ -48,8 +48,6 @@ final class SettingsStore {
         static let advisorEngineID = "chorus.advisor.engineID"
         static let advisorCustomPaths = "chorus.advisor.customPaths"
         static let advisorConfirmed = "chorus.advisor.confirmed"
-        static let advisorModelIDs = "chorus.advisor.modelIDs"
-        static let advisorModelCache = "chorus.advisor.modelCache"
         static let advisorDisabledEngines = "chorus.advisor.disabledEngines"
         static let audioTaps = "chorus.audio.tapsEnabled"
         static let appAudio = "chorus.audio.appSettings"
@@ -244,21 +242,6 @@ final class SettingsStore {
     /// 首次分析的「照片將交給本機 CLI」確認已被記住。
     var advisorConfirmed: Bool {
         didSet { defaults.set(advisorConfirmed, forKey: Key.advisorConfirmed) }
-    }
-
-    /// 各引擎的自訂模型字串（engine id → 模型名）。留空＝用 CLI 自己的預設。
-    ///
-    /// 刻意**不做**「執行 `<cli> models` 列出可選項」：只有 agy 有這種指令，
-    /// 而它實測會無限期卡住（1.1.22）；其餘 CLI 根本沒有列舉介面。
-    /// 一個自由輸入欄位對五個引擎都成立，也不必為了一份清單去打網路。
-    var advisorModelIDs: [String: String] {
-        didSet { defaults.set(advisorModelIDs, forKey: Key.advisorModelIDs) }
-    }
-
-    /// 模型清單快取（"engineID|version" → slugs）。以 CLI 版本為鍵：
-    /// 版本沒變就用快取，升版即重抓——列舉要打網路，不該每次開設定頁都跑。
-    var advisorModelCache: [String: [String]] {
-        didSet { defaults.set(advisorModelCache, forKey: Key.advisorModelCache) }
     }
 
     /// 被使用者停用的引擎（engine id）。停用＝不准 spawn、也不成為回落對象
@@ -525,8 +508,6 @@ final class SettingsStore {
         builtinLanguage = defaults.string(forKey: Key.builtinLanguage)
         advisorCustomPaths = (defaults.dictionary(forKey: Key.advisorCustomPaths) as? [String: String]) ?? [:]
         advisorConfirmed = defaults.bool(forKey: Key.advisorConfirmed)
-        advisorModelIDs = (defaults.dictionary(forKey: Key.advisorModelIDs) as? [String: String]) ?? [:]
-        advisorModelCache = (defaults.dictionary(forKey: Key.advisorModelCache) as? [String: [String]]) ?? [:]
         advisorDisabledEngines = Set(defaults.stringArray(forKey: Key.advisorDisabledEngines) ?? [])
         audioTapsEnabled = defaults.bool(forKey: Key.audioTaps)
         if let data = defaults.data(forKey: Key.appAudio),

@@ -182,7 +182,7 @@ struct UITranslatorTests {
         let registry = AdviceEngineRegistry(settings: settings, scanOnInit: false)
         registry.injectDetected([.init(
             engine: KnownCLIEngine.catalog.first { $0.id == "codex" }!,
-            url: URL(fileURLWithPath: "/usr/bin/true"), version: nil
+            url: URL(fileURLWithPath: "/usr/bin/true"), probe: .ready(version: nil)
         )])
         return (
             UITranslator(store: store, settings: settings, registry: registry, languageDefaults: defaults),
@@ -393,7 +393,7 @@ struct UITranslatorTests {
         let registry = AdviceEngineRegistry(settings: settings, scanOnInit: false)
         registry.injectDetected([.init(
             engine: KnownCLIEngine.catalog.first { $0.id == "codex" }!,
-            url: URL(fileURLWithPath: "/usr/bin/true"), version: nil
+            url: URL(fileURLWithPath: "/usr/bin/true"), probe: .ready(version: nil)
         )])
         let translator = UITranslator(
             store: store, settings: settings, registry: registry, languageDefaults: defaults

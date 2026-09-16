@@ -418,6 +418,20 @@ final class TestHooks {
                     appState.audioTuner.debugInject(target: target, adviceJSON: String(fields[2]))
                 }
             }
+        case "analyzeAudioReal":
+            // value = "<engineID>|<bundleID>|<需求>"；設定引擎後跑**真實**的調音分析
+            //（不走 FakeAudioAdviceProvider）。純文字引擎的端到端驗收走這條——
+            // 它不需要照片，所以沒有 .vision 的引擎也測得到。
+            if let raw = info["value"] {
+                let fields = raw.split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false)
+                if fields.count == 3 {
+                    appState.settings.advisorEngineID = String(fields[0])
+                    appState.audioTuner.analyze(
+                        target: .app(bundleID: String(fields[1])),
+                        request: String(fields[2])
+                    )
+                }
+            }
         case "applyAudioAdvice":
             appState.audioTuner.debugApply()
         case "appReset":
@@ -497,16 +511,10 @@ final class TestHooks {
             appState.focus.retryPendingRestores()
         case "focusRelaunch":
             appState.focus.simulateRelaunchForTesting()
-        case "setAdvisorModel":
-            // value = "<engineID>:<模型>"；空模型＝清掉（用 CLI 預設）
-            if let raw = info["value"] {
-                let parts = raw.split(separator: ":", maxSplits: 1)
-                if let engineID = parts.first.map(String.init) {
-                    let model = parts.count == 2 ? String(parts[1]) : ""
-                    var ids = appState.settings.advisorModelIDs
-                    if model.isEmpty { ids.removeValue(forKey: engineID) } else { ids[engineID] = model }
-                    appState.settings.advisorModelIDs = ids
-                }
+        case "setAdvisorEngine":
+            // value = engineID。模型一律用該 CLI 自己的預設，沒有模型可設。
+            if let engineID = info["value"], !engineID.isEmpty {
+                appState.settings.advisorEngineID = engineID
             }
         case "analyzeReal":
             // value = "<engineID>:<照片路徑>"；設定引擎與背景照後跑**真實**分析
@@ -763,7 +771,7 @@ final class TestHooks {
                 "historyCount": appState.advisor.history.count,
                 "lastError": appState.advisor.lastErrorMessage.map { $0 as Any } ?? NSNull(),
                 "activeEngine": appState.advisor.registry.activeEngine.map { $0.id as Any } ?? NSNull(),
-                "models": appState.advisor.registry.models,
+                "availableEngines": appState.advisor.registry.available.map(\.id),
                 "sceneSummary": appState.advisor.result?.advice.sceneSummary as Any? ?? NSNull(),
             ] as [String: Any],
             "keepAwake": [

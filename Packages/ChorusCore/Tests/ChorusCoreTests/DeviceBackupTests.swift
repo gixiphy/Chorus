@@ -49,7 +49,6 @@ struct DeviceBackupTests {
             syncBrightnessEnabled: flag,
             syncVolumeEnabled: flag,
             advisorEngineID: "engine-\(tag)",
-            advisorModelIDs: ["e": "m-\(tag)"],
             advisorDisabledEngines: ["dis-\(tag)"],
             advisorCustomPaths: ["e": "/path/\(tag)"],
             automationServerEnabled: flag,

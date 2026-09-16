@@ -535,6 +535,22 @@
         }
       }
     },
+    "/opt/homebrew/bin/%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "/opt/homebrew/bin/%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "/opt/homebrew/bin/%@"
+          }
+        }
+      }
+    },
     "1 小時" : {
       "localizations" : {
         "en" : {
@@ -1216,6 +1232,7 @@
       }
     },
     "provider/model 格式" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1232,6 +1249,7 @@
       }
     },
     "provider/model 格式，如 opencode-go/kimi-k2.7-code" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1264,6 +1282,7 @@
       }
     },
     "slug，如 gemini-3.1-pro-high、claude-sonnet-4-6" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2130,6 +2149,7 @@
       }
     },
     "使用預設" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2799,6 +2819,7 @@
       }
     },
     "別名 opus／sonnet／fable，或完整名稱如 claude-opus-5" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3214,6 +3235,22 @@
         }
       }
     },
+    "另有 %lld 支已安裝但無法執行：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld more installed but not runnable: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "另有 %lld 个已安装但无法执行：%@"
+          }
+        }
+      }
+    },
     "只在 macOS 原生處理不了時接手：螢幕喇叭（HDMI/DP）的音量鍵、沒有內建螢幕機器（如 Mac mini）的亮度鍵。其餘按鍵行為維持原生。" : {
       "localizations" : {
         "en" : {
@@ -3302,6 +3339,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "可一次选择多张（最多 %lld 张）：第一张作为配置图背景与坐标基准，其余为分析用补充视角。拍摄不同照明情境（白天／夜晚／仅开挂灯）并分别标注，分析会更准确"
+          }
+        }
+      }
+    },
+    "可用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ready"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可用"
           }
         }
       }
@@ -3510,6 +3563,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "同步项目"
+          }
+        }
+      }
+    },
+    "名單裡的 CLI 都已偵測到。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Every CLI on the list was detected."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名单里的 CLI 都已检测到。"
           }
         }
       }
@@ -3770,6 +3839,22 @@
         }
       }
     },
+    "執行檔完整路徑" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full path to the executable"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可执行文件完整路径"
+          }
+        }
+      }
+    },
     "場景" : {
       "localizations" : {
         "en" : {
@@ -3895,6 +3980,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "填入常用的照明情境"
+          }
+        }
+      }
+    },
+    "填好按 Return 會立刻重新掃描。掃描順序：自訂路徑 → PATH → 常見安裝位置。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Press Return to rescan right away. Scan order: custom path, then PATH, then common install locations."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "填好按 Return 会立刻重新扫描。扫描顺序：自定义路径 → PATH → 常见安装位置。"
           }
         }
       }
@@ -4151,6 +4252,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "安装失败：%@"
+          }
+        }
+      }
+    },
+    "安裝後按重新掃描" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install one, then press Rescan"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装后按重新扫描"
           }
         }
       }
@@ -4728,6 +4845,7 @@
       }
     },
     "已安裝" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -5227,6 +5345,22 @@
         }
       }
     },
+    "引擎" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Engine"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "引擎"
+          }
+        }
+      }
+    },
     "強制軟體調光" : {
       "localizations" : {
         "en" : {
@@ -5244,6 +5378,7 @@
       }
     },
     "待接入" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -5260,6 +5395,7 @@
       }
     },
     "從 %@ 回報的清單挑選" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -5431,6 +5567,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "找不到“%@”——插件可能已移除"
+          }
+        }
+      }
+    },
+    "找不到你的 CLI？" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cannot find your CLI?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "找不到你的 CLI？"
           }
         }
       }
@@ -5676,6 +5828,7 @@
       }
     },
     "掃描順序：自訂路徑 → PATH → 常見安裝位置。找不到時可在上方填入執行檔完整路徑。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -5911,6 +6064,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜索耳机型号（AutoEq）"
+          }
+        }
+      }
+    },
+    "支援：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supported: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "支持：%@"
           }
         }
       }
@@ -6299,6 +6468,22 @@
         }
       }
     },
+    "未偵測到可用的 AI CLI" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No usable AI CLI detected"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未检测到可用的 AI CLI"
+          }
+        }
+      }
+    },
     "未啟用 Agent 模式" : {
       "localizations" : {
         "en" : {
@@ -6391,6 +6576,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未找到可用的 AI 引擎（设置 → AI 引擎）"
+          }
+        }
+      }
+    },
+    "未登入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not signed in"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未登录"
+          }
+        }
+      }
+    },
+    "未登入 · 終端執行 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not signed in · run %@ in Terminal"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未登录 · 终端执行 %@"
           }
         }
       }
@@ -6492,6 +6709,7 @@
       }
     },
     "本機的 AI CLI，供光環境顧問、調音顧問與介面翻譯共用。偵測到什麼列什麼，Chorus 不經手任何金鑰，計費在你自己的訂閱上。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6503,6 +6721,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "本机的 AI CLI，供光环境顾问、调音顾问与界面翻译共用。检测到什么列什么，Chorus 不经手任何密钥，计费在你自己的订阅上。"
+          }
+        }
+      }
+    },
+    "本機的 AI CLI，供光環境顧問、調音顧問與介面翻譯共用。只列出已安裝且可執行的；一律使用該 CLI 自己的預設模型。Chorus 不經手任何金鑰，計費在你自己的訂閱上。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The AI CLIs on this Mac, shared by the lighting advisor, the tuning advisor and interface translation. Only the ones that are installed and runnable are listed; each CLI always uses its own default model. Chorus never handles any key, so billing stays on your own subscription."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本机的 AI CLI，供光环境顾问、调音顾问与界面翻译共用。只列出已安装且可执行的；一律使用该 CLI 自己的默认模型。Chorus 不经手任何密钥，计费在你自己的订阅上。"
           }
         }
       }
@@ -6572,6 +6806,7 @@
       }
     },
     "模型" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6588,6 +6823,7 @@
       }
     },
     "模型 ID" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6604,6 +6840,7 @@
       }
     },
     "模型名稱，如 gpt-5.6-terra" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6828,6 +7065,7 @@
       }
     },
     "此 CLI 的 headless 讀圖流程尚未打通，接入層完成後開放選用" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8625,6 +8863,7 @@
       }
     },
     "自訂 %@ 路徑（例：/opt/homebrew/bin/%@）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

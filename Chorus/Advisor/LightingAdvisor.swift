@@ -172,8 +172,7 @@ final class LightingAdvisor {
         }
         let provider = CLIAdviceProvider(
             engine: engine.engine,
-            executable: engine.url,
-            model: settings.advisorModelIDs[engine.id]
+            executable: engine.url
         )
         // 第一張恆為背景照（座標基準），標註各自跟著自己那張走。
         var photos = [(url: photoURL, label: diagram.backgroundLabel)]

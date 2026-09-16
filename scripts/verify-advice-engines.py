@@ -110,14 +110,18 @@ def cleanup():
         subprocess.run(["open", PROD_APP], capture_output=True)
 
 
-ENGINES = ["claude", "agy", "grok", "codex", "opencode", "pi"]
+ENGINES = ["claude", "agy", "grok", "codex", "opencode", "pi",
+           "cursor", "hermes"]
+
+# 會看圖的走光環境顧問（送照片）；其餘是純文字引擎，走調音顧問那條路
+# ——光環境顧問要求 .vision，純文字引擎在那裡根本不會被選中。
+VISION_ENGINES = {"claude", "agy", "grok", "codex", "opencode", "pi"}
 
 
-def verify_engine(engine_id, photo, model=""):
-    """對單一引擎跑一次真實分析並斷言結果。model 非空時一併驗 --model 路徑。"""
-    label = f"{engine_id}" + (f"（模型 {model}）" if model else "")
-    print(f"\n--- {label} ---", flush=True)
-    notify("setAdvisorModel", f"{engine_id}:{model}")
+def verify_engine(engine_id, photo):
+    """對單一引擎跑一次真實分析並斷言結果。模型一律用該 CLI 自己的預設。"""
+    print(f"\n--- {engine_id} ---", flush=True)
+    notify("setAdvisorEngine", engine_id)
     time.sleep(1)
     notify("analyzeReal", f"{engine_id}:{photo}")
     ok, _ = wait_for(lambda d: d["advisor"]["isAnalyzing"] is True, 20)
@@ -153,6 +157,31 @@ def verify_engine(engine_id, photo, model=""):
     print(f"      {'✚ 有點出是純色測試圖' if named else '· 未點出顏色（不判定為失敗）'}", flush=True)
 
 
+def verify_text_engine(engine_id):
+    """純文字引擎：跑一次真實的調音分析（不需照片）。"""
+    print(f"\n--- {engine_id}（調音顧問純文字路徑）---", flush=True)
+    notify("analyzeAudioReal", f"{engine_id}|com.apple.Music|人聲想再清楚一點")
+    ok, _ = wait_for(lambda d: d["audioTuner"]["isAnalyzing"] is True, 20)
+    if not ok:
+        record(f"{engine_id}：分析啟動", False, "（引擎未偵測到、未登入或被停用？）")
+        return
+    ok, state = wait_for(
+        lambda d: d["audioTuner"]["isAnalyzing"] is False
+        and (d["audioTuner"]["hasResult"] or d["audioTuner"]["lastError"]),
+        240,
+    )
+    tuner = (state or {}).get("audioTuner", {})
+    if not ok:
+        record(f"{engine_id}：分析結束", False, "逾時")
+        return
+    error = tuner.get("lastError")
+    if error:
+        record(f"{engine_id}：產出建議", False, str(error)[:220])
+        return
+    record(f"{engine_id}：產出可解析的建議", True)
+    print(f"      「{(tuner.get('summary') or '')[:120]}」", flush=True)
+
+
 def main():
     global proc, prod_was_running
     os.makedirs(WORK, exist_ok=True)
@@ -178,11 +207,12 @@ def main():
     if not ok:
         return 1
 
-    # 參數可寫 "engine" 或 "engine=model"（後者一併驗 --model 路徑）
     wanted = [a for a in sys.argv[1:] if not a.startswith("-")] or ENGINES
-    for item in wanted:
-        engine_id, _, model = item.partition("=")
-        verify_engine(engine_id, photo, model)
+    for engine_id in wanted:
+        if engine_id in VISION_ENGINES:
+            verify_engine(engine_id, photo)
+        else:
+            verify_text_engine(engine_id)
 
     print("\n=== 總結 ===", flush=True)
     passed = sum(1 for _, ok in results if ok)

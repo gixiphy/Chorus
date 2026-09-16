@@ -124,14 +124,18 @@ enum CLIProcessRunner {
         arguments: [String],
         stdin stdinText: String?,
         timeout: Duration,
+        extraEnvironment: [String: String] = [:],
         isComplete: (@Sendable (String) -> Bool)? = nil
     ) async throws -> Output {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
-        process.environment = whitelistedEnvironment(
+        var environment = whitelistedEnvironment(
             executableDirectory: executable.deletingLastPathComponent().path
         )
+        // 引擎自己聲明的變數蓋在白名單之上（goose 的 GOOSE_MODE 之類）
+        environment.merge(extraEnvironment) { _, new in new }
+        process.environment = environment
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -279,8 +283,6 @@ enum CLIProcessRunner {
 struct CLIAdviceProvider: LightingAdviceProvider {
     let engine: KnownCLIEngine
     let executable: URL
-    /// 使用者選定的模型 slug（支援 `--model` 的引擎才用）。
-    var model: String?
     var timeout: Duration = .seconds(120)
 
     func advise(
@@ -300,7 +302,6 @@ struct CLIAdviceProvider: LightingAdviceProvider {
             schemaFile: CLIAdviceExecution.writeSchema(
                 AdvicePrompt.toolInputSchemaJSON(), into: sandbox
             ),
-            model: engine.supportsModelSelection ? model : nil,
             photoPaths: photos.map(\.path),
             timeout: timeout
         )
@@ -374,6 +375,7 @@ enum CLIAdviceExecution {
                 arguments: invocation.arguments,
                 stdin: invocation.stdin,
                 timeout: run.timeout,
+                extraEnvironment: engine.extraEnvironment,
                 isComplete: isComplete
             )
         } catch let error as AdviceError {

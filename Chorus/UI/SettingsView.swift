@@ -671,43 +671,72 @@ private struct AmbientDisplayControls: View {
     }
 }
 
-/// 兩位顧問（光環境、調音）共用的分析引擎：已知 CLI 目錄掃描結果、單選、
-/// 自訂路徑與重新掃描。
+/// 兩位顧問（光環境、調音）與介面翻譯共用的分析引擎：只列出**已安裝且可執行**
+/// 的 CLI、單選、啟用開關、自訂路徑與重新掃描。
+/// 模型不給選：一律用該 CLI 自己的預設（模型名的壽命比 App 的發版週期短）。
 /// 零金鑰／零憑證經手——認證與計費都在使用者已登入的 CLI。
 private struct AdvisorSettingsTab: View {
     @Environment(AppState.self) private var appState
+    /// 「找不到你的 CLI？」裡選中的引擎；空字串＝用清單第一個。
+    @State private var customEngineID = ""
+
+    private var registry: AdviceEngineRegistry { appState.advisor.registry }
 
     var body: some View {
         Form {
             Section {
-                ForEach(KnownCLIEngine.catalog) { engine in
-                    engineRow(engine)
+                if registry.available.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(registry.available) { entry in
+                        engineRow(entry)
+                    }
                 }
             } header: {
-                Text("本機的 AI CLI，供光環境顧問、調音顧問與介面翻譯共用。偵測到什麼列什麼，Chorus 不經手任何金鑰，計費在你自己的訂閱上。")
+                Text("本機的 AI CLI，供光環境顧問、調音顧問與介面翻譯共用。只列出已安裝且可執行的；一律使用該 CLI 自己的預設模型。Chorus 不經手任何金鑰，計費在你自己的訂閱上。")
             }
             Section {
-                Button("重新掃描") { appState.advisor.registry.rescanIncludingModels() }
-                Text("掃描順序：自訂路徑 → PATH → 常見安裝位置。找不到時可在上方填入執行檔完整路徑。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if !registry.unrunnable.isEmpty {
+                    // 半裝好的 CLI 很常見（npm 裝了但 runtime 不在、wrapper 指向已刪的版本）。
+                    // 不混進上面的清單，但要讓使用者知道我們看到了、且為什麼沒列。
+                    Text("另有 \(registry.unrunnable.count) 支已安裝但無法執行：\(unrunnableNames)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("重新掃描") { registry.rescan() }
+                DisclosureGroup("找不到你的 CLI？") {
+                    customPathForm
+                }
             }
         }
         .formStyle(.grouped)
     }
 
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Text("未偵測到可用的 AI CLI")
+        } description: {
+            Text("支援：\(KnownCLIEngine.catalog.map(\.displayName).joined(separator: "、"))")
+            Text("安裝後按重新掃描")
+        }
+    }
+
+    private var unrunnableNames: String {
+        registry.unrunnable.map(\.engine.displayName).joined(separator: "、")
+    }
+
     @ViewBuilder
-    private func engineRow(_ engine: KnownCLIEngine) -> some View {
-        let detected = appState.advisor.registry.detected.first { $0.id == engine.id }
-        let enabled = appState.advisor.registry.isEnabled(engine.id)
+    private func engineRow(_ entry: AdviceEngineRegistry.DetectedEngine) -> some View {
+        let engine = entry.engine
+        let enabled = registry.isEnabled(engine.id)
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                if let detected, detected.selectable, enabled {
+                if enabled, entry.auth != .notLoggedIn {
                     // 勾選狀態看的是**實際會用到的**引擎，不是設定值本身：
                     // 選定的引擎被移除時 registry 會回落 claude，若這裡只比對
                     // 設定值就會一個都不打勾，看起來像沒有引擎可用。
                     Toggle(isOn: Binding(
-                        get: { appState.advisor.registry.activeEngine?.id == engine.id },
+                        get: { registry.activeEngine?.id == engine.id },
                         set: { on in if on { appState.settings.advisorEngineID = engine.id } }
                     )) {
                         Text(engine.displayName).fontWeight(.medium)
@@ -722,119 +751,88 @@ private struct AdvisorSettingsTab: View {
                     badge("實驗性")
                 }
                 Spacer()
-                statusText(engine: engine, detected: detected, enabled: enabled)
-                if detected != nil, !engine.pendingIntegration {
-                    // 啟用開關（E0）：只控制是否允許 spawn。停用的引擎不會被
-                    // 任何顧問使用、也不成為回落對象——分析計費在使用者的
-                    // 訂閱上，不該有「默默換一家幫你花錢」的路徑。
-                    Toggle("", isOn: Binding(
-                        get: { appState.advisor.registry.isEnabled(engine.id) },
-                        set: { appState.advisor.registry.setEnabled($0, engineID: engine.id) }
-                    ))
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .labelsHidden()
-                    .help("停用後不會被任何顧問使用，也不會成為回落對象")
-                }
+                statusText(entry, enabled: enabled)
+                // 啟用開關（E0）：只控制是否允許 spawn。停用的引擎不會被
+                // 任何顧問使用、也不成為回落對象——分析計費在使用者的
+                // 訂閱上，不該有「默默換一家幫你花錢」的路徑。
+                Toggle("", isOn: Binding(
+                    get: { registry.isEnabled(engine.id) },
+                    set: { registry.setEnabled($0, engineID: engine.id) }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .help("停用後不會被任何顧問使用，也不會成為回落對象")
             }
-            if let detected {
-                // 家目錄縮成 ~：路徑短一截，截圖／分享畫面時也不會露出使用者名稱
-                Text((detected.url.path as NSString).abbreviatingWithTildeInPath
-                    + (detected.version.map { "（\($0)）" } ?? ""))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if !engine.capabilities.contains(.vision) {
-                    // 能力旗標（E0）：目前目錄六家都能看圖，這行是為未來的
-                    // 純文字引擎留的——它可以服務調音顧問，但光環境顧問會跳過它。
-                    Text("純文字引擎——光環境顧問（需要看圖）不會使用它")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-                modelPicker(engine)
-            } else {
-                TextField(
-                    "自訂 \(engine.executableName) 路徑（例：/opt/homebrew/bin/\(engine.executableName)）",
-                    text: customPathBinding(engine.id)
-                )
+            // 家目錄縮成 ~：路徑短一截，截圖／分享畫面時也不會露出使用者名稱
+            Text((entry.url.path as NSString).abbreviatingWithTildeInPath
+                + (entry.version.map { "（\($0)）" } ?? ""))
                 .font(.caption)
-                .onSubmit { appState.advisor.registry.rescan() }
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if !engine.capabilities.contains(.vision) {
+                // 能力旗標（E0）：純文字引擎可以服務調音顧問與介面翻譯，
+                // 但光環境顧問要送照片，會自動跳過它。
+                Text("純文字引擎——光環境顧問（需要看圖）不會使用它")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
         }
         .padding(.vertical, 2)
     }
 
-    /// 自訂模型欄位。留空＝不帶 `--model`，交給 CLI 自己決定。
-    /// 用自由輸入而非下拉選單：只有 agy 有列舉指令且實測會卡住，
-    /// 其餘 CLI 根本沒有列舉介面——一個欄位對五個引擎都成立。
-    private func setModel(_ slug: String, for engine: KnownCLIEngine) {
-        var ids = appState.settings.advisorModelIDs
-        if slug.isEmpty { ids.removeValue(forKey: engine.id) } else { ids[engine.id] = slug }
-        appState.settings.advisorModelIDs = ids
-    }
-
+    /// 狀態欄：探測中轉圈、停用、未登入（附上該去終端跑的指令）、可用。
+    /// 未登入是**唯一**我們能替使用者省下一次逾時的狀態，所以講得比別的細。
     @ViewBuilder
-    private func modelPicker(_ engine: KnownCLIEngine) -> some View {
-        if engine.supportsModelSelection {
-            // 一行到底、與上方路徑行同為 caption 級：直接把字串當 TextField 的
-            // label 會被 Form 排進 leading 欄並折行，每個引擎的列高就不一樣了。
-            HStack(spacing: 6) {
-                Text("模型")
+    private func statusText(_ entry: AdviceEngineRegistry.DetectedEngine, enabled: Bool) -> some View {
+        if entry.probe == .pending {
+            ProgressView().controlSize(.mini)
+        } else if !enabled {
+            Text("已停用").font(.caption).foregroundStyle(.secondary)
+        } else if entry.auth == .notLoggedIn {
+            if entry.engine.loginCommand.isEmpty {
+                Text("未登入").font(.caption).foregroundStyle(.orange)
+            } else {
+                Text("未登入 · 終端執行 \(entry.engine.loginCommand)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("", text: Binding(
-                    get: { appState.settings.advisorModelIDs[engine.id] ?? "" },
-                    set: { name in
-                        var ids = appState.settings.advisorModelIDs
-                        let trimmed = name.trimmingCharacters(in: .whitespaces)
-                        if trimmed.isEmpty {
-                            ids.removeValue(forKey: engine.id)
-                        } else {
-                            ids[engine.id] = trimmed
-                        }
-                        appState.settings.advisorModelIDs = ids
-                    }
-                ), prompt: Text("預設"))
-                .labelsHidden()
-                .font(.caption)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 200)
-                .help(engine.modelHint)
-                // 列得到清單的引擎給下拉，但**欄位永遠可以自由輸入**——
-                // 清單可能過期或列不全，不該因此擋住使用者想用的模型。
-                let options = appState.advisor.registry.models[engine.id] ?? []
-                if !options.isEmpty {
-                    Menu {
-                        Button("使用預設") { setModel("", for: engine) }
-                        Divider()
-                        ForEach(options, id: \.self) { slug in
-                            Button(slug) { setModel(slug, for: engine) }
-                        }
-                    } label: {
-                        Image(systemName: "chevron.up.chevron.down")
-                            .imageScale(.small)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help("從 \(engine.displayName) 回報的清單挑選")
-                }
-                Spacer(minLength: 0)
+                    .foregroundStyle(.orange)
             }
+        } else {
+            Text("可用").font(.caption).foregroundStyle(.green)
         }
     }
 
+    /// 沒偵測到的引擎在這裡補完整路徑。做成一個折疊區塊而不是每列一個欄位：
+    /// 名單有二十幾家，每家掛一個空欄位會讓這一頁變成一堆待填的表格。
     @ViewBuilder
-    private func statusText(engine: KnownCLIEngine, detected: AdviceEngineRegistry.DetectedEngine?, enabled: Bool) -> some View {
-        if detected == nil {
-            Text("未安裝").font(.caption).foregroundStyle(.secondary)
-        } else if engine.pendingIntegration {
-            Text("待接入").font(.caption).foregroundStyle(.orange)
-                .help("此 CLI 的 headless 讀圖流程尚未打通，接入層完成後開放選用")
-        } else if !enabled {
-            Text("已停用").font(.caption).foregroundStyle(.secondary)
+    private var customPathForm: some View {
+        let missing = KnownCLIEngine.catalog.filter { engine in
+            !registry.detected.contains { $0.id == engine.id }
+        }
+        if let target = missing.first(where: { $0.id == customEngineID }) ?? missing.first {
+            Picker("引擎", selection: Binding(
+                get: { target.id },
+                set: { customEngineID = $0 }
+            )) {
+                ForEach(missing) { engine in
+                    Text(engine.displayName).tag(engine.id)
+                }
+            }
+            TextField(
+                "執行檔完整路徑",
+                text: customPathBinding(target.id),
+                prompt: Text("/opt/homebrew/bin/\(target.executableName)")
+            )
+            .font(.caption)
+            .onSubmit { registry.rescan() }
+            Text("填好按 Return 會立刻重新掃描。掃描順序：自訂路徑 → PATH → 常見安裝位置。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         } else {
-            Text("已安裝").font(.caption).foregroundStyle(.green)
+            Text("名單裡的 CLI 都已偵測到。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

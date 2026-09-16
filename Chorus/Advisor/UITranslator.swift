@@ -307,7 +307,7 @@ final class UITranslator {
         }
         phase = .running(done: 0, total: total)
         let runner = batchRunner ?? CLIUITranslationBatchRunner(
-            engine: engine.engine, executable: engine.url, model: settings.advisorModelIDs[engine.id]
+            engine: engine.engine, executable: engine.url
         )
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
         let languageName = AdviceLanguage.name(forLocalization: language)
@@ -429,7 +429,7 @@ final class UITranslator {
                             pluralValueTypes: source.pluralValueTypes,
                             manifest: .init(
                                 language: language, engineID: engine.id,
-                                model: self.settings.advisorModelIDs[engine.id],
+                                model: nil,
                                 date: Date(), sourceBuild: build,
                                 translated: strings.count + plurals.count,
                                 skipped: skipped.sorted()
@@ -522,7 +522,6 @@ protocol UITranslationBatchRunning: Sendable {
 struct CLIUITranslationBatchRunner: UITranslationBatchRunning {
     let engine: KnownCLIEngine
     let executable: URL
-    var model: String?
     /// 一批對慢的模型可能要好幾分鐘；比顧問寬。批量的目標秒數也是從這裡推的
     /// （`UITranslator.batchBudgetSeconds`）。
     static let defaultTimeout: Duration = .seconds(300)
@@ -537,7 +536,6 @@ struct CLIUITranslationBatchRunner: UITranslationBatchRunning {
         let run = KnownCLIEngine.RunContext(
             sandbox: sandbox,
             schemaFile: CLIAdviceExecution.writeSchema(UITranslationPrompt.schemaJSON, into: sandbox),
-            model: model,
             timeout: timeout
         )
         return try await CLIAdviceExecution.perform(

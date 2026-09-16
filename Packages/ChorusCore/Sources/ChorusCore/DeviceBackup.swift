@@ -103,7 +103,6 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
     public var syncBrightnessEnabled: Bool
     public var syncVolumeEnabled: Bool
     public var advisorEngineID: String
-    public var advisorModelIDs: [String: String]
     public var advisorDisabledEngines: [String]
     public var advisorCustomPaths: [String: String]
     public var automationServerEnabled: Bool
@@ -152,7 +151,6 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         syncBrightnessEnabled: Bool = true,
         syncVolumeEnabled: Bool = true,
         advisorEngineID: String = "claude",
-        advisorModelIDs: [String: String] = [:],
         advisorDisabledEngines: [String] = [],
         advisorCustomPaths: [String: String] = [:],
         automationServerEnabled: Bool = false,
@@ -200,7 +198,6 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         self.syncBrightnessEnabled = syncBrightnessEnabled
         self.syncVolumeEnabled = syncVolumeEnabled
         self.advisorEngineID = advisorEngineID
-        self.advisorModelIDs = advisorModelIDs
         self.advisorDisabledEngines = advisorDisabledEngines.sorted()
         self.advisorCustomPaths = advisorCustomPaths
         self.automationServerEnabled = automationServerEnabled
@@ -259,7 +256,6 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         syncBrightnessEnabled = try c.decodeIfPresent(Bool.self, forKey: .syncBrightnessEnabled) ?? true
         syncVolumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .syncVolumeEnabled) ?? true
         advisorEngineID = try c.decodeIfPresent(String.self, forKey: .advisorEngineID) ?? "claude"
-        advisorModelIDs = try c.decodeIfPresent([String: String].self, forKey: .advisorModelIDs) ?? [:]
         advisorDisabledEngines = try list(.advisorDisabledEngines)
         advisorCustomPaths = try c.decodeIfPresent([String: String].self, forKey: .advisorCustomPaths) ?? [:]
         automationServerEnabled = try c.decodeIfPresent(Bool.self, forKey: .automationServerEnabled) ?? false
@@ -322,7 +318,7 @@ public enum BackupPortability {
         "keepAwakeAgentMode", "keepAwakeProcessDetection", "keepAwakeCustomProcessNames",
         "mediaKeyCaptureEnabled",
         "syncBrightnessEnabled", "syncVolumeEnabled",
-        "advisorEngineID", "advisorModelIDs", "advisorDisabledEngines",
+        "advisorEngineID", "advisorDisabledEngines",
         "automationServerPort", "focusLastDuration", "focusNotifyOnEnd",
     ]
 

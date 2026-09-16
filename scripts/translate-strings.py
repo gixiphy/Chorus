@@ -5,7 +5,6 @@
     scripts/translate-strings.py --lang ja       # 另一個語言
     scripts/translate-strings.py --dry-run       # 只列出要翻哪些 key，不呼叫 CLI
     scripts/translate-strings.py --retranslate   # 連已翻好的也重來（改詞彙表後用）
-    scripts/translate-strings.py --model opus    # 指定模型（預設用 CLI 自己的預設）
     scripts/translate-strings.py --engine codex  # claude 未登入時改走 codex exec
 
 流程：
@@ -277,10 +276,8 @@ Input:
 """
 
 
-def call_claude(prompt, model):
+def call_claude(prompt):
     args = ["claude", "-p", "--output-format", "json", "--no-session-persistence"]
-    if model:
-        args += ["--model", model]
     proc = subprocess.run(args, input=prompt, capture_output=True, text=True, timeout=600)
     if proc.returncode != 0:
         raise RuntimeError(f"claude 退出碼 {proc.returncode}\n{proc.stderr}\n{proc.stdout[:500]}")
@@ -291,15 +288,12 @@ def call_claude(prompt, model):
     return parse_reply(envelope.get("result", ""))
 
 
-def call_codex(prompt, model):
+def call_codex(prompt):
     """`codex exec` 沒有 JSON 信封，用 -o 拿最後一則訊息。cwd 指到暫存目錄，免得它去看 repo。"""
     import tempfile
     with tempfile.TemporaryDirectory(prefix="chorus-translate.") as tmp:
         out = os.path.join(tmp, "reply.txt")
-        args = ["codex", "exec", "--skip-git-repo-check", "-C", tmp, "-o", out]
-        if model:
-            args += ["-m", model]
-        args.append("-")
+        args = ["codex", "exec", "--skip-git-repo-check", "-C", tmp, "-o", out, "-"]
         proc = subprocess.run(args, input=prompt, capture_output=True, text=True, timeout=600)
         if proc.returncode != 0 or not os.path.exists(out):
             raise RuntimeError(f"codex 退出碼 {proc.returncode}\n{proc.stderr[-800:]}")
@@ -394,7 +388,7 @@ def process_catalog(path, lang, args):
     written = 0
 
     def run(batch):
-        return ENGINES[args.engine](build_prompt([(src, comment) for _, src, comment in batch], lang), args.model)
+        return ENGINES[args.engine](build_prompt([(src, comment) for _, src, comment in batch], lang))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = {pool.submit(run, batch): batch for batch in batches}
@@ -427,7 +421,6 @@ def main():
     parser.add_argument("--lang", default="en", help="目標語言代碼（預設 en）")
     parser.add_argument("--catalog", action="append", help="指定 .xcstrings；可重複。預設 Localizable + InfoPlist")
     parser.add_argument("--engine", choices=sorted(ENGINES), default="claude", help="翻譯引擎 CLI（預設 claude）")
-    parser.add_argument("--model", help="傳給引擎的 --model／-m；預設用 CLI 的預設模型")
     parser.add_argument("--batch-size", type=int, default=40)
     parser.add_argument("--jobs", type=int, default=3, help="同時跑幾個 claude 行程")
     parser.add_argument("--dry-run", action="store_true")
