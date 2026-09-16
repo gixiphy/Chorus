@@ -66,6 +66,8 @@ final class SettingsStore {
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
         static let keepAwakeAppBundleID = "chorus.keepAwake.appBundleID"
         static let keepAwakeAgentMode = "chorus.keepAwake.agentMode"
+        static let keepAwakeProcessDetection = "chorus.keepAwake.processDetection"
+        static let keepAwakeCustomProcessNames = "chorus.keepAwake.customProcessNames"
         static let virtualTargetUID = "chorus.audio.virtualTargetUID"
         static let automationServer = "chorus.automation.serverEnabled"
         static let automationPort = "chorus.automation.serverPort"
@@ -401,6 +403,17 @@ final class SettingsStore {
         didSet { defaults.set(keepAwakeAgentMode, forKey: Key.keepAwakeAgentMode) }
     }
 
+    /// Agent 模式的第二層偵測（有終端機的行程樹在不在燒 CPU）。**預設開啟**：
+    /// 沒有全域 session log 的 agent 只靠這一層，關著的話那些人的機器照睡。
+    var keepAwakeProcessDetection: Bool {
+        didSet { defaults.set(keepAwakeProcessDetection, forKey: Key.keepAwakeProcessDetection) }
+    }
+
+    /// 註冊表以外、使用者自己補的 agent 行程名（已正規化、不含直譯器名）。
+    var keepAwakeCustomProcessNames: [String] {
+        didSet { defaults.set(keepAwakeCustomProcessNames, forKey: Key.keepAwakeCustomProcessNames) }
+    }
+
     /// 虛擬輸出裝置的轉送目標：**nil＝自動**（跟著使用中的螢幕走，都沒有就
     /// 回內建輸出）。指定 UID 則固定送那台——但它不在時仍會自動退回，
     /// 不會讓聲音消失；它回來時再接回去。
@@ -553,6 +566,8 @@ final class SettingsStore {
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
         keepAwakeAppBundleID = defaults.string(forKey: Key.keepAwakeAppBundleID)
         keepAwakeAgentMode = defaults.bool(forKey: Key.keepAwakeAgentMode)
+        keepAwakeProcessDetection = defaults.object(forKey: Key.keepAwakeProcessDetection) as? Bool ?? true
+        keepAwakeCustomProcessNames = defaults.stringArray(forKey: Key.keepAwakeCustomProcessNames) ?? []
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)

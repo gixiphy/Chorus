@@ -1,24 +1,30 @@
 import Foundation
 
-/// 一個 AI agent session 的活動跡證（M9-2 Agent 模式）。
+/// 一份 AI agent 的活動跡證（M9-2 Agent 模式）。
 ///
-/// 「這台機器上有 agent 在工作嗎」不能用行程判斷，也不能用 CPU 判斷：
-/// - 行程在 ≠ 在工作——`claude` 停在 prompt 等你打字時行程一樣在，
-///   綁行程等於無限期長亮。
-/// - CPU 也分不開——實測工作中的 session 六秒只吃 0.22 秒 CPU（0.04 核），
-///   閒置的是 0.03 秒（0.01 核）。agent 大部分時間在等模型回應，根本不燒 CPU，
-///   兩者差距小到訂不出門檻。
+/// 「這台機器上有 agent 在工作嗎」不能用行程在不在判斷——`claude` 停在 prompt
+/// 等你打字時行程一樣在，綁行程等於無限期長亮。分得開的有兩種跡證：
 ///
-/// 分得開的是 **session log 有沒有在長**：工作中每幾秒 append 一次，
-/// 停在 prompt 就完全不寫。所以樣本只有「哪個 session、最後寫入時間」，
-/// 不讀檔案內容。
+/// 1. **session log 有沒有在長**：工作中每幾秒 append 一次，停在 prompt 就完全不寫。
+///    只讀目錄列表與 mtime，不開檔、不讀內容（掃描見 `AgentRegistry`）。
+/// 2. **有終端機的行程樹有沒有在燒 CPU**：本機 30 秒視窗實測，claude 工作中 6.4%、
+///    cursor-agent 工作中 13.6%，claude 停在 prompt 只有 0.8%；沒有終端機的常駐 helper
+///    （`agy`、`claude --chrome-native-host`）是 0.7% 與 0。取「30 秒 ≥ 0.5 秒」當線，
+///    加上「必須有 TTY」就分得開（判定見 `AgentProcessActivityPlanner`）。
+///    這一層是為了涵蓋沒有全域 session log 的 agent 與使用者自訂的 CLI。
+///
+/// （早期的註解說 CPU 分不開，那次量的是單一行程、6 秒視窗——換成整棵樹、30 秒視窗
+/// 之後兩群差了一個數量級，結論不成立。）
 public struct AgentSessionSample: Sendable, Equatable, Identifiable, Hashable {
-    /// log 檔路徑。同一支 agent 同時開多個 session 要能各自計算，用路徑當身分。
+    /// 身分：log 樣本是檔案路徑，行程樣本是 `pid:<n>`。
+    /// 同一支 agent 同時開多個 session／跑多棵行程樹要能各自計算，所以身分不是 engine。
     public let id: String
     /// 來源顯示名稱（"Claude Code"／"Codex"），選單說明用。
     public let engine: String
-    /// 最後寫入時間。**是 wall clock 不是 uptime**：檔案 mtime 只有 wall clock，
-    /// 沒得選。使用者改系統時鐘會讓當下這一輪誤判，下一輪取樣就恢復。
+    /// 最後一次活動跡證的時刻：log 樣本是檔案 mtime，行程樣本是最後一次判定有活動的取樣時間。
+    ///
+    /// **是 wall clock 不是 uptime**：檔案 mtime 只有 wall clock，沒得選。
+    /// 使用者改系統時鐘會讓當下這一輪誤判，下一輪取樣就恢復。
     public let lastWrite: Date
 
     public init(id: String, engine: String, lastWrite: Date) {

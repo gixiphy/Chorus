@@ -98,6 +98,7 @@
       }
     },
     "%@ 個 %@ session 工作中 — 系統不待機" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -109,6 +110,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ 个 %@ session 工作中 — 系统不睡眠"
+          }
+        }
+      }
+    },
+    "%@ 個 %@ 在工作中 — 系統不待機" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ %@ working - system won't sleep"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 个 %@ 在工作中 — 系统不睡眠"
           }
         }
       }
@@ -951,6 +968,22 @@
         }
       }
     },
+    "aider, goose" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "aider, goose"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "aider, goose"
+          }
+        }
+      }
+    },
     "app（逐 App 音訊）" : {
       "localizations" : {
         "en" : {
@@ -1600,6 +1633,7 @@
       }
     },
     "「有 agent 在工作時」不吃上面這個開關：它一律只擋系統待機、不擋螢幕待機——agent 跑整夜時要的是機器別睡，螢幕暗掉正好。偵測靠 Claude Code 與 Codex 的 session log 有沒有在寫入（只看修改時間，不讀內容），停手 5 分鐘後放開。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1611,6 +1645,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "「有 agent 在工作时」不吃上面这个开关：它一律只挡系统睡眠、不挡屏幕睡眠——agent 跑整夜时要的是机器别睡，屏幕暗掉正好。检测靠 Claude Code 与 Codex 的 session log 有没有在写入（只看修改时间，不读内容），停手 5 分钟后放开。"
+          }
+        }
+      }
+    },
+    "「有 agent 在工作時」不吃上面這個開關：它一律只擋系統待機、不擋螢幕待機——agent 跑整夜時要的是機器別睡，螢幕暗掉正好。已知的 agent 看 session log 是否在寫入；其餘 CLI agent 看有終端機的行程樹 30 秒內是否有 CPU 活動（IDE 內嵌、無終端機的不算）；停手 5 分鐘後放開。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"While agents are working\" ignores the toggle above: it always blocks system sleep only, never display sleep - an agent running overnight needs the Mac awake, and a dark display is exactly right. Known agents are detected from their session logs; any other CLI agent is detected from whether its process tree, attached to a terminal, burned CPU in the last 30 seconds (agents embedded in an IDE, with no terminal, do not count). Chorus lets go 5 minutes after they stop."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「有 agent 在工作时」不吃上面这个开关：它一律只挡系统睡眠、不挡屏幕睡眠——agent 跑整夜时要的是机器别睡，屏幕暗掉正好。已知的 agent 看 session log 是否在写入；其余 CLI agent 看有终端的进程树 30 秒内是否有 CPU 活动（IDE 内嵌、无终端的不算）；停手 5 分钟后放开。"
           }
         }
       }
@@ -1819,6 +1869,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "主线程"
+          }
+        }
+      }
+    },
+    "也偵測 agent 行程（看 CPU 活動）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Also Detect Agent Processes (by CPU Activity)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "也检测 agent 进程（看 CPU 活动）"
           }
         }
       }
@@ -2524,6 +2590,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "全部关灯"
+          }
+        }
+      }
+    },
+    "其他行程名稱" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Other Process Names"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "其他进程名称"
           }
         }
       }
@@ -6217,6 +6299,22 @@
         }
       }
     },
+    "未啟用 Agent 模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent mode is off"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未启用 Agent 模式"
+          }
+        }
+      }
+    },
     "未啟用。" : {
       "localizations" : {
         "en" : {
@@ -6837,6 +6935,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每个输出设备一组：左右平衡与均衡。耳机校正（AutoEq）的主场景本来就不经虚拟设备——直接对那副耳机开启。"
+          }
+        }
+      }
+    },
+    "沒有" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "None"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有"
           }
         }
       }
@@ -7473,6 +7587,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前"
+          }
+        }
+      }
+    },
+    "目前偵測到" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Currently Detected"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前检测到"
           }
         }
       }

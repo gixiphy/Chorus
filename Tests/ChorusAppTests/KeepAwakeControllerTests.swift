@@ -31,12 +31,15 @@ struct KeepAwakeControllerTests {
 
     private func makeController(
         assertions: FakeAssertions,
+        settings: SettingsStore? = nil,
         now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }
     ) -> KeepAwakeController {
-        let settings = SettingsStore(defaults: UserDefaults(suiteName: "keep-awake-\(UUID().uuidString)")!)
+        let settings = settings
+            ?? SettingsStore(defaults: UserDefaults(suiteName: "keep-awake-\(UUID().uuidString)")!)
         return KeepAwakeController(
             settings: settings, displayManager: DisplayManager(settings: settings),
-            agentActivity: AgentActivityMonitor(sources: []), assertions: assertions, now: now
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            assertions: assertions, now: now
         )
     }
 
@@ -146,6 +149,25 @@ struct KeepAwakeControllerTests {
         #expect(!controller.activationFailed)
         #expect(assertions.active.isEmpty)
         #expect(controller.mode == .whileDisplayConnected(uuid: "absent"))
+    }
+
+    @Test("Agent detection settings survive a rebuild — they live in the store, not in the controller")
+    func agentDetectionSettingsPersist() {
+        let defaults = UserDefaults(suiteName: "keep-awake-\(UUID().uuidString)")!
+        let settings = SettingsStore(defaults: defaults)
+        // 第二層預設開啟：沒有全域 log 的 agent 只靠它。
+        #expect(settings.keepAwakeProcessDetection)
+
+        let first = makeController(assertions: FakeAssertions(), settings: settings)
+        first.agentProcessDetectionEnabled = false
+        first.agentCustomProcessNames = ["aider", "goose"]
+        first.shutdown()
+
+        let reloaded = SettingsStore(defaults: defaults)
+        let second = makeController(assertions: FakeAssertions(), settings: reloaded)
+        defer { second.shutdown() }
+        #expect(!second.agentProcessDetectionEnabled)
+        #expect(second.agentCustomProcessNames == ["aider", "goose"])
     }
 
     @Test("Real macOS assertions can be created, queried, and released")

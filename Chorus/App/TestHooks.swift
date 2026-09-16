@@ -771,6 +771,8 @@ final class TestHooks {
                 "holding": appState.keepAwake.isHolding,
                 "remaining": appState.keepAwake.remainingSeconds.map { $0 as Any } ?? NSNull(),
                 "preventsSystemSleep": appState.keepAwake.alsoPreventSystemSleep,
+                "agents": appState.keepAwake.agentActivity.working.map(\.id),
+                "agentEngines": appState.keepAwake.agentActivity.engines,
             ] as [String: Any],
             "focus": [
                 "scene": appState.focus.session?.sceneName as Any? ?? NSNull(),

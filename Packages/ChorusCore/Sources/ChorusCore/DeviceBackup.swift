@@ -96,6 +96,9 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
     public var keepAwakePreventsSystemSleep: Bool
     public var keepAwakeDisplayUUID: String?
     public var keepAwakeAppBundleID: String?
+    public var keepAwakeAgentMode: Bool
+    public var keepAwakeProcessDetection: Bool
+    public var keepAwakeCustomProcessNames: [String]
     public var mediaKeyCaptureEnabled: Bool
     public var syncBrightnessEnabled: Bool
     public var syncVolumeEnabled: Bool
@@ -142,6 +145,9 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         keepAwakePreventsSystemSleep: Bool = false,
         keepAwakeDisplayUUID: String? = nil,
         keepAwakeAppBundleID: String? = nil,
+        keepAwakeAgentMode: Bool = false,
+        keepAwakeProcessDetection: Bool = true,
+        keepAwakeCustomProcessNames: [String] = [],
         mediaKeyCaptureEnabled: Bool = false,
         syncBrightnessEnabled: Bool = true,
         syncVolumeEnabled: Bool = true,
@@ -187,6 +193,9 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         self.keepAwakePreventsSystemSleep = keepAwakePreventsSystemSleep
         self.keepAwakeDisplayUUID = keepAwakeDisplayUUID
         self.keepAwakeAppBundleID = keepAwakeAppBundleID
+        self.keepAwakeAgentMode = keepAwakeAgentMode
+        self.keepAwakeProcessDetection = keepAwakeProcessDetection
+        self.keepAwakeCustomProcessNames = keepAwakeCustomProcessNames.sorted()
         self.mediaKeyCaptureEnabled = mediaKeyCaptureEnabled
         self.syncBrightnessEnabled = syncBrightnessEnabled
         self.syncVolumeEnabled = syncVolumeEnabled
@@ -243,6 +252,9 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
             Bool.self, forKey: .keepAwakePreventsSystemSleep) ?? false
         keepAwakeDisplayUUID = try c.decodeIfPresent(String.self, forKey: .keepAwakeDisplayUUID)
         keepAwakeAppBundleID = try c.decodeIfPresent(String.self, forKey: .keepAwakeAppBundleID)
+        keepAwakeAgentMode = try c.decodeIfPresent(Bool.self, forKey: .keepAwakeAgentMode) ?? false
+        keepAwakeProcessDetection = try c.decodeIfPresent(Bool.self, forKey: .keepAwakeProcessDetection) ?? true
+        keepAwakeCustomProcessNames = try list(.keepAwakeCustomProcessNames)
         mediaKeyCaptureEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyCaptureEnabled) ?? false
         syncBrightnessEnabled = try c.decodeIfPresent(Bool.self, forKey: .syncBrightnessEnabled) ?? true
         syncVolumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .syncVolumeEnabled) ?? true
@@ -302,7 +314,13 @@ public enum BackupPortability {
         // 時間排程講的是使用者一天的作息，跟哪台 Mac 無關；有感器的機器會自動不理它
         "autoBrightnessEnabled", "ambientCurve", "ambientDeviceOffset",
         "ambientScheduleEnabled", "ambientSchedule",
-        "keepAwakePreventsSystemSleep", "mediaKeyCaptureEnabled",
+        "keepAwakePreventsSystemSleep",
+        // Agent 模式與它的偵測設定講的是「這個人怎麼跑 agent」，不是哪台 Mac。
+        // 綁機的那兩個（螢幕、App）在啟動時仍然優先（`AppState` 的還原順序是
+        // 螢幕 > App > agent），所以匯入的 `keepAwakeAgentMode = true`
+        // 只有在兩者都空的時候才真的把模式打開。
+        "keepAwakeAgentMode", "keepAwakeProcessDetection", "keepAwakeCustomProcessNames",
+        "mediaKeyCaptureEnabled",
         "syncBrightnessEnabled", "syncVolumeEnabled",
         "advisorEngineID", "advisorModelIDs", "advisorDisabledEngines",
         "automationServerPort", "focusLastDuration", "focusNotifyOnEnd",

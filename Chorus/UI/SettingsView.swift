@@ -208,9 +208,10 @@ private struct DisplaySettingsTab: View {
                 Text("開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時／有 agent 在工作時）在選單列。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("「有 agent 在工作時」不吃上面這個開關：它一律只擋系統待機、不擋螢幕待機——agent 跑整夜時要的是機器別睡，螢幕暗掉正好。偵測靠 Claude Code 與 Codex 的 session log 有沒有在寫入（只看修改時間，不讀內容），停手 5 分鐘後放開。")
+                Text("「有 agent 在工作時」不吃上面這個開關：它一律只擋系統待機、不擋螢幕待機——agent 跑整夜時要的是機器別睡，螢幕暗掉正好。已知的 agent 看 session log 是否在寫入；其餘 CLI agent 看有終端機的行程樹 30 秒內是否有 CPU 活動（IDE 內嵌、無終端機的不算）；停手 5 分鐘後放開。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                AgentDetectionControls()
             }
             AmbientCurveSection()
             if appState.displayManager.displays.isEmpty {
@@ -418,6 +419,41 @@ private struct DDCDiagnosticsRow: View {
             hints.append(String(localized: "ⓘ 若拖曳滑桿後畫面雪花／訊號異常：部分螢幕的 scaler 承受不了連續 I2C 寫入（已內建節流）。復發時開啟「強制軟體調光」並保留此診斷輸出回報。"))
         }
         return hints
+    }
+}
+
+/// Agent 常亮的第二層偵測：沒有全域 session log 的 CLI 靠行程樹的 CPU 活動認。
+private struct AgentDetectionControls: View {
+    @Environment(AppState.self) private var appState
+    /// 編輯中的原文。**打字時不解析**：邊打邊正規化會把游標踢到行尾。
+    @State private var customNames = ""
+
+    var body: some View {
+        Toggle("也偵測 agent 行程（看 CPU 活動）", isOn: Binding(
+            get: { appState.keepAwake.agentProcessDetectionEnabled },
+            set: { appState.keepAwake.agentProcessDetectionEnabled = $0 }
+        ))
+        TextField("其他行程名稱", text: $customNames, prompt: Text("aider, goose"))
+            .disabled(!appState.keepAwake.agentProcessDetectionEnabled)
+            .onSubmit { commit() }
+            .onAppear { customNames = appState.keepAwake.agentCustomProcessNames.joined(separator: ", ") }
+        LabeledContent("目前偵測到") {
+            Text(detected).foregroundStyle(.secondary)
+        }
+    }
+
+    private var detected: String {
+        guard case .whileAgentsWorking = appState.keepAwake.mode else {
+            return String(localized: "未啟用 Agent 模式")
+        }
+        let engines = appState.keepAwake.agentActivity.engines
+        return engines.isEmpty ? String(localized: "沒有") : engines.joined(separator: "、")
+    }
+
+    private func commit() {
+        let parsed = AgentProcessMatcher.parseCustomNames(customNames)
+        appState.keepAwake.agentCustomProcessNames = parsed
+        customNames = parsed.joined(separator: ", ")
     }
 }
 

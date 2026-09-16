@@ -148,6 +148,9 @@ final class CloudBackup {
             keepAwakePreventsSystemSleep: settings.keepAwakePreventsSystemSleep,
             keepAwakeDisplayUUID: settings.keepAwakeDisplayUUID,
             keepAwakeAppBundleID: settings.keepAwakeAppBundleID,
+            keepAwakeAgentMode: settings.keepAwakeAgentMode,
+            keepAwakeProcessDetection: settings.keepAwakeProcessDetection,
+            keepAwakeCustomProcessNames: settings.keepAwakeCustomProcessNames,
             mediaKeyCaptureEnabled: settings.mediaKeyCaptureEnabled,
             syncBrightnessEnabled: settings.syncBrightnessEnabled,
             syncVolumeEnabled: settings.syncVolumeEnabled,
@@ -199,6 +202,9 @@ final class CloudBackup {
         settings.keepAwakePreventsSystemSleep = backup.keepAwakePreventsSystemSleep
         settings.keepAwakeDisplayUUID = backup.keepAwakeDisplayUUID
         settings.keepAwakeAppBundleID = backup.keepAwakeAppBundleID
+        settings.keepAwakeAgentMode = backup.keepAwakeAgentMode
+        settings.keepAwakeProcessDetection = backup.keepAwakeProcessDetection
+        settings.keepAwakeCustomProcessNames = backup.keepAwakeCustomProcessNames
         settings.mediaKeyCaptureEnabled = backup.mediaKeyCaptureEnabled
         settings.syncBrightnessEnabled = backup.syncBrightnessEnabled
         settings.syncVolumeEnabled = backup.syncVolumeEnabled

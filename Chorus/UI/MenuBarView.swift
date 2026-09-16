@@ -641,7 +641,8 @@ private struct KeepAwakeRow: View {
             let sources = engines.joined(separator: "、")
             // Agent 模式擋的是系統待機不是螢幕待機，說明得講清楚——
             // 不然使用者會以為壞了：螢幕照樣會暗。
-            return String(localized: "\(count) 個 \(sources) session 工作中 — 系統不待機")
+            // 「session」不對：第二層的樣本是行程樹，不是 session。
+            return String(localized: "\(count) 個 \(sources) 在工作中 — 系統不待機")
         }
     }
 }

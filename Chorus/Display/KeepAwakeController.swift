@@ -76,6 +76,28 @@ final class KeepAwakeController {
         }
     }
 
+    /// Agent 模式是否也看行程樹的 CPU 活動（第二層偵測）。
+    var agentProcessDetectionEnabled: Bool {
+        didSet {
+            guard agentProcessDetectionEnabled != oldValue else { return }
+            settings.keepAwakeProcessDetection = agentProcessDetectionEnabled
+            agentActivity.configureProcessDetection(
+                enabled: agentProcessDetectionEnabled, customProcessNames: agentCustomProcessNames
+            )
+        }
+    }
+
+    /// 使用者自己補的 agent 行程名（註冊表以外的 CLI）。
+    var agentCustomProcessNames: [String] {
+        didSet {
+            guard agentCustomProcessNames != oldValue else { return }
+            settings.keepAwakeCustomProcessNames = agentCustomProcessNames
+            agentActivity.configureProcessDetection(
+                enabled: agentProcessDetectionEnabled, customProcessNames: agentCustomProcessNames
+            )
+        }
+    }
+
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private weak var displayManager: DisplayManager?
     @ObservationIgnored private var startedAt: Double?
@@ -101,7 +123,13 @@ final class KeepAwakeController {
         self.assertions = assertions
         self.now = now
         alsoPreventSystemSleep = settings.keepAwakePreventsSystemSleep
+        agentProcessDetectionEnabled = settings.keepAwakeProcessDetection
+        agentCustomProcessNames = settings.keepAwakeCustomProcessNames
         agentActivity.onWorkingChanged = { [weak self] in self?.reevaluate() }
+        // `didSet` 在 init 裡不會跑，設定得在這裡自己推一次給 monitor。
+        agentActivity.configureProcessDetection(
+            enabled: agentProcessDetectionEnabled, customProcessNames: agentCustomProcessNames
+        )
     }
 
     func activate(_ mode: KeepAwakeMode) {
