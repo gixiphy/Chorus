@@ -124,16 +124,20 @@ struct KnownCLIEngine: Identifiable, Sendable {
         case "cursor":
             // --mode ask 是唯讀模式（不會編輯檔案）；--trust 免掉「信任這個目錄嗎」
             // 的互動確認，在非 TTY 下那個確認會直接讓行程掛住。
+            // 看圖靠 ask 模式的 Read 工具（無 --image 旗標；實測 2026.09.10）。
             var arguments = ["-p", "--output-format", "json", "--mode", "ask", "--trust"]
             if let sandbox = run.sandbox { arguments += ["--workspace", sandbox.path] }
             arguments.append(prompt)
             return (arguments, nil)
 
         case "hermes":
-            // -z／--oneshot **吃 prompt 當自己的引數**：排在別的旗標後面會得到
-            //「expected one argument」而不是一次執行（實測 0.21.3）。
+            // -z 捷徑不吃 --image（路徑會被當成子命令，exit 2；實測 0.21.3）。
+            // 看圖必須走 chat -q，再用 --image 附加；-Q 壓掉 banner／spinner。
             // --safe-mode 不寫檔、--ignore-rules 不撈使用者的規則檔。
-            return (["-z", prompt, "--safe-mode", "--ignore-rules"], nil)
+            var arguments = ["chat", "-q", prompt]
+            for path in run.photoPaths { arguments += ["--image", path] }
+            arguments += ["-Q", "--oneshot", "--safe-mode", "--ignore-rules"]
+            return (arguments, nil)
 
         case "copilot":
             return (["-p", prompt, "-s"], nil)
@@ -200,9 +204,10 @@ struct KnownCLIEngine: Identifiable, Sendable {
         max(Int(run.timeout.components.seconds) - 10, 30)
     }
 
-    /// 前六家（claude…pi）是實測過看圖路徑的，`capabilities` 含 `.vision`；
-    /// 其餘一律純文字（`capabilities: []`）——調音顧問與介面翻譯可用，
-    /// 光環境顧問會自動跳過它們（能力系統既有行為）。
+    /// 前六家（claude…pi）加上 cursor、hermes 是實測過看圖路徑的，
+    /// `capabilities` 含 `.vision`；其餘一律純文字（`capabilities: []`）——
+    /// 調音顧問與介面翻譯可用，光環境顧問會自動跳過它們（能力系統既有行為）。
+    /// 看圖仍取決於該 CLI 當下選定的模型；旗標只保證「路徑／附加方式」可行。
     ///
     /// **刻意不收**的 CLI，以及理由（收進來只會變成難查的「跑完沒有輸出」）：
     /// - Gemini CLI：Google 2026-06-18 停用個人帳號，官方遷移目標即 agy。
@@ -271,16 +276,16 @@ struct KnownCLIEngine: Identifiable, Sendable {
         ),
         KnownCLIEngine(
             id: "cursor", executableName: "cursor-agent", displayName: "Cursor CLI",
-            capabilities: [],
-            codec: .jsonEnvelope, photoDelivery: .attached,
+            capabilities: [.vision],
+            codec: .jsonEnvelope, photoDelivery: .pathInPrompt,
             pendingIntegration: false, experimental: false,
             authProbe: .command(arguments: ["status", "--format", "json"]),
-            readInstruction: "the photo is attached",
+            readInstruction: "read it with the Read tool before analyzing",
             loginCommand: "cursor-agent login"
         ),
         KnownCLIEngine(
             id: "hermes", executableName: "hermes", displayName: "Hermes",
-            capabilities: [],
+            capabilities: [.vision],
             codec: .plainStdout, photoDelivery: .attached,
             pendingIntegration: false, experimental: false,
             authProbe: .command(arguments: ["status"]),

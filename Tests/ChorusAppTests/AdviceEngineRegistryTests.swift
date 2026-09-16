@@ -166,21 +166,32 @@ struct AdviceEngineRegistryTests {
         }
     }
 
-    /// 本機實測通過（`scripts/verify-advice-engines.py`）的新引擎才拿掉實驗性標記。
+    /// 本機實測通過（`scripts/verify-advice-engines.py`／看圖手測）的新引擎。
     private static let verifiedNewEngines: Set<String> = ["cursor", "hermes"]
+    /// 已實測看圖路徑的新引擎（其餘新引擎仍純文字）。
+    private static let visionVerifiedNewEngines: Set<String> = ["cursor", "hermes"]
 
-    @Test("目錄：新加的引擎一律純文字，未實測的標實驗性")
-    func catalogNewEnginesArePlainText() {
+    @Test("目錄：新加引擎的實驗性標記；未實測看圖的保持純文字")
+    func catalogNewEnginesMarkExperimentalAndVision() {
         for engine in KnownCLIEngine.catalog.dropFirst(6) {
-            #expect(engine.capabilities.isEmpty, "\(engine.id) 不該聲明看圖能力")
-            #expect(engine.photoDelivery == .attached)
             #expect(!engine.pendingIntegration)
-            if Self.verifiedNewEngines.contains(engine.id) {
+            if Self.visionVerifiedNewEngines.contains(engine.id) {
+                #expect(engine.capabilities.contains(.vision), "\(engine.id) 應聲明看圖能力")
                 #expect(!engine.experimental, "\(engine.id) 已實測，不該標實驗性")
             } else {
-                #expect(engine.experimental, "\(engine.id) 未實測，該標實驗性")
+                #expect(engine.capabilities.isEmpty, "\(engine.id) 不該聲明看圖能力")
+                #expect(engine.photoDelivery == .attached)
+                if Self.verifiedNewEngines.contains(engine.id) {
+                    #expect(!engine.experimental, "\(engine.id) 已實測，不該標實驗性")
+                } else {
+                    #expect(engine.experimental, "\(engine.id) 未實測，該標實驗性")
+                }
             }
         }
+        let cursor = KnownCLIEngine.catalog.first { $0.id == "cursor" }!
+        #expect(cursor.photoDelivery == .pathInPrompt)
+        let hermes = KnownCLIEngine.catalog.first { $0.id == "hermes" }!
+        #expect(hermes.photoDelivery == .attached)
     }
 
     @Test("目錄：id 不重複，執行檔名也不重複")

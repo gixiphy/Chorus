@@ -490,7 +490,7 @@ struct CLIAdviceProviderTests {
         }
     }
 
-    @Test("cursor-agent：唯讀 ask 模式＋--trust，prompt 排最後")
+    @Test("cursor-agent：唯讀 ask 模式＋--trust，路徑寫進 prompt")
     func cursorAgentArgv() async throws {
         let argv = try await captureArgv(engineID: "cursor", photos: ["/tmp/a.jpg"])
         #expect(argv.first == "-p")
@@ -501,7 +501,10 @@ struct CLIAdviceProviderTests {
         }
         #expect(argv[mode + 1] == "ask")
         #expect(argv.contains("--trust"))
-        #expect(argv.last?.contains("attached to this message") == true)
+        // 無 --image：靠 Read 工具讀 prompt 裡的路徑（實測 2026.09.10）
+        #expect(!argv.contains("--image"))
+        #expect(argv.last?.contains("/tmp/a.jpg") == true)
+        #expect(argv.last?.contains("Read tool") == true)
     }
 
     @Test("amp：prompt 走 stdin，argv 只有 -x")
@@ -551,16 +554,26 @@ struct CLIAdviceProviderTests {
         #expect(dump.contains("--no-session@@ARG@@-q@@ARG@@"))
     }
 
-    @Test("hermes：prompt 必須緊跟在 -z 後面")
-    func hermesPromptFollowsOneshotFlag() async throws {
-        // -z／--oneshot 吃 prompt 當自己的引數。把 prompt 排到別的旗標後面，
-        // hermes 0.21.3 會回「expected one argument」直接退出（實測踩過）。
-        let argv = try await captureArgv(engineID: "hermes", photos: ["/tmp/a.jpg"])
-        #expect(argv.first == "-z")
-        #expect(argv.count > 1)
-        #expect(argv[1].contains("attached to this message"))
+    @Test("hermes：chat -q 附加 --image，不用 -z 捷徑")
+    func hermesChatAttachesImage() async throws {
+        // -z 不吃 --image（路徑被當子命令）；看圖必須走 chat -q（實測 0.21.3）。
+        let argv = try await captureArgv(engineID: "hermes", photos: ["/tmp/a.jpg", "/tmp/b.jpg"])
+        #expect(argv.prefix(2).elementsEqual(["chat", "-q"]))
+        #expect(argv.count > 2)
+        #expect(argv[2].contains("attached to this message"))
+        #expect(argv.contains("--image"))
+        guard let firstImage = argv.firstIndex(of: "--image") else {
+            Issue.record("缺少 --image：\(argv)")
+            return
+        }
+        #expect(argv[firstImage + 1] == "/tmp/a.jpg")
+        #expect(argv[firstImage + 2] == "--image")
+        #expect(argv[firstImage + 3] == "/tmp/b.jpg")
+        #expect(argv.contains("-Q"))
+        #expect(argv.contains("--oneshot"))
         #expect(argv.contains("--safe-mode"))
         #expect(argv.contains("--ignore-rules"))
+        #expect(!argv.contains("-z"))
     }
 
     @Test("droid：exec -o json")
