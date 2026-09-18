@@ -146,7 +146,7 @@ final class DragMonitor {
 
         let edge = SnapResolver.ScreenMetrics(frame: screenInfo.frame, isLandscape: screenInfo.isLandscape)
         var zoneContext: SnapDragSession.ZoneContext?
-        if shift, screenInfo.isLandscape {
+        if shift, screenInfo.isUltrawide {
             let templateID = templateProvider?(screenInfo) ?? .centerStage
             zoneContext = SnapDragSession.ZoneContext(
                 template: LayoutTemplateCatalog.template(id: templateID),

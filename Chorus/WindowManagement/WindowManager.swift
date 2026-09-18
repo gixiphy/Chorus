@@ -196,6 +196,10 @@ final class WindowManager {
 
     func applyUltrawide(zoneID: String) {
         runArrangement(source: .menu) { topology, screen, current, ref in
+            guard screen.isUltrawide else {
+                reportNotUltrawide()
+                return
+            }
             let templateID = templateID(for: screen)
             let template = LayoutTemplateCatalog.template(id: templateID)
             guard let match = template.resolvedZones(
@@ -297,6 +301,10 @@ final class WindowManager {
                 ?? topology.screens.first
         else {
             statusMessage = "找不到螢幕"
+            return
+        }
+        guard screen.isUltrawide else {
+            reportNotUltrawide()
             return
         }
         let template = LayoutTemplateCatalog.template(id: templateID(for: screen))
@@ -569,6 +577,11 @@ final class WindowManager {
             statusMessage = "沒有可排列的視窗"
             return nil
         }
+    }
+
+    private func reportNotUltrawide() {
+        lastOutcome = .unsupported
+        statusMessage = String(localized: "這台螢幕不是超寬比例，沒有分區版型")
     }
 
     private func excludedBundleIDs() -> Set<String> {

@@ -31,12 +31,17 @@ struct WindowArrangementMenuSection: View {
                     }
                     disabledReasons(screenCount: screenCount)
 
-                    Divider()
-                    DisclosureGroup {
-                        advancedSection
-                    } label: {
-                        Text(WindowCommand.Group.advanced.title)
-                            .font(.caption)
+                    // 橫向的一般比例螢幕沒有進階內容，整組不出現
+                    if let screen = currentScreen(), screen.isUltrawide || !screen.isLandscape {
+                        Divider()
+                        DisclosureGroup {
+                            advancedSection(screen)
+                        } label: {
+                            Text(screen.isUltrawide
+                                ? WindowCommand.Group.advanced.title
+                                : String(localized: "直立螢幕"))
+                                .font(.caption)
+                        }
                     }
 
                     Divider()
@@ -121,10 +126,9 @@ struct WindowArrangementMenuSection: View {
     // MARK: - 超寬與進階
 
     @ViewBuilder
-    private var advancedSection: some View {
+    private func advancedSection(_ screen: ScreenTopology.ScreenInfo) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            ultrawideSection
-            if currentScreen()?.isLandscape == false {
+            if !screen.isLandscape {
                 HStack {
                     tile("上 1/3", .topThird)
                     tile("中 1/3", .middleThird)
@@ -133,12 +137,15 @@ struct WindowArrangementMenuSection: View {
                     tile("下 2/3", .bottomTwoThirds)
                 }
             }
-            Button(WindowCommand.selectZone.title) { manager.perform(.selectZone) }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .font(.caption)
-                .disabled(manager.targetAppName == nil)
-                .help("方向鍵移動、Enter 套用、Esc 取消")
+            if screen.isUltrawide {
+                ultrawideSection(screen)
+                Button(WindowCommand.selectZone.title) { manager.perform(.selectZone) }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .font(.caption)
+                    .disabled(manager.targetAppName == nil)
+                    .help("方向鍵移動、Enter 套用、Esc 取消")
+            }
         }
         .padding(.top, 2)
     }
@@ -166,30 +173,28 @@ struct WindowArrangementMenuSection: View {
     }
 
     @ViewBuilder
-    private var ultrawideSection: some View {
-        if let screen = currentScreen() {
-            let templateID = manager.templateID(for: screen)
-            let template = LayoutTemplateCatalog.template(id: templateID)
-            let gap = appState.settings.windowArrangementGap
-            let zones = template.resolvedZones(visible: screen.visibleFrame, gap: gap)
-            Text("超寬：\(templateTitle(templateID))")
+    private func ultrawideSection(_ screen: ScreenTopology.ScreenInfo) -> some View {
+        let templateID = manager.templateID(for: screen)
+        let template = LayoutTemplateCatalog.template(id: templateID)
+        let gap = appState.settings.windowArrangementGap
+        let zones = template.resolvedZones(visible: screen.visibleFrame, gap: gap)
+        Text("\(screen.name)：\(templateTitle(templateID))")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        if zones.contains(where: { ZoneWidthHint.isNarrow($0.1.width) }) {
+            Text("此分區較窄，部分 App 可能無法縮入")
                 .font(.caption2)
-                .foregroundStyle(.secondary)
-            if zones.contains(where: { ZoneWidthHint.isNarrow($0.1.width) }) {
-                Text("此分區較窄，部分 App 可能無法縮入")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            }
-            HStack {
-                ForEach(template.zones) { zone in
-                    Button(zoneLabel(zone)) {
-                        manager.applyUltrawide(zoneID: zone.id)
-                    }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .font(.caption)
-                    .disabled(manager.targetAppName == nil)
+                .foregroundStyle(.orange)
+        }
+        HStack {
+            ForEach(template.zones) { zone in
+                Button(zoneLabel(zone)) {
+                    manager.applyUltrawide(zoneID: zone.id)
                 }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .font(.caption)
+                .disabled(manager.targetAppName == nil)
             }
         }
     }

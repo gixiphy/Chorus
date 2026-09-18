@@ -7,9 +7,16 @@ struct ScreenTopology: Sendable {
     struct ScreenInfo: Sendable, Equatable {
         var displayUUID: String
         var displayID: CGDirectDisplayID
+        /// 系統給的裝置名稱（「ASUS VS207」「內建 Retina 顯示器」），介面上用它指認螢幕。
+        var name: String
         var frame: LayoutRect
         var visibleFrame: LayoutRect
         var isLandscape: Bool
+
+        /// 以完整邏輯 frame 的寬高比判定；不是超寬就不提供超寬版型。
+        var isUltrawide: Bool {
+            LayoutTemplateCatalog.isUltrawide(width: frame.width, height: frame.height)
+        }
     }
 
     var generation: UInt64
@@ -29,6 +36,7 @@ struct ScreenTopology: Sendable {
             return ScreenInfo(
                 displayUUID: Self.stableUUID(for: displayID),
                 displayID: displayID,
+                name: screen.localizedName,
                 frame: frame,
                 visibleFrame: visible,
                 isLandscape: frame.width >= frame.height

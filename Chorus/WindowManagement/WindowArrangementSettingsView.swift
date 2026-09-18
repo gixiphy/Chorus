@@ -51,7 +51,7 @@ struct WindowArrangementSettingsView: View {
                     }
                 ))
                 .disabled(!appState.settings.windowArrangementEnabled)
-                Text("直接拖到螢幕邊緣是基本型：左右半屏、四角、上緣填滿、下緣下半屏。按住 Shift 才切到特型：下緣分五段選 1/3、2/3，其餘位置依這台螢幕的超寬版型選區。放開 Shift 立即回到基本型；按 Esc 取消本趟。")
+                Text("直接拖到螢幕邊緣是基本型：左右半屏、四角、上緣填滿、下緣下半屏。按住 Shift 才切到特型：下緣分五段選 1/3、2/3；超寬螢幕的其餘位置另外依版型選區。放開 Shift 立即回到基本型；按 Esc 取消本趟。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -76,15 +76,13 @@ struct WindowArrangementSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("每台螢幕的超寬佈局") {
-                let topology = ScreenTopology.capture(generation: 0)
-                if topology.screens.isEmpty {
-                    Text("找不到螢幕")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(topology.screens, id: \.displayUUID) { screen in
+            // 只列超寬比例的螢幕；一台都沒有就整段不出現
+            let ultrawideScreens = ScreenTopology.capture(generation: 0).screens.filter(\.isUltrawide)
+            if !ultrawideScreens.isEmpty {
+                Section("每台螢幕的超寬佈局") {
+                    ForEach(ultrawideScreens, id: \.displayUUID) { screen in
                         VStack(alignment: .leading, spacing: 6) {
-                            Picker(screenLabel(screen), selection: Binding(
+                            Picker(screenLabel(screen, among: ultrawideScreens), selection: Binding(
                                 get: { appState.windowManager.templateID(for: screen) },
                                 set: { appState.windowManager.setTemplate($0, forDisplayUUID: screen.displayUUID) }
                             )) {
@@ -170,9 +168,10 @@ struct WindowArrangementSettingsView: View {
         }
     }
 
-    private func screenLabel(_ screen: ScreenTopology.ScreenInfo) -> String {
-        let ratio = screen.frame.width / max(screen.frame.height, 1)
-        return String(format: "螢幕 %.0f×%.0f (%.2f:1)", screen.frame.width, screen.frame.height, ratio)
+    /// 用裝置名稱指認螢幕；同型號接兩台時才補解析度區分。
+    private func screenLabel(_ screen: ScreenTopology.ScreenInfo, among screens: [ScreenTopology.ScreenInfo]) -> String {
+        guard screens.filter({ $0.name == screen.name }).count > 1 else { return screen.name }
+        return String(format: "%@（%.0f×%.0f）", screen.name, screen.frame.width, screen.frame.height)
     }
 
     private func templateTitle(_ id: LayoutTemplateID) -> String {

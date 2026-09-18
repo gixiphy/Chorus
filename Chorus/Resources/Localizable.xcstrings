@@ -6748,6 +6748,7 @@
       }
     },
     "找不到螢幕" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9464,6 +9465,7 @@
       }
     },
     "直接拖到螢幕邊緣是基本型：左右半屏、四角、上緣填滿、下緣下半屏。按住 Shift 才切到特型：下緣分五段選 1/3、2/3，其餘位置依這台螢幕的超寬版型選區。放開 Shift 立即回到基本型；按 Esc 取消本趟。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9475,6 +9477,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "直接拖到屏幕边缘是基本型：左右半屏、四角、上缘填满、下缘下半屏。按住 Shift 才切到特型：下缘分五段选 1/3、2/3，其余位置按这台显示器的超宽版型选区。松开 Shift 立即回到基本型；按 Esc 取消本次。"
+          }
+        }
+      }
+    },
+    "直接拖到螢幕邊緣是基本型：左右半屏、四角、上緣填滿、下緣下半屏。按住 Shift 才切到特型：下緣分五段選 1/3、2/3；超寬螢幕的其餘位置另外依版型選區。放開 Shift 立即回到基本型；按 Esc 取消本趟。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dragging straight to a display edge gives the basic zones: left and right halves, the four corners, fill at the top edge, bottom half at the bottom edge. Hold Shift to switch to the special zones: the bottom edge splits into five segments for picking 1/3 or 2/3; elsewhere on an ultrawide display, zones follow the layout template. Release Shift to return to the basic zones at once; press Esc to cancel this drag."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接拖到屏幕边缘是基本型：左右半屏、四角、上缘填满、下缘下半屏。按住 Shift 才切到特型：下缘分五段选 1/3、2/3；超宽屏幕的其余位置另外依版型选区。松开 Shift 立即回到基本型；按 Esc 取消本次。"
+          }
+        }
+      }
+    },
+    "直立螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Portrait Display"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "竖屏显示器"
           }
         }
       }
@@ -11349,6 +11383,7 @@
       }
     },
     "超寬：%@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -11761,6 +11796,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这台设备未启用 iCloud Drive，备份功能已停用。"
+          }
+        }
+      }
+    },
+    "這台螢幕不是超寬比例，沒有分區版型" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This display isn't ultrawide, so it has no zone templates"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台显示器不是超宽比例，没有分区版型"
           }
         }
       }

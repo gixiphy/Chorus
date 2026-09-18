@@ -74,4 +74,15 @@ struct LayoutTemplateTests {
             }
         }
     }
+
+    @Test("超寬判定：寬高比 ≥ 2.2 才提供超寬版型；16:9、16:10、直立都不算")
+    func ultrawideEligibility() {
+        #expect(LayoutTemplateCatalog.isUltrawide(width: 3440, height: 1440))
+        #expect(LayoutTemplateCatalog.isUltrawide(width: 2560, height: 1080))
+        #expect(LayoutTemplateCatalog.isUltrawide(width: 5120, height: 1440))
+        #expect(!LayoutTemplateCatalog.isUltrawide(width: 1920, height: 1080))
+        #expect(!LayoutTemplateCatalog.isUltrawide(width: 1512, height: 982))
+        #expect(!LayoutTemplateCatalog.isUltrawide(width: 1440, height: 3440))
+        #expect(!LayoutTemplateCatalog.isUltrawide(width: 1920, height: 0))
+    }
 }

@@ -35,12 +35,20 @@ struct WindowShortcutSettingsSection: View {
                 .foregroundStyle(.secondary)
         }
 
-        ForEach(WindowCommand.Group.allCases, id: \.self) { group in
+        ForEach(visibleGroups, id: \.self) { group in
             Section(group.title) {
                 ForEach(WindowCommand.commands(in: group), id: \.self) { command in
                     row(command)
                 }
             }
+        }
+    }
+
+    /// 「鍵盤選區」只對超寬螢幕有意義：沒接超寬螢幕就不列，除非先前已綁過（要留得下清除的入口）。
+    private var visibleGroups: [WindowCommand.Group] {
+        let hasUltrawide = ScreenTopology.capture(generation: 0).screens.contains(where: \.isUltrawide)
+        return WindowCommand.Group.allCases.filter { group in
+            group != .advanced || hasUltrawide || bindings[.selectZone] != nil
         }
     }
 
