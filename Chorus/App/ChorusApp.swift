@@ -61,6 +61,12 @@ struct ChorusApp: App {
             }
         }
         .windowResizability(.contentSize)
+
+        Window("視窗排列", id: "windowArrangement") {
+            WindowArrangementSettingsView()
+                .environment(appState)
+        }
+        .windowResizability(.contentSize)
     }
 }
 

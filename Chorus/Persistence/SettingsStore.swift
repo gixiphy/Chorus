@@ -76,6 +76,11 @@ final class SettingsStore {
         static let cloudBackup = "chorus.cloud.backupEnabled"
         static let uiTranslationLanguage = "chorus.ui.translationLanguage"
         static let builtinLanguage = "chorus.ui.builtinLanguage"
+        static let windowArrangementEnabled = "chorus.windowArrangement.enabled"
+        static let windowArrangementGap = "chorus.windowArrangement.gap"
+        static let windowArrangementDragEnabled = "chorus.windowArrangement.dragEnabled"
+        static let windowArrangementExcludedBundleIDs = "chorus.windowArrangement.excludedBundleIDs"
+        static let windowArrangementTemplatesByDisplay = "chorus.windowArrangement.templatesByDisplay"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -207,6 +212,41 @@ final class SettingsStore {
     /// 情境接手：螢幕喇叭音量鍵、無內建螢幕機器的亮度鍵。
     var mediaKeyCaptureEnabled: Bool {
         didSet { defaults.set(mediaKeyCaptureEnabled, forKey: Key.mediaKeyCapture) }
+    }
+
+    /// 視窗排列總開關（預設關；需輔助使用權限）。
+    var windowArrangementEnabled: Bool {
+        didSet { defaults.set(windowArrangementEnabled, forKey: Key.windowArrangementEnabled) }
+    }
+
+    /// 版型間距（pt），預設 8，允許 0–24。
+    var windowArrangementGap: Double {
+        didSet { defaults.set(windowArrangementGap, forKey: Key.windowArrangementGap) }
+    }
+
+    /// 拖曳吸附（M2）；M1 僅持久化，介面暫不啟用操作。
+    var windowArrangementDragEnabled: Bool {
+        didSet { defaults.set(windowArrangementDragEnabled, forKey: Key.windowArrangementDragEnabled) }
+    }
+
+    /// 不參與排列的 App bundle ID。
+    var windowArrangementExcludedBundleIDs: Set<String> {
+        didSet {
+            defaults.set(
+                Array(windowArrangementExcludedBundleIDs).sorted(),
+                forKey: Key.windowArrangementExcludedBundleIDs
+            )
+        }
+    }
+
+    /// 每台螢幕記住的超寬版型 ID（display UUID → LayoutTemplateID.rawValue）。
+    var windowArrangementTemplatesByDisplay: [String: String] {
+        didSet {
+            defaults.set(
+                windowArrangementTemplatesByDisplay,
+                forKey: Key.windowArrangementTemplatesByDisplay
+            )
+        }
     }
 
     /// 各 peer 最後已知的語意層數值（peerID → {"brightness"/"volume" → 0–1}）。
@@ -501,6 +541,18 @@ final class SettingsStore {
         ambientLocation = defaults.array(forKey: Key.ambientLocation) as? [Double]
         hiddenAudioDevices = Set(defaults.stringArray(forKey: Key.hiddenAudioDevices) ?? [])
         mediaKeyCaptureEnabled = defaults.bool(forKey: Key.mediaKeyCapture)
+        windowArrangementEnabled = defaults.bool(forKey: Key.windowArrangementEnabled)
+        if defaults.object(forKey: Key.windowArrangementGap) != nil {
+            windowArrangementGap = min(24, max(0, defaults.double(forKey: Key.windowArrangementGap)))
+        } else {
+            windowArrangementGap = 8
+        }
+        windowArrangementDragEnabled = defaults.bool(forKey: Key.windowArrangementDragEnabled)
+        windowArrangementExcludedBundleIDs = Set(
+            defaults.stringArray(forKey: Key.windowArrangementExcludedBundleIDs) ?? []
+        )
+        windowArrangementTemplatesByDisplay =
+            (defaults.dictionary(forKey: Key.windowArrangementTemplatesByDisplay) as? [String: String]) ?? [:]
         audioBridgeDisabled = Set(defaults.stringArray(forKey: Key.audioBridgeDisabled) ?? [])
         peerKnownControls = (defaults.dictionary(forKey: Key.peerKnownControls) as? [String: [String: Double]]) ?? [:]
         advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"

@@ -19,6 +19,7 @@ final class AppState {
     let diagram: DiagramStore
     let advisor: LightingAdvisor
     let mediaKeys: MediaKeyInterceptor
+    let windowManager: WindowManager
     let virtualDriver: VirtualAudioDriverController
     let keepAwake: KeepAwakeController
     let emergencyRestore: EmergencyRestoreMonitor
@@ -130,6 +131,7 @@ final class AppState {
             displayManager: displayManager,
             audioManager: audioManager
         )
+        windowManager = WindowManager(settings: settings)
 
         timeline.mark("mediaKeys")
         virtualDriver = VirtualAudioDriverController()
@@ -267,6 +269,8 @@ final class AppState {
         timeline.mark("ambient.start")
         mediaKeys.updateActivation()
         timeline.mark("mediaKeys.start")
+        windowManager.updateActivation()
+        timeline.mark("windowManager.start")
         virtualDriver.refreshStatus()
         timeline.mark("virtualDriver.refresh")
         automationServer.updateActivation()

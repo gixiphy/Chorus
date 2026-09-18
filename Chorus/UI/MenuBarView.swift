@@ -23,6 +23,7 @@ struct MenuBarView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     displaySection
+                    WindowArrangementMenuSection()
                     audioSection
                     AlertVolumeRow()
                     AppVolumeSection()

@@ -38,6 +38,7 @@ struct SettingsView: View {
 
 private struct GeneralSettingsTab: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.openWindow) private var openWindow
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     /// 一條場景動作的人話描述。刻意貼近 CLI 的寫法，
@@ -154,6 +155,14 @@ private struct GeneralSettingsTab: View {
                     }
                 }
                 Text("只在 macOS 原生處理不了時接手：螢幕喇叭（HDMI/DP）的音量鍵、沒有內建螢幕機器（如 Mac mini）的亮度鍵。其餘按鍵行為維持原生。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("視窗排列") {
+                Button("視窗排列設定…") {
+                    openWindow(id: "windowArrangement")
+                }
+                Text("半屏、三分、超寬分區與還原。預設關閉，啟用時需輔助使用權限。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
