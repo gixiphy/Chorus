@@ -3,11 +3,10 @@ import ChorusCore
 import Observation
 import SwiftUI
 
-/// 設定頁的「快捷鍵」：起始方案＋逐項錄製／清除。
+/// 設定頁的「快捷鍵」：預設沿用 Magnet 的按鍵（單一版本），可逐項錄製／清除、一鍵恢復預設。
 struct WindowShortcutSettingsSection: View {
     @Environment(AppState.self) private var appState
     @State private var recorder = ShortcutRecorder()
-    @State private var pendingScheme: ShortcutScheme?
     @State private var pendingConflict: PendingConflict?
     @State private var resultMessage: String?
 
@@ -21,10 +20,20 @@ struct WindowShortcutSettingsSection: View {
 
     var body: some View {
         Section("快捷鍵") {
-            schemePicker
-            if let pendingScheme {
-                schemePreview(pendingScheme)
+            HStack {
+                Text(bindings.isDefault ? "使用預設按鍵（與 Magnet 相同）" : "已自訂")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("恢復預設") {
+                    endRecording()
+                    pendingConflict = nil
+                    commit(ShortcutBindings())
+                }
+                .controlSize(.small)
+                .disabled(bindings.isDefault)
             }
+            // 錄到一半切走分頁或關掉設定：把全域快捷鍵接回去
+            .onDisappear { endRecording() }
             if let resultMessage {
                 Label(resultMessage, systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -49,62 +58,6 @@ struct WindowShortcutSettingsSection: View {
         let hasUltrawide = ScreenTopology.capture(generation: 0).screens.contains(where: \.isUltrawide)
         return WindowCommand.Group.allCases.filter { group in
             group != .advanced || hasUltrawide || bindings[.selectZone] != nil
-        }
-    }
-
-    // MARK: - 方案
-
-    private var schemePicker: some View {
-        Picker("起始方案", selection: Binding<ShortcutScheme?>(
-            get: { pendingScheme ?? bindings.matchingScheme },
-            set: { scheme in
-                guard let scheme else { return }
-                endRecording()
-                resultMessage = nil
-                pendingScheme = bindings.changes(applying: scheme).isEmpty ? nil : scheme
-            }
-        )) {
-            if bindings.matchingScheme == nil, pendingScheme == nil {
-                Text("自訂").tag(ShortcutScheme?.none)
-            }
-            ForEach(ShortcutScheme.allCases, id: \.self) { scheme in
-                Text(scheme.title).tag(ShortcutScheme?.some(scheme))
-            }
-        }
-        // 錄到一半切走分頁或關掉設定：把全域快捷鍵接回去
-        .onDisappear { endRecording() }
-    }
-
-    /// 套用前列出會被改掉的項目：舊值 → 新值。
-    private func schemePreview(_ scheme: ShortcutScheme) -> some View {
-        let changes = bindings.changes(applying: scheme)
-        return VStack(alignment: .leading, spacing: 4) {
-            Text("套用「\(scheme.title)」會更動 \(changes.count) 項：")
-                .font(.caption)
-            ForEach(changes) { change in
-                HStack(spacing: 6) {
-                    Text(change.command.title)
-                    Spacer()
-                    Text(change.old?.displayString ?? String(localized: "未綁定"))
-                        .foregroundStyle(.secondary)
-                    Image(systemName: "arrow.right")
-                        .foregroundStyle(.tertiary)
-                        .accessibilityLabel("改為")
-                    Text(change.new?.displayString ?? String(localized: "未綁定"))
-                }
-                .font(.caption.monospacedDigit())
-                .accessibilityElement(children: .combine)
-            }
-            HStack {
-                Spacer()
-                Button("取消") { pendingScheme = nil }
-                Button("套用方案") {
-                    commit(ShortcutBindings(scheme: scheme))
-                    pendingScheme = nil
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-            .controlSize(.small)
         }
     }
 
@@ -178,7 +131,6 @@ struct WindowShortcutSettingsSection: View {
 
     private func beginRecording(_ command: WindowCommand) {
         pendingConflict = nil
-        pendingScheme = nil
         resultMessage = nil
         appState.windowManager.setShortcutRecording(true)
         recorder.begin(command) { chord in

@@ -16,66 +16,62 @@ struct WindowShortcutsTests {
         #expect(WindowCommand.restore.layoutAction == nil)
     }
 
-    @Test("Chorus 基本：四個方向鍵、填滿、置中、⌃⌥Z 還原")
-    func chorusBasicScheme() {
-        let bindings = ShortcutBindings(scheme: .chorusBasic)
-        #expect(bindings.chords.count == 7)
-        #expect(bindings[.leftHalf] == KeyChord(keyCode: 123, modifiers: ctrlOpt))
-        #expect(bindings[.restore] == KeyChord(keyCode: 6, modifiers: ctrlOpt))
-        #expect(bindings[.centerTwoThirds] == nil)
-        #expect(bindings.matchingScheme == .chorusBasic)
-    }
-
-    @Test("Magnet 習慣：19 項全綁，還原改 ⌃⌥⌫，不留 Z")
-    func magnetScheme() {
-        let bindings = ShortcutBindings(scheme: .magnet)
+    @Test("預設＝Magnet 那一組：19 項全綁，還原是 ⌃⌥⌫，沒有其他方案")
+    func defaults() {
+        let bindings = ShortcutBindings()
         #expect(bindings.chords.count == 19)
+        #expect(bindings[.leftHalf] == KeyChord(keyCode: 123, modifiers: ctrlOpt))
         #expect(bindings[.centerTwoThirds] == KeyChord(keyCode: 15, modifiers: ctrlOpt))
         #expect(bindings[.restore] == KeyChord(keyCode: 51, modifiers: ctrlOpt))
         #expect(bindings[.nextDisplay] == KeyChord(keyCode: 124, modifiers: [.control, .option, .command]))
         #expect(!bindings.chords.values.contains(KeyChord(keyCode: 6, modifiers: ctrlOpt)))
         #expect(Set(bindings.chords.values).count == 19)
         #expect(bindings[.selectZone] == nil)
+        #expect(bindings.isDefault)
+        #expect(ShortcutBindings.empty.chords.isEmpty)
+        #expect(!ShortcutBindings.empty.isDefault)
     }
 
-    @Test("全部不綁定")
-    func noneScheme() {
-        let bindings = ShortcutBindings(scheme: .none)
-        #expect(bindings.chords.isEmpty)
-        #expect(bindings.matchingScheme == ShortcutScheme.none)
+    @Test("舊版「Chorus 基本」那七項原封不動存著的，升級成預設；動過的不碰")
+    func legacyBasicMigrates() {
+        #expect(ShortcutBindings.legacyBasic.chords.count == 7)
+        #expect(ShortcutBindings.legacyBasic.migratedFromLegacy().isDefault)
+        var custom = ShortcutBindings.legacyBasic
+        custom.clear(.center)
+        #expect(custom.migratedFromLegacy() == custom)
     }
 
     @Test("同一組按鍵不能綁兩個動作：回報占用者，不改動")
     func conflictIsReported() {
-        var bindings = ShortcutBindings(scheme: .chorusBasic)
+        var bindings = ShortcutBindings()
         let chord = KeyChord(keyCode: 123, modifiers: ctrlOpt)
         let result = bindings.assign(chord, to: .leftThird)
         #expect(result == .conflict(with: .leftHalf))
-        #expect(bindings[.leftThird] == nil)
+        #expect(bindings[.leftThird] == KeyChord(keyCode: 2, modifiers: ctrlOpt))
         #expect(bindings[.leftHalf] == chord)
     }
 
     @Test("明確移轉：舊動作解除綁定，新動作接手")
     func transferMovesChord() {
-        var bindings = ShortcutBindings(scheme: .chorusBasic)
+        var bindings = ShortcutBindings()
         let chord = KeyChord(keyCode: 123, modifiers: ctrlOpt)
         let result = bindings.assign(chord, to: .leftThird, transferring: true)
         #expect(result == .assigned)
         #expect(bindings[.leftThird] == chord)
         #expect(bindings[.leftHalf] == nil)
-        #expect(bindings.matchingScheme == nil)
+        #expect(!bindings.isDefault)
     }
 
     @Test("重綁同一動作到原按鍵不算衝突")
     func reassignSameCommand() {
-        var bindings = ShortcutBindings(scheme: .chorusBasic)
+        var bindings = ShortcutBindings()
         let chord = KeyChord(keyCode: 123, modifiers: ctrlOpt)
         #expect(bindings.assign(chord, to: .leftHalf) == .assigned)
     }
 
     @Test("沒有 ⌃⌥⌘ 任一修飾鍵的按鍵不接受")
     func requiresPrimaryModifier() {
-        var bindings = ShortcutBindings(scheme: .none)
+        var bindings = ShortcutBindings.empty
         #expect(bindings.assign(KeyChord(keyCode: 0, modifiers: [.shift]), to: .leftHalf) == .invalid)
         #expect(bindings.assign(KeyChord(keyCode: 0, modifiers: []), to: .leftHalf) == .invalid)
         #expect(bindings.chords.isEmpty)
@@ -83,28 +79,15 @@ struct WindowShortcutsTests {
 
     @Test("清除後變成自訂")
     func clearMakesCustom() {
-        var bindings = ShortcutBindings(scheme: .magnet)
+        var bindings = ShortcutBindings()
         bindings.clear(.center)
         #expect(bindings[.center] == nil)
-        #expect(bindings.matchingScheme == nil)
-    }
-
-    @Test("切換方案前列出受影響項目的舊值與新值")
-    func schemeDiff() {
-        let bindings = ShortcutBindings(scheme: .chorusBasic)
-        let changes = bindings.changes(applying: .magnet)
-        // 六項相同（四方向、填滿、置中）不列；還原 Z→⌫；其餘 12 項 無→新
-        #expect(changes.count == 13)
-        let restore = changes.first { $0.command == .restore }
-        #expect(restore?.old == KeyChord(keyCode: 6, modifiers: ctrlOpt))
-        #expect(restore?.new == KeyChord(keyCode: 51, modifiers: ctrlOpt))
-        #expect(!changes.contains { $0.command == .leftHalf })
-        #expect(changes.map(\.command) == changes.map(\.command).sorted { $0.order < $1.order })
+        #expect(!bindings.isDefault)
     }
 
     @Test("Codable 往返；未知動作 ID 略過不失敗")
     func codableRoundTrip() throws {
-        var bindings = ShortcutBindings(scheme: .magnet)
+        var bindings = ShortcutBindings()
         _ = bindings.assign(
             KeyChord(keyCode: 49, modifiers: [.control, .shift], keyLabel: "Space"),
             to: .selectZone

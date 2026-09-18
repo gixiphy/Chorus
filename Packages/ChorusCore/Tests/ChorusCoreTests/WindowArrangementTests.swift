@@ -75,6 +75,6 @@ struct WindowArrangementTests {
         #expect(WindowCommand.arrangeMainLeft.layoutAction == nil)
         #expect(WindowCommand.leftHalf.arrangement == nil)
         #expect(WindowCommand.commands(in: .arrange).count == WindowArrangement.allCases.count)
-        #expect(ShortcutBindings(scheme: .magnet)[.arrangeMainLeft] == nil)
+        #expect(ShortcutBindings()[.arrangeMainLeft] == nil)
     }
 }

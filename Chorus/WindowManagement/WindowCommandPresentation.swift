@@ -109,16 +109,6 @@ extension WindowCommand.Group {
     }
 }
 
-extension ShortcutScheme {
-    var title: String {
-        switch self {
-        case .chorusBasic: return String(localized: "Chorus 基本")
-        case .magnet: return String(localized: "Magnet 習慣")
-        case .none: return String(localized: "全部不綁定")
-        }
-    }
-}
-
 /// 版型縮圖：螢幕外框＋區塊，畫法比照 macOS 綠燈選單——目標視窗那格實心，
 /// 其他視窗的格子淡一階。純裝飾，名稱由輔助說明負責。
 struct WindowCommandGlyph: View {

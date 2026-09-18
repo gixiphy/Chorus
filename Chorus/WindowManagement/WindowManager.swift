@@ -437,7 +437,7 @@ final class WindowManager {
         shortcutsSuspended = recording
         guard let shortcuts else { return }
         if recording {
-            shortcuts.register(ShortcutBindings(scheme: .none))
+            shortcuts.register(.empty)
         } else {
             unavailableShortcuts = shortcuts.register(settings.windowArrangementShortcuts)
         }

@@ -860,6 +860,7 @@
       }
     },
     "Chorus 基本" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1052,6 +1053,7 @@
       }
     },
     "Magnet 習慣" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2679,6 +2681,22 @@
         }
       }
     },
+    "使用預設按鍵（與 Magnet 相同）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use default shortcuts (same as Magnet)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用默认按键（与 Magnet 相同）"
+          }
+        }
+      }
+    },
     "例如 -0.2 或 15%" : {
       "localizations" : {
         "en" : {
@@ -3115,6 +3133,7 @@
       }
     },
     "全部不綁定" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -5038,6 +5057,7 @@
       }
     },
     "套用「%@」會更動 %lld 項：" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "variations" : {
@@ -5098,6 +5118,7 @@
       }
     },
     "套用方案" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6185,6 +6206,22 @@
         }
       }
     },
+    "已自訂" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Customized"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已自定义"
+          }
+        }
+      }
+    },
     "已與「%@」配對完成" : {
       "localizations" : {
         "en" : {
@@ -6646,6 +6683,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "恢复管理“%@”"
+          }
+        }
+      }
+    },
+    "恢復預設" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore Defaults"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复默认"
           }
         }
       }
@@ -7426,6 +7479,7 @@
       }
     },
     "改為" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10534,6 +10588,7 @@
       }
     },
     "自訂" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -11495,6 +11550,7 @@
       }
     },
     "起始方案" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

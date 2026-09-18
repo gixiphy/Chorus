@@ -240,7 +240,7 @@ final class SettingsStore {
         }
     }
 
-    /// 視窗指令的全域快捷鍵（JSON）。沒存過＝「Chorus 基本」方案。
+    /// 視窗指令的全域快捷鍵（JSON）。沒存過＝預設（沿用 Magnet 的按鍵）。
     var windowArrangementShortcuts: ShortcutBindings {
         didSet {
             defaults.set(
@@ -566,9 +566,9 @@ final class SettingsStore {
             (defaults.dictionary(forKey: Key.windowArrangementTemplatesByDisplay) as? [String: String]) ?? [:]
         if let data = defaults.data(forKey: Key.windowArrangementShortcuts),
            let bindings = try? JSONDecoder().decode(ShortcutBindings.self, from: data) {
-            windowArrangementShortcuts = bindings
+            windowArrangementShortcuts = bindings.migratedFromLegacy()
         } else {
-            windowArrangementShortcuts = ShortcutBindings(scheme: .chorusBasic)
+            windowArrangementShortcuts = ShortcutBindings()
         }
         audioBridgeDisabled = Set(defaults.stringArray(forKey: Key.audioBridgeDisabled) ?? [])
         peerKnownControls = (defaults.dictionary(forKey: Key.peerKnownControls) as? [String: [String: Double]]) ?? [:]

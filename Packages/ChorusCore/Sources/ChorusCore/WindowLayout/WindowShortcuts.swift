@@ -171,39 +171,6 @@ public struct KeyChord: Sendable, Codable, Hashable {
     ]
 }
 
-/// 快捷鍵起始方案；套用後仍可逐項自訂。
-public enum ShortcutScheme: String, Sendable, Codable, CaseIterable, Hashable {
-    case chorusBasic
-    case magnet
-    case none
-
-    public var chords: [WindowCommand: KeyChord] {
-        let co: KeyChord.Modifiers = [.control, .option]
-        let coc: KeyChord.Modifiers = [.control, .option, .command]
-        func chord(_ keyCode: UInt16, _ modifiers: KeyChord.Modifiers = co) -> KeyChord {
-            KeyChord(keyCode: keyCode, modifiers: modifiers)
-        }
-        switch self {
-        case .none:
-            return [:]
-        case .chorusBasic:
-            return [
-                .leftHalf: chord(123), .rightHalf: chord(124), .topHalf: chord(126), .bottomHalf: chord(125),
-                .maximize: chord(36), .center: chord(8), .restore: chord(6),
-            ]
-        case .magnet:
-            return [
-                .leftHalf: chord(123), .rightHalf: chord(124), .topHalf: chord(126), .bottomHalf: chord(125),
-                .topLeft: chord(32), .topRight: chord(34), .bottomLeft: chord(38), .bottomRight: chord(40),
-                .leftThird: chord(2), .centerThird: chord(3), .rightThird: chord(5),
-                .leftTwoThirds: chord(14), .centerTwoThirds: chord(15), .rightTwoThirds: chord(17),
-                .nextDisplay: chord(124, coc), .previousDisplay: chord(123, coc),
-                .maximize: chord(36), .center: chord(8), .restore: chord(51),
-            ]
-        }
-    }
-}
-
 /// 指令 → 按鍵的對照。保證同一組按鍵最多綁一個指令。
 public struct ShortcutBindings: Sendable, Equatable {
     public enum AssignResult: Sendable, Equatable {
@@ -212,26 +179,56 @@ public struct ShortcutBindings: Sendable, Equatable {
         case invalid
     }
 
-    public struct Change: Sendable, Equatable, Identifiable {
-        public let command: WindowCommand
-        public let old: KeyChord?
-        public let new: KeyChord?
-        public var id: WindowCommand { command }
-    }
-
     public private(set) var chords: [WindowCommand: KeyChord]
 
-    public init(scheme: ShortcutScheme) {
-        chords = scheme.chords
+    /// 預設：沿用 Magnet 的按鍵（使用者裁決，單一版本、不設方案）。
+    public init() {
+        chords = Self.defaultChords
+    }
+
+    private init(chords: [WindowCommand: KeyChord]) {
+        self.chords = chords
+    }
+
+    /// 全部不綁；錄製期間暫停全域註冊時用。
+    public static let empty = ShortcutBindings(chords: [:])
+
+    public var isDefault: Bool { chords == Self.defaultChords }
+
+    public static let defaultChords: [WindowCommand: KeyChord] = {
+        let co: KeyChord.Modifiers = [.control, .option]
+        let coc: KeyChord.Modifiers = [.control, .option, .command]
+        func chord(_ keyCode: UInt16, _ modifiers: KeyChord.Modifiers = co) -> KeyChord {
+            KeyChord(keyCode: keyCode, modifiers: modifiers)
+        }
+        return [
+            .leftHalf: chord(123), .rightHalf: chord(124), .topHalf: chord(126), .bottomHalf: chord(125),
+            .topLeft: chord(32), .topRight: chord(34), .bottomLeft: chord(38), .bottomRight: chord(40),
+            .leftThird: chord(2), .centerThird: chord(3), .rightThird: chord(5),
+            .leftTwoThirds: chord(14), .centerTwoThirds: chord(15), .rightTwoThirds: chord(17),
+            .nextDisplay: chord(124, coc), .previousDisplay: chord(123, coc),
+            .maximize: chord(36), .center: chord(8), .restore: chord(51),
+        ]
+    }()
+
+    /// build 106 的「Chorus 基本」方案：四個方向鍵、填滿、置中、⌃⌥Z 還原。只供升級判斷。
+    static let legacyBasic: ShortcutBindings = {
+        let co: KeyChord.Modifiers = [.control, .option]
+        return ShortcutBindings(chords: [
+            .leftHalf: KeyChord(keyCode: 123, modifiers: co), .rightHalf: KeyChord(keyCode: 124, modifiers: co),
+            .topHalf: KeyChord(keyCode: 126, modifiers: co), .bottomHalf: KeyChord(keyCode: 125, modifiers: co),
+            .maximize: KeyChord(keyCode: 36, modifiers: co), .center: KeyChord(keyCode: 8, modifiers: co),
+            .restore: KeyChord(keyCode: 6, modifiers: co),
+        ])
+    }()
+
+    /// 存的若正好是舊「Chorus 基本」（＝沒自訂過），換成現在的預設；動過任何一項就原樣保留。
+    public func migratedFromLegacy() -> ShortcutBindings {
+        self == Self.legacyBasic ? ShortcutBindings() : self
     }
 
     public subscript(command: WindowCommand) -> KeyChord? {
         chords[command]
-    }
-
-    /// 與某個方案完全一致時回傳該方案；否則為「自訂」。
-    public var matchingScheme: ShortcutScheme? {
-        ShortcutScheme.allCases.first { $0.chords == chords }
     }
 
     public func command(for chord: KeyChord) -> WindowCommand? {
@@ -255,16 +252,6 @@ public struct ShortcutBindings: Sendable, Equatable {
 
     public mutating func clear(_ command: WindowCommand) {
         chords[command] = nil
-    }
-
-    /// 套用方案會改到的項目（舊值→新值），依指令宣告順序。
-    public func changes(applying scheme: ShortcutScheme) -> [Change] {
-        let target = scheme.chords
-        return WindowCommand.allCases.compactMap { command in
-            let old = chords[command]
-            let new = target[command]
-            return old == new ? nil : Change(command: command, old: old, new: new)
-        }
     }
 }
 
