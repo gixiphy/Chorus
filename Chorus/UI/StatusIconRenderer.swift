@@ -7,15 +7,15 @@ import ChorusCore
 /// 這樣淺色／深色選單列、以及選單被點開時的反白全部自動正確，
 /// 不必自己追蹤 appearance。
 ///
-/// 排法沿用 Status Trio：外圈一道從左下掃到右下的弧是亮度，平常整圈閉合，
-/// 調整當下頂端打開一個開口把百分比端出來；中央是預設輸出裝置；
-/// 底部沿同一個圓畫一小段音量弧。未點亮的軌道一律淡化。
+/// 排法沿用 Status Trio：外圈一道從左下掃到右下的主弧是**音量**（比亮度常調，
+/// 給它最長的那道），平常整圈閉合，調整當下頂端打開一個開口把百分比端出來；
+/// 中央是預設輸出裝置；底部沿同一個圓畫一小段**亮度**弧。未點亮的軌道一律淡化。
 /// App icon 也由此 renderer 產生，避免兩套輪廓漸漸分歧。
 /// 右側保留防睡眠或限時場景的倒數。
 ///
 /// 中央那格沿用系統聲音選單的圖示語彙：內建喇叭畫那台 Mac、HDMI 畫螢幕、
 /// AirPods 畫 AirPods（SF Symbol）；一般喇叭與虛擬裝置維持手繪喇叭。
-/// 音量由底部的弧表達，喇叭本身不再畫聲波。
+/// 音量由外圈主弧表達，喇叭本身不再畫聲波。
 enum StatusIconRenderer {
     /// 選單列圖示的標準邊長。NSStatusItem 高 22pt，撐滿它。
     static let side: CGFloat = 22
@@ -77,13 +77,17 @@ enum StatusIconRenderer {
         context.setFillColor(NSColor.black.cgColor)
         context.setLineCap(.round)
 
-        drawBrightnessArc(state.brightness, readout: state.readout, in: context)
+        // 音量比亮度常調，放在最長的主弧；亮度退到底部那一小段
+        drawMainArc(
+            StatusIconGeometry.volumeArcProgress(volume: state.volume, muted: state.isMuted),
+            readout: state.readout, in: context
+        )
         if let symbol = state.output.symbolName {
             drawDeviceSymbol(symbol, volume: state.volume, muted: state.isMuted, in: context)
         } else {
             drawSpeaker(state.volume, muted: state.isMuted, in: context)
         }
-        drawVolumeArc(state.volume, muted: state.isMuted, in: context)
+        drawBottomArc(StatusIconGeometry.brightnessArcProgress(brightness: state.brightness), in: context)
 
         if let badge = state.badge, badgeWidth > 0 {
             context.setAlpha(1)
@@ -91,10 +95,11 @@ enum StatusIconRenderer {
         }
     }
 
-    // MARK: 亮度弧（頂）
+    // MARK: 主弧（音量）
 
-    /// 軌道整段淡化，亮度照比例點亮。有讀數時頂端開口，數字畫在開口裡。
-    private static func drawBrightnessArc(_ brightness: Double?, readout: StatusReadout?, in context: CGContext) {
+    /// 軌道整段淡化，照比例點亮；`progress == nil`（靜音、沒裝置）只剩軌道。
+    /// 有讀數時頂端開口，數字畫在開口裡。
+    private static func drawMainArc(_ progress: Double?, readout: StatusReadout?, in context: CGContext) {
         let text = readout.map { NSAttributedString(string: String($0.percent), attributes: [
             .font: readoutFont, .foregroundColor: NSColor.black, .kern: -readoutFont.pointSize * 0.04,
         ]) }
@@ -106,11 +111,11 @@ enum StatusIconRenderer {
 
         context.setLineWidth(ringLineWidth)
         context.setAlpha(inactiveAlpha)
-        strokeBrightness(segments: StatusIconGeometry.arcSegments(progress: 1, gapFraction: gap), in: context)
+        strokeMain(segments: StatusIconGeometry.arcSegments(progress: 1, gapFraction: gap), in: context)
 
-        if let brightness, brightness > 0.001 {
+        if let progress {
             context.setAlpha(1)
-            strokeBrightness(segments: StatusIconGeometry.arcSegments(progress: brightness, gapFraction: gap), in: context)
+            strokeMain(segments: StatusIconGeometry.arcSegments(progress: progress, gapFraction: gap), in: context)
         }
 
         guard let text else { return }
@@ -123,12 +128,12 @@ enum StatusIconRenderer {
         text.draw(at: CGPoint(x: top.x - size.width / 2, y: baseline + readoutFont.descender))
     }
 
-    private static func strokeBrightness(segments: [StatusIconGeometry.ArcSegment], in context: CGContext) {
+    private static func strokeMain(segments: [StatusIconGeometry.ArcSegment], in context: CGContext) {
         for segment in segments {
             context.addArc(
                 center: ringCenter, radius: ringRadius,
-                startAngle: brightnessAngle(progress: segment.from),
-                endAngle: brightnessAngle(progress: segment.to),
+                startAngle: mainArcAngle(progress: segment.from),
+                endAngle: mainArcAngle(progress: segment.to),
                 clockwise: true
             )
             context.strokePath()
@@ -136,25 +141,25 @@ enum StatusIconRenderer {
     }
 
     /// Status Trio 的角度是 SVG 慣例（y 往下、順時針為正）；CoreGraphics 的 y 往上，取負即可。
-    private static func brightnessAngle(progress: Double) -> CGFloat {
-        -CGFloat(StatusIconGeometry.brightnessStart + StatusIconGeometry.brightnessSweep * progress)
+    private static func mainArcAngle(progress: Double) -> CGFloat {
+        -CGFloat(StatusIconGeometry.mainArcStart + StatusIconGeometry.mainArcSweep * progress)
     }
 
-    // MARK: 音量弧（底）
+    // MARK: 底弧（亮度）
 
-    private static func drawVolumeArc(_ volume: Double?, muted: Bool, in context: CGContext) {
+    private static func drawBottomArc(_ progress: Double?, in context: CGContext) {
         context.setLineWidth(ringLineWidth)
         context.setAlpha(inactiveAlpha)
-        strokeVolume(progress: 1, in: context)
+        strokeBottom(progress: 1, in: context)
 
-        guard let progress = StatusIconGeometry.volumeArcProgress(volume: volume, muted: muted) else { return }
+        guard let progress else { return }
         context.setAlpha(1)
-        strokeVolume(progress: progress, in: context)
+        strokeBottom(progress: progress, in: context)
     }
 
-    private static func strokeVolume(progress: Double, in context: CGContext) {
-        let start = StatusIconGeometry.volumeStart
-        let end = start - (start - StatusIconGeometry.volumeEnd) * progress
+    private static func strokeBottom(progress: Double, in context: CGContext) {
+        let start = StatusIconGeometry.bottomArcStart
+        let end = start - (start - StatusIconGeometry.bottomArcEnd) * progress
         context.addArc(
             center: ringCenter, radius: ringRadius,
             startAngle: -CGFloat(start), endAngle: -CGFloat(end),

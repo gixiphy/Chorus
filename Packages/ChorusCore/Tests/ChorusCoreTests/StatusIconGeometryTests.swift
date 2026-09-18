@@ -44,7 +44,7 @@ struct StatusIconGeometryTests {
     @Test("開口寬度由文字寬換算成弧長比例")
     func gapFromText() {
         // 弧長 = 半徑 × 掃角；文字 10 加兩側各 1 的留白，弧長 40 → 0.3
-        let fraction = StatusIconGeometry.gapFraction(contentWidth: 10, padding: 1, radius: 40 / StatusIconGeometry.brightnessSweep)
+        let fraction = StatusIconGeometry.gapFraction(contentWidth: 10, padding: 1, radius: 40 / StatusIconGeometry.mainArcSweep)
         #expect(abs(fraction - 0.3) < 1e-9)
         #expect(StatusIconGeometry.gapFraction(contentWidth: 0, padding: 0, radius: 10) == 0)
     }
@@ -56,5 +56,19 @@ struct StatusIconGeometryTests {
         #expect(StatusIconGeometry.volumeArcProgress(volume: 0.6, muted: true) == nil)
         #expect(StatusIconGeometry.volumeArcProgress(volume: 0.6, muted: false) == 0.6)
         #expect(StatusIconGeometry.volumeArcProgress(volume: 1.4, muted: false) == 1)
+    }
+
+    @Test("亮度弧：讀不到或全暗只剩軌道；超過 1 收在 1")
+    func brightnessArc() {
+        #expect(StatusIconGeometry.brightnessArcProgress(brightness: nil) == nil)
+        #expect(StatusIconGeometry.brightnessArcProgress(brightness: 0) == nil)
+        #expect(StatusIconGeometry.brightnessArcProgress(brightness: 0.4) == 0.4)
+        #expect(StatusIconGeometry.brightnessArcProgress(brightness: 1.2) == 1)
+    }
+
+    @Test("主弧比底弧長：常調的音量放主弧才有解析度")
+    func mainArcIsLonger() {
+        let bottom = StatusIconGeometry.bottomArcStart - StatusIconGeometry.bottomArcEnd
+        #expect(StatusIconGeometry.mainArcSweep > bottom * 3)
     }
 }

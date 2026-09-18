@@ -50,7 +50,7 @@ struct RenderIcons {
                 ("Display", state(0.75, 0.65, output: .display)),
                 ("AirPods", state(0.75, 0.65, output: .airPods)),
                 ("Max muted", state(0.75, 0.65, muted: true, output: .airPodsMax)),
-                ("Adjusting", state(0.76, 0.65, output: .laptop, readout: .init(kind: .brightness, value: 0.76)))
+                ("Adjusting", state(0.76, 0.65, output: .laptop, readout: .init(kind: .volume, value: 0.65)))
             ]
             for (row, dark) in [false, true].enumerated() {
                 let y = CGFloat(485 - row * 205)
@@ -73,7 +73,7 @@ struct RenderIcons {
             for (index, sample) in samples.enumerated() {
                 mark(sample.1, at: CGPoint(x: 600 + CGFloat(index) * 66, y: 185), color: .black, in: context)
             }
-            text("Brightness arc (opens for the readout while adjusting)   /   Output device   /   Volume arc",
+            text("Volume arc (opens for the readout while adjusting)   /   Output device   /   Brightness arc",
                  at: CGPoint(x: 605, y: 125), size: 16, color: .secondaryLabelColor)
         }
     }
