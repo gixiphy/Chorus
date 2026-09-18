@@ -147,8 +147,7 @@ struct WindowArrangementSettingsView: View {
             WindowShortcutSettingsSection()
         }
         .formStyle(.grouped)
-        .padding()
-        .frame(minWidth: 640, minHeight: 560)
+        .padding(.vertical, 4)
         .onAppear {
             appState.windowManager.updateActivation()
         }

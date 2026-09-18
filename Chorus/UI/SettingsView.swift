@@ -16,6 +16,9 @@ struct SettingsView: View {
             Tab("音訊", systemImage: "speaker.wave.2") {
                 AudioSettingsTab()
             }
+            Tab("視窗排列", systemImage: "rectangle.split.3x1") {
+                WindowArrangementSettingsView()
+            }
             Tab("同步", systemImage: "arrow.triangle.2.circlepath") {
                 SyncSettingsTab()
             }
@@ -29,25 +32,15 @@ struct SettingsView: View {
                 DiagnosticsSettingsTab()
             }
         }
-        // 560：七個英文分頁名（General…Analysis Engine…Backup、Diagnostics）；
-        // 太窄會把最後幾頁擠進工具列的 » 溢出選單（460 放六頁就已經放不下）
-        .frame(width: 560, height: 420)
+        // 八個分頁；過窄會把後段擠進 » 溢出選單
+        .frame(width: 720, height: 480)
         .environment(appState)
     }
 }
 
 private struct GeneralSettingsTab: View {
     @Environment(AppState.self) private var appState
-    @Environment(\.openWindow) private var openWindow
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-
-    /// 一條場景動作的人話描述。刻意貼近 CLI 的寫法，
-    /// 使用者看得懂這一行，也就知道怎麼在終端重現它。
-    private func describe(_ request: ControlRequest) -> String {
-        let property = request.property?.rawValue ?? request.action?.rawValue ?? "?"
-        let value = request.value.map { " \($0)" } ?? ""
-        return "\(request.verb.rawValue) \(request.target.stringValue) \(property)\(value)"
-    }
 
     var body: some View {
         Form {
@@ -88,44 +81,10 @@ private struct GeneralSettingsTab: View {
                     .controlSize(.small)
                 }
             }
-            Text("裝置插拔、預設輸出切換、場景套用與還原、App 音訊接管的每一步都記在這裡，2 MB 一輪、留三輪。聲音或畫面突然不對時，把這個檔連同發生時間一起回報。")
+            Text("裝置插拔、預設輸出切換、App 音訊接管的每一步都記在這裡，2 MB 一輪、留三輪。聲音或畫面突然不對時，把這個檔連同發生時間一起回報。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             InterfaceLanguageSection()
-            Section("場景") {
-                if appState.sceneStore.scenes.isEmpty {
-                    Text("尚無場景。在選單列按場景列的 ＋ 可把目前的亮度、音量與自動亮度狀態存成一組。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(appState.sceneStore.scenes) { scene in
-                        DisclosureGroup {
-                            // 列出實際會做什麼——場景是會改硬體的東西，
-                            // 使用者按下去前應該看得到內容，而不是只有一個名字
-                            ForEach(Array(scene.requests.enumerated()), id: \.offset) { _, request in
-                                Text(describe(request))
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
-                            }
-                        } label: {
-                            HStack {
-                                Text(scene.name)
-                                Spacer()
-                                Text("\(scene.requests.count) 個動作")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Button("刪除", role: .destructive) {
-                                    appState.sceneStore.delete(id: scene.id)
-                                }
-                                .controlSize(.small)
-                            }
-                        }
-                    }
-                }
-                Text("選單列、`chorus scene <名稱>` 與 HTTP 觸發的是同一份。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
             Section("鍵盤媒體鍵") {
                 Toggle("接管亮度／音量鍵", isOn: Binding(
                     get: { appState.settings.mediaKeyCaptureEnabled },
@@ -155,14 +114,6 @@ private struct GeneralSettingsTab: View {
                     }
                 }
                 Text("只在 macOS 原生處理不了時接手：螢幕喇叭（HDMI/DP）的音量鍵、沒有內建螢幕機器（如 Mac mini）的亮度鍵。其餘按鍵行為維持原生。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("視窗排列") {
-                Button("視窗排列設定…") {
-                    openWindow(id: "windowArrangement")
-                }
-                Text("半屏、三分、超寬分區與還原。預設關閉，啟用時需輔助使用權限。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -987,7 +938,7 @@ private struct AudioSettingsTab: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 40, alignment: .trailing)
                 }
-                Text("與輸出音量分開的系統設定——「會議」場景可以只關提示音、不動音樂。")
+                Text("與輸出音量分開的系統設定——開會時可以只關提示音、不動音樂。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1374,7 +1325,7 @@ private struct BackupSettingsTab: View {
 
             Section {
                 Text("""
-                備份的是**這台**的設定：場景、等化器與效果鏈、排除清單、\
+                備份的是**這台**的設定：等化器與效果鏈、排除清單、\
                 各種偏好。寫進你的 iCloud Drive，**不會自動套到別台**——\
                 要用得在下面挑一份匯入。
                 """)
@@ -1464,7 +1415,7 @@ private struct BackupSettingsTab: View {
             Section("不會備份的") {
                 Text("""
                 配對資訊與自動化介面的 token（存在鑰匙串，備份是明文 JSON）、\
-                亮度與音量的當下值、進行中的限時場景。換機器後配對要重做一次。
+                亮度與音量的當下值。換機器後配對要重做一次。
                 """)
                 .font(.caption2)
                 .foregroundStyle(.secondary)

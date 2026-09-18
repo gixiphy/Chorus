@@ -8,7 +8,7 @@ import SwiftUI
 /// 讀哪一份：
 /// - 亮度：**主顯示器**（選單列所在的那台）。取平均會讓單台的調整看不出來。
 /// - 音量與中央的裝置符號：**預設輸出裝置**。就是媒體鍵會動到的那個。
-/// - 倒數：防睡眠與限時場景兩個計時中較早到期的那個。
+/// - 倒數：防睡眠計時。
 /// - 讀數：使用者調整亮度／音量的當下才有，1.5 秒後收掉（`StatusReadoutController`）。
 struct MenuBarLabel: View {
     @Environment(AppState.self) private var appState
@@ -28,12 +28,10 @@ struct MenuBarLabel: View {
             volume: StatusIcon.quantize(device?.volume),
             isMuted: device?.muted ?? false,
             output: device?.outputGlyph ?? .speaker,
-            // 兩個倒數（防睡眠、限時場景）取較早到期的那個；圖示上不新增
-            // 第四格資訊——選單列的空間是使用者的
             badge: StatusIcon.badge(
                 keepAwakeRemaining: appState.keepAwake.remainingSeconds,
                 keepAwakeHolding: appState.keepAwake.isHolding,
-                focusRemaining: appState.focus.remainingSeconds
+                focusRemaining: nil
             ),
             readout: appState.statusReadout.readout
         )
