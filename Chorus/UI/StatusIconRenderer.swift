@@ -10,6 +10,7 @@ import ChorusCore
 /// 排法沿用 Status Trio：外圈一道從左下掃到右下的主弧是**音量**（比亮度常調，
 /// 給它最長的那道），平常整圈閉合，調整當下頂端打開一個開口把百分比端出來；
 /// 中央是預設輸出裝置；底部沿同一個圓畫一小段**亮度**弧。未點亮的軌道一律淡化。
+/// 調整當下主弧改畫讀數那個量（數字與圖形對齊），另一個量暫時換到底弧。
 /// App icon 也由此 renderer 產生，避免兩套輪廓漸漸分歧。
 /// 右側保留防睡眠或限時場景的倒數。
 ///
@@ -77,17 +78,19 @@ enum StatusIconRenderer {
         context.setFillColor(NSColor.black.cgColor)
         context.setLineCap(.round)
 
-        // 音量比亮度常調，放在最長的主弧；亮度退到底部那一小段
-        drawMainArc(
-            StatusIconGeometry.volumeArcProgress(volume: state.volume, muted: state.isMuted),
-            readout: state.readout, in: context
+        // 音量比亮度常調，平常放在最長的主弧、亮度在底部那一小段；
+        // 調整當下主弧改畫讀數本身，讓開口裡的數字與包著它的弧一致
+        let arcs = StatusIconGeometry.arcs(
+            brightness: state.brightness, volume: state.volume,
+            muted: state.isMuted, readout: state.readout
         )
+        drawMainArc(arcs.main, readout: state.readout, in: context)
         if let symbol = state.output.symbolName {
             drawDeviceSymbol(symbol, volume: state.volume, muted: state.isMuted, in: context)
         } else {
             drawSpeaker(state.volume, muted: state.isMuted, in: context)
         }
-        drawBottomArc(StatusIconGeometry.brightnessArcProgress(brightness: state.brightness), in: context)
+        drawBottomArc(arcs.bottom, in: context)
 
         if let badge = state.badge, badgeWidth > 0 {
             context.setAlpha(1)
@@ -95,7 +98,7 @@ enum StatusIconRenderer {
         }
     }
 
-    // MARK: 主弧（音量）
+    // MARK: 主弧（平常是音量；調整當下是讀數）
 
     /// 軌道整段淡化，照比例點亮；`progress == nil`（靜音、沒裝置）只剩軌道。
     /// 有讀數時頂端開口，數字畫在開口裡。
@@ -145,7 +148,7 @@ enum StatusIconRenderer {
         -CGFloat(StatusIconGeometry.mainArcStart + StatusIconGeometry.mainArcSweep * progress)
     }
 
-    // MARK: 底弧（亮度）
+    // MARK: 底弧（平常是亮度；調亮度時暫時換成音量）
 
     private static func drawBottomArc(_ progress: Double?, in context: CGContext) {
         context.setLineWidth(ringLineWidth)

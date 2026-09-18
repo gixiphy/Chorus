@@ -71,4 +71,42 @@ struct StatusIconGeometryTests {
         let bottom = StatusIconGeometry.bottomArcStart - StatusIconGeometry.bottomArcEnd
         #expect(StatusIconGeometry.mainArcSweep > bottom * 3)
     }
+
+    @Test("平常：主弧＝音量、底弧＝亮度")
+    func arcsAtRest() {
+        let arcs = StatusIconGeometry.arcs(brightness: 0.8, volume: 0.3, muted: false, readout: nil)
+        #expect(arcs == .init(main: 0.3, bottom: 0.8))
+        let muted = StatusIconGeometry.arcs(brightness: 0.8, volume: 0.3, muted: true, readout: nil)
+        #expect(muted == .init(main: nil, bottom: 0.8))
+    }
+
+    @Test("調亮度時：主弧跟著開口裡的數字走，音量暫時換到底弧")
+    func arcsWhileAdjustingBrightness() {
+        let readout = StatusReadout(kind: .brightness, value: 0.76)
+        let arcs = StatusIconGeometry.arcs(brightness: 0.76, volume: 0.3, muted: false, readout: readout)
+        #expect(arcs == .init(main: 0.76, bottom: 0.3))
+    }
+
+    @Test("主弧用讀數本身的值：調的不是主顯示器時，數字與弧仍一致")
+    func mainArcFollowsReadoutValue() {
+        // 圖示平常讀主顯示器（0.2），但使用者正在調另一台到 0.9
+        let readout = StatusReadout(kind: .brightness, value: 0.9)
+        let arcs = StatusIconGeometry.arcs(brightness: 0.2, volume: 0.5, muted: false, readout: readout)
+        #expect(arcs.main == 0.9)
+        #expect(arcs.bottom == 0.5)
+    }
+
+    @Test("調音量時排法不變；讀數歸零只剩軌道")
+    func arcsWhileAdjustingVolume() {
+        let arcs = StatusIconGeometry.arcs(
+            brightness: 0.8, volume: 0.65, muted: false,
+            readout: StatusReadout(kind: .volume, value: 0.65)
+        )
+        #expect(arcs == .init(main: 0.65, bottom: 0.8))
+        let zero = StatusIconGeometry.arcs(
+            brightness: 0.8, volume: 0, muted: false,
+            readout: StatusReadout(kind: .volume, value: 0)
+        )
+        #expect(zero.main == nil)
+    }
 }

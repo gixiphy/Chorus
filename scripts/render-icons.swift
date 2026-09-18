@@ -43,14 +43,15 @@ struct RenderIcons {
                 ("Quiet", state(0.25, 0.20)),
                 ("Zero", state(0, 0)),
                 ("Muted", state(0.75, 0.65, muted: true)),
-                ("No device", state(nil, nil)),
+                ("No dev", state(nil, nil)),
                 ("Awake", state(1, 1, badge: .init(text: "∞", kind: .keepAwake))),
                 ("Focus", state(0.75, 0.65, badge: .init(text: "25:00", kind: .focus))),
                 ("MacBook", state(0.75, 0.65, output: .laptop)),
                 ("Display", state(0.75, 0.65, output: .display)),
                 ("AirPods", state(0.75, 0.65, output: .airPods)),
-                ("Max muted", state(0.75, 0.65, muted: true, output: .airPodsMax)),
-                ("Adjusting", state(0.76, 0.65, output: .laptop, readout: .init(kind: .volume, value: 0.65)))
+                ("Max mute", state(0.75, 0.65, muted: true, output: .airPodsMax)),
+                ("Adj. vol", state(0.30, 0.65, output: .laptop, readout: .init(kind: .volume, value: 0.65))),
+                ("Adj. bri", state(0.30, 0.65, output: .laptop, readout: .init(kind: .brightness, value: 0.30)))
             ]
             for (row, dark) in [false, true].enumerated() {
                 let y = CGFloat(485 - row * 205)
@@ -59,7 +60,7 @@ struct RenderIcons {
                 NSBezierPath(roundedRect: card, xRadius: 22, yRadius: 22).fill()
                 let ink: NSColor = dark ? .white : .black
                 for (index, sample) in samples.enumerated() {
-                    let x = 600 + CGFloat(index) * 66
+                    let x = 600 + CGFloat(index) * 62
                     context.saveGState()
                     context.translateBy(x: x, y: y + 78)
                     context.scaleBy(x: 2.4, y: 2.4)
@@ -71,7 +72,7 @@ struct RenderIcons {
             }
             text("ACTUAL SIZE · 22 PT", at: CGPoint(x: 605, y: 225), size: 13, weight: .semibold, color: .secondaryLabelColor)
             for (index, sample) in samples.enumerated() {
-                mark(sample.1, at: CGPoint(x: 600 + CGFloat(index) * 66, y: 185), color: .black, in: context)
+                mark(sample.1, at: CGPoint(x: 600 + CGFloat(index) * 62, y: 185), color: .black, in: context)
             }
             text("Volume arc (opens for the readout while adjusting)   /   Output device   /   Brightness arc",
                  at: CGPoint(x: 605, y: 125), size: 16, color: .secondaryLabelColor)

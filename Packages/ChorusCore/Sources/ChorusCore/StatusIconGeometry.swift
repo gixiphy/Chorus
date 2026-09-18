@@ -74,4 +74,38 @@ public enum StatusIconGeometry {
         guard let brightness, brightness > 0.001 else { return nil }
         return min(brightness, 1)
     }
+
+    /// 兩道弧各自要點亮的比例；`nil`＝只剩軌道。
+    public struct Arcs: Equatable, Sendable {
+        public var main: Double?
+        public var bottom: Double?
+
+        public init(main: Double?, bottom: Double?) {
+            self.main = main
+            self.bottom = bottom
+        }
+    }
+
+    /// 哪個量畫在哪道弧。平常主弧＝音量、底弧＝亮度。
+    ///
+    /// 有讀數時，主弧改畫**讀數本身**——數字就開在主弧頂端，兩者講的必須是同一件事
+    /// （調的若不是主顯示器，圖示平常讀的亮度還跟數字對不上，所以用讀數的值而不是狀態值）。
+    /// 調亮度那一下，音量暫時換到底弧，讀數收掉再換回來。
+    public static func arcs(
+        brightness: Double?,
+        volume: Double?,
+        muted: Bool,
+        readout: StatusReadout?
+    ) -> Arcs {
+        let volumeArc = volumeArcProgress(volume: volume, muted: muted)
+        let brightnessArc = brightnessArcProgress(brightness: brightness)
+        guard let readout else { return Arcs(main: volumeArc, bottom: brightnessArc) }
+
+        let value = Double(readout.percent) / 100
+        let main = value > 0.001 ? value : nil
+        switch readout.kind {
+        case .volume: return Arcs(main: main, bottom: brightnessArc)
+        case .brightness: return Arcs(main: main, bottom: volumeArc)
+        }
+    }
 }
