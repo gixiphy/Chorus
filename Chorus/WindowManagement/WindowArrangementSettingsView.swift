@@ -51,7 +51,7 @@ struct WindowArrangementSettingsView: View {
                     }
                 ))
                 .disabled(!appState.settings.windowArrangementEnabled)
-                Text("拖到螢幕邊緣預覽半屏／三分／填滿；按住 Shift 拖曳則依目前螢幕的超寬版型選區。放開 Shift 或按 Esc 取消本趟。")
+                Text("直接拖到螢幕邊緣是基本型：左右半屏、四角、上緣填滿、下緣下半屏。按住 Shift 才切到特型：下緣分五段選 1/3、2/3，其餘位置依這台螢幕的超寬版型選區。放開 Shift 立即回到基本型；按 Esc 取消本趟。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -72,16 +72,6 @@ struct WindowArrangementSettingsView: View {
                     Text("24")
                 }
                 Text("目前 \(Int(appState.settings.windowArrangementGap)) pt")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("快捷鍵（啟用後）") {
-                LabeledContent("左／右／上／下半屏") { Text("⌃⌥← → ↑ ↓").foregroundStyle(.secondary) }
-                LabeledContent("填滿") { Text("⌃⌥↩").foregroundStyle(.secondary) }
-                LabeledContent("置中") { Text("⌃⌥C").foregroundStyle(.secondary) }
-                LabeledContent("還原") { Text("⌃⌥Z").foregroundStyle(.secondary) }
-                Text("鍵盤選區請用選單「鍵盤選區」：方向鍵移動、Enter 套用、Esc 取消。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -154,6 +144,9 @@ struct WindowArrangementSettingsView: View {
                 }
                 .controlSize(.small)
             }
+
+            // 逐項清單很長，放最後，不把螢幕佈局與排除 App 埋在下面
+            WindowShortcutSettingsSection()
         }
         .formStyle(.grouped)
         .padding()

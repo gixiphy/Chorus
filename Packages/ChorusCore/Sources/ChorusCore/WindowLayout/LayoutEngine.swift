@@ -39,6 +39,16 @@ public struct LayoutEngine: Sendable, Equatable {
             return horizontalSlice(inner: inner, gap: g, startFraction: 2.0 / 3.0, endFraction: 1)
         case .leftTwoThirds:
             return horizontalSlice(inner: inner, gap: g, startFraction: 0, endFraction: 2.0 / 3.0)
+        case .centerTwoThirds:
+            // 獨立目標矩形：兩側 1/6 是留白而非可選分區，所以不退 gap/2。
+            // 兩側用同一個取整量，非整除寬度仍對稱
+            let margin = floor(inner.width / 6)
+            return LayoutRect(
+                x: inner.x + margin,
+                y: inner.y,
+                width: max(0, inner.width - margin * 2),
+                height: inner.height
+            )
         case .rightTwoThirds:
             return horizontalSlice(inner: inner, gap: g, startFraction: 1.0 / 3.0, endFraction: 1)
         case .topThird:

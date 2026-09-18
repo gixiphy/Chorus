@@ -134,6 +134,9 @@ final class AXWindowWorker: @unchecked Sendable {
                 if sizeStatus != .success && posStatus != .success {
                     return .failed(.unsupported)
                 }
+                // 第一次設大小時視窗還在原螢幕，系統會用那台的尺寸夾住；
+                // 搬過去之後再設一次，跨螢幕（小→大）才拿得到完整尺寸
+                _ = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
                 let after = try self.readFrame(window, topology: topology)
                 let tolerance = 2.0
                 let matched =

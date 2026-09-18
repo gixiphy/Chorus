@@ -42,6 +42,21 @@ struct LayoutEngineTests {
         #expect(wide.maxX == thin.x - 8)
     }
 
+    @Test("中央三分之二：全高、左右各留 1/6，不再扣內間距")
+    func centerTwoThirds() {
+        let result = engine.frame(for: .centerTwoThirds, visible: screen, gap: 8)
+        // 內矩形 w=1584 → 左右各留 264，寬 1056
+        #expect(result == LayoutRect(x: 372, y: 58, width: 1056, height: 884))
+    }
+
+    @Test("中央三分之二：非整除寬度仍左右對稱")
+    func centerTwoThirdsSymmetric() {
+        let odd = LayoutRect(x: 0, y: 0, width: 1001, height: 600)
+        let result = engine.frame(for: .centerTwoThirds, visible: odd, gap: 0)
+        #expect(result.x - odd.x == odd.maxX - result.maxX)
+        #expect(result.height == 600)
+    }
+
     @Test("填滿＝可見範圍內縮 gap")
     func maximize() {
         let result = engine.frame(for: .maximize, visible: screen, gap: 8)

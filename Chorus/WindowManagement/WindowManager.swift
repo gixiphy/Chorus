@@ -19,10 +19,36 @@ final class WindowManager {
         case failed(String)
     }
 
+    /// 指令從哪裡來：選單用開面板前捕捉的視窗；快捷鍵一律抓當下前景視窗。
+    enum Source {
+        case menu
+        case shortcut
+    }
+
+    /// 開選單當下的外部前景 App（含已被忽略的，供「忽略／恢復管理」入口使用）。
+    struct MenuApp: Equatable {
+        var name: String
+        var bundleID: String
+        var isIgnored: Bool
+    }
+
+    enum ShortcutApplyResult: Equatable {
+        case applied
+        /// 新按鍵有註冊失敗，已撤回並恢復舊方案；設定未變。
+        case rolledBack(failed: Set<WindowCommand>)
+        /// 新舊都無法完整註冊；`unavailable` 是目前不可用的項目。
+        case degraded(unavailable: Set<WindowCommand>)
+    }
+
     private(set) var lastTrusted = false
     private(set) var targetAppName: String?
     private(set) var lastOutcome: Outcome?
     private(set) var statusMessage: String?
+    private(set) var menuApp: MenuApp?
+    /// 選單目標視窗是否有可還原的記錄。
+    private(set) var canRestoreTarget = false
+    /// 註冊失敗、目前按了沒反應的快捷鍵。
+    private(set) var unavailableShortcuts: Set<WindowCommand> = []
 
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private let worker = AXWindowWorker()
@@ -37,6 +63,7 @@ final class WindowManager {
     @ObservationIgnored private var retryTask: Task<Void, Never>?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
     @ObservationIgnored private var lastExternalPID: pid_t?
+    @ObservationIgnored private var shortcutsSuspended = false
 
     init(settings: SettingsStore) {
         self.settings = settings
@@ -100,6 +127,14 @@ final class WindowManager {
     /// 選單面板出現前呼叫：保存目前外部前景視窗。
     func captureMenuTarget() {
         guard settings.windowArrangementEnabled else { return }
+        captured = nil
+        canRestoreTarget = false
+        menuApp = currentMenuApp()
+        if let menuApp, menuApp.isIgnored {
+            targetAppName = nil
+            statusMessage = String(localized: "已忽略「\(menuApp.name)」，不會排列它的視窗")
+            return
+        }
         do {
             let ref: AXWindowWorker.WindowRef
             if let pid = lastExternalPID {
@@ -112,6 +147,7 @@ final class WindowManager {
             }
             captured = ref
             targetAppName = ref.appName
+            canRestoreTarget = restore.entry(for: ref.token) != nil
             statusMessage = nil
         } catch AXWindowWorker.WorkerError.permissionRequired {
             lastTrusted = false
@@ -125,8 +161,29 @@ final class WindowManager {
         }
     }
 
-    func apply(_ action: LayoutAction) {
-        runArrangement { topology, screen, current, ref in
+    /// 選單與快捷鍵的共同入口。
+    func perform(_ command: WindowCommand, source: Source = .menu) {
+        if source == .shortcut {
+            ChorusLog.window.info("快捷鍵 → \(command.rawValue)")
+        }
+        switch command {
+        case .nextDisplay:
+            moveToAdjacentDisplay(delta: 1, source: source)
+        case .previousDisplay:
+            moveToAdjacentDisplay(delta: -1, source: source)
+        case .restore:
+            restoreLast(source: source)
+        case .selectZone:
+            beginKeyboardZoneSelection(source: source)
+        default:
+            if let action = command.layoutAction {
+                apply(action, source: source)
+            }
+        }
+    }
+
+    func apply(_ action: LayoutAction, source: Source = .menu) {
+        runArrangement(source: source) { topology, screen, current, ref in
             let target = engine.frame(
                 for: action,
                 visible: screen.visibleFrame,
@@ -138,7 +195,7 @@ final class WindowManager {
     }
 
     func applyUltrawide(zoneID: String) {
-        runArrangement { topology, screen, current, ref in
+        runArrangement(source: .menu) { topology, screen, current, ref in
             let templateID = templateID(for: screen)
             let template = LayoutTemplateCatalog.template(id: templateID)
             guard let match = template.resolvedZones(
@@ -154,12 +211,12 @@ final class WindowManager {
         }
     }
 
-    func restoreLast() {
+    func restoreLast(source: Source = .menu) {
         guard settings.windowArrangementEnabled else {
             lastOutcome = .disabled
             return
         }
-        guard let ref = resolveTarget() else { return }
+        guard let ref = resolveTarget(source: source) else { return }
         let topology = bumpTopology()
         guard let entry = restore.consume(token: ref.token) else {
             lastOutcome = .failed("沒有可還原的位置")
@@ -174,13 +231,14 @@ final class WindowManager {
         case .applied, .constrained:
             lastOutcome = .restored
             statusMessage = "已還原"
+            if ref.token == captured?.token { canRestoreTarget = false }
         case .failed(let error):
             mapError(error)
         }
     }
 
-    func moveToAdjacentDisplay(delta: Int) {
-        runArrangement { topology, screen, current, ref in
+    func moveToAdjacentDisplay(delta: Int, source: Source = .menu) {
+        runArrangement(source: source) { topology, screen, current, ref in
             guard topology.screens.count > 1 else {
                 lastOutcome = .failed("只有一台螢幕")
                 statusMessage = "只有一台螢幕"
@@ -221,12 +279,18 @@ final class WindowManager {
     }
 
     /// 鍵盤選區：方向鍵移動、Enter 套用、Esc 取消。
-    func beginKeyboardZoneSelection() {
+    func beginKeyboardZoneSelection(source: Source = .menu) {
         guard settings.windowArrangementEnabled else {
             lastOutcome = .disabled
             return
         }
-        captureMenuTarget()
+        if source == .shortcut {
+            // 選區面板稍後以 `.menu` 套用，所以先把當下前景視窗定下來
+            captured = resolveTarget(source: .shortcut)
+            guard captured != nil else { return }
+        } else {
+            captureMenuTarget()
+        }
         let topology = bumpTopology()
         let point = NSEvent.mouseLocation
         guard let screen = topology.screen(containingPointX: Double(point.x), y: Double(point.y))
@@ -251,15 +315,84 @@ final class WindowManager {
     // MARK: - Private
 
     private func ensureShortcuts() {
-        if shortcuts == nil {
-            let controller = WindowShortcutController { [weak self] action in
-                self?.apply(action)
-            } onRestore: { [weak self] in
-                self?.restoreLast()
-            }
-            shortcuts = controller
+        guard shortcuts == nil else { return }
+        let controller = WindowShortcutController { [weak self] command in
+            self?.perform(command, source: .shortcut)
         }
-        shortcuts?.start()
+        shortcuts = controller
+        guard !shortcutsSuspended else { return }
+        unavailableShortcuts = controller.register(settings.windowArrangementShortcuts)
+    }
+
+    // MARK: - 快捷鍵設定
+
+    /// 套用新的快捷鍵對照。註冊失敗時撤回並嘗試恢復舊的；舊的也失敗才逐項標示不可用。
+    @discardableResult
+    func updateShortcuts(_ bindings: ShortcutBindings) -> ShortcutApplyResult {
+        guard let shortcuts, !shortcutsSuspended else {
+            settings.windowArrangementShortcuts = bindings
+            unavailableShortcuts = []
+            return .applied
+        }
+        let previous = settings.windowArrangementShortcuts
+        let failed = shortcuts.register(bindings)
+        if failed.isEmpty {
+            settings.windowArrangementShortcuts = bindings
+            unavailableShortcuts = []
+            return .applied
+        }
+        let stillFailed = shortcuts.register(previous)
+        unavailableShortcuts = stillFailed
+        return stillFailed.isEmpty ? .rolledBack(failed: failed) : .degraded(unavailable: stillFailed)
+    }
+
+    /// 錄製快捷鍵期間暫停全域註冊，否則已綁定的組合會被自己攔走、錄不到。
+    func setShortcutRecording(_ recording: Bool) {
+        guard shortcutsSuspended != recording else { return }
+        shortcutsSuspended = recording
+        guard let shortcuts else { return }
+        if recording {
+            shortcuts.register(ShortcutBindings(scheme: .none))
+        } else {
+            unavailableShortcuts = shortcuts.register(settings.windowArrangementShortcuts)
+        }
+    }
+
+    // MARK: - 忽略 App
+
+    /// 把開選單當下的外部 App 加入排除清單，並撤掉它尚未提交的操作。
+    func ignoreMenuApp() {
+        guard var app = menuApp, app.bundleID != Bundle.main.bundleIdentifier else { return }
+        settings.windowArrangementExcludedBundleIDs.insert(app.bundleID)
+        app.isIgnored = true
+        menuApp = app
+        captured = nil
+        targetAppName = nil
+        canRestoreTarget = false
+        zoneSelection.end(cancelled: true)
+        previewOverlay.hide()
+        statusMessage = String(localized: "已忽略「\(app.name)」，不會排列它的視窗")
+        ChorusLog.window.info("忽略 App：\(app.bundleID)")
+    }
+
+    func unignoreMenuApp() {
+        guard let app = menuApp else { return }
+        settings.windowArrangementExcludedBundleIDs.remove(app.bundleID)
+        ChorusLog.window.info("恢復管理 App：\(app.bundleID)")
+        captureMenuTarget()
+    }
+
+    private func currentMenuApp() -> MenuApp? {
+        guard let pid = lastExternalPID,
+              let running = NSRunningApplication(processIdentifier: pid),
+              let bundleID = running.bundleIdentifier,
+              bundleID != Bundle.main.bundleIdentifier
+        else { return nil }
+        return MenuApp(
+            name: running.localizedName ?? bundleID,
+            bundleID: bundleID,
+            isIgnored: settings.windowArrangementExcludedBundleIDs.contains(bundleID)
+        )
     }
 
     func updateDragActivation() {
@@ -357,6 +490,7 @@ final class WindowManager {
     }
 
     private func runArrangement(
+        source: Source,
         _ body: (ScreenTopology, ScreenTopology.ScreenInfo, LayoutRect, AXWindowWorker.WindowRef) -> Void
     ) {
         guard settings.windowArrangementEnabled else {
@@ -364,7 +498,7 @@ final class WindowManager {
             statusMessage = "視窗排列未啟用"
             return
         }
-        guard let ref = resolveTarget() else { return }
+        guard let ref = resolveTarget(source: source) else { return }
         let topology = bumpTopology()
         do {
             let current = try worker.getFrame(token: ref.token, topology: topology)
@@ -397,8 +531,10 @@ final class WindowManager {
         case .applied:
             lastOutcome = .applied
             statusMessage = nil
+            if ref.token == captured?.token { canRestoreTarget = true }
             return .applied
         case .constrained:
+            if ref.token == captured?.token { canRestoreTarget = true }
             lastOutcome = .constrained
             statusMessage = "此 App 的最小尺寸超過所選區域"
             return .constrained
@@ -408,14 +544,22 @@ final class WindowManager {
         }
     }
 
-    private func resolveTarget() -> AXWindowWorker.WindowRef? {
-        if let captured {
+    private func resolveTarget(source: Source) -> AXWindowWorker.WindowRef? {
+        // 選單捕捉的視窗只給選單用；快捷鍵若沿用它，會排到上次開選單時的那個視窗
+        if source == .menu, let captured {
             targetAppName = captured.appName
             return captured
         }
         do {
-            let ref = try worker.focusedExternalWindow(excludingBundleIDs: excludedBundleIDs())
-            targetAppName = ref.appName
+            let ref: AXWindowWorker.WindowRef
+            do {
+                ref = try worker.focusedExternalWindow(excludingBundleIDs: excludedBundleIDs())
+            } catch AXWindowWorker.WorkerError.noTarget {
+                // 前景是 Chorus 自己（面板或設定開著）時，退回最後一個外部 App
+                guard let pid = lastExternalPID else { throw AXWindowWorker.WorkerError.noTarget }
+                ref = try worker.windowForApplication(pid: pid, excludingBundleIDs: excludedBundleIDs())
+            }
+            if source == .menu { targetAppName = ref.appName }
             return ref
         } catch let error as AXWindowWorker.WorkerError {
             mapError(error)
@@ -450,6 +594,7 @@ final class WindowManager {
     }
 
     private func mapError(_ error: AXWindowWorker.WorkerError) {
+        ChorusLog.window.info("排列未完成：\(error)")
         switch error {
         case .permissionRequired:
             lastTrusted = false

@@ -1,6 +1,6 @@
 import Foundation
 
-/// 單次視窗拖曳的吸附狀態機：dwell、Shift 互斥、取消後本趟失效。
+/// 單次視窗拖曳的吸附狀態機：dwell、Shift 切換基本型／特型、Esc 取消後本趟失效。
 public struct SnapDragSession: Sendable, Equatable {
     public struct ZoneContext: Sendable, Equatable {
         public var template: LayoutTemplate
@@ -45,12 +45,14 @@ public struct SnapDragSession: Sendable, Equatable {
         isActive = true
         isCancelled = false
         pending = nil
+        pendingShift = false
         pendingSince = nil
     }
 
     public mutating func cancel() {
         isCancelled = true
         pending = nil
+        pendingShift = false
         pendingSince = nil
     }
 
@@ -58,6 +60,7 @@ public struct SnapDragSession: Sendable, Equatable {
         isActive = false
         isCancelled = false
         pending = nil
+        pendingShift = false
         pendingSince = nil
     }
 
@@ -73,18 +76,15 @@ public struct SnapDragSession: Sendable, Equatable {
             return Update()
         }
 
-        // 曾進入 Shift 分區後放開 Shift：取消本趟（含後續邊緣）
-        if shiftWasEngaged && !shiftDown {
-            cancel()
-            return Update()
-        }
-        if shiftDown {
-            shiftWasEngaged = true
-        }
-
+        // Shift 是「按住才有」的模式鍵：放開立即回基本型，不殘留、不整趟作廢
         let candidate: SnapResolver.Candidate?
         if shiftDown {
-            if let zoneContext {
+            let special = edgeScreen.flatMap {
+                resolver.edgeCandidate(pointX: x, pointY: y, screen: $0, mode: .special)
+            }
+            if let special {
+                candidate = special
+            } else if let zoneContext {
                 candidate = resolver.zoneCandidate(
                     pointX: x,
                     pointY: y,
@@ -93,17 +93,18 @@ public struct SnapDragSession: Sendable, Equatable {
                     gap: zoneContext.gap
                 )
             } else {
-                // Shift 按住但無可用分區（例如直立螢幕）：不回落邊緣
+                // Shift 按住但無可用分區（例如直立螢幕）：不回落基本邊緣
                 candidate = nil
             }
         } else if let edgeScreen {
-            candidate = resolver.edgeCandidate(pointX: x, pointY: y, screen: edgeScreen)
+            candidate = resolver.edgeCandidate(pointX: x, pointY: y, screen: edgeScreen, mode: .basic)
         } else {
             candidate = nil
         }
 
-        if candidate != pending {
+        if candidate != pending || shiftDown != pendingShift {
             pending = candidate
+            pendingShift = shiftDown
             pendingSince = candidate == nil ? nil : now
         }
 
@@ -122,9 +123,10 @@ public struct SnapDragSession: Sendable, Equatable {
         defer { endDrag() }
         guard isActive, !isCancelled else { return nil }
         guard let pending, let since = pendingSince, now - since >= dwell else { return nil }
-        if pending.zoneID != nil, !shiftDown { return nil }
+        // 候選是在哪個模式下選出來的，放開滑鼠時就得還在那個模式
+        guard pendingShift == shiftDown else { return nil }
         return pending
     }
 
-    private var shiftWasEngaged = false
+    private var pendingShift = false
 }

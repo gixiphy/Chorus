@@ -1,6 +1,6 @@
 import Foundation
 
-/// 邊緣熱區與 Shift 分區候選的純狀態機（不操作真實視窗）。
+/// 邊緣熱區（基本型／Shift 特型）與 Shift 分區候選的純判定（不操作真實視窗）。
 public struct SnapResolver: Sendable, Equatable {
     public struct ScreenMetrics: Sendable, Equatable {
         public var frame: LayoutRect
@@ -66,13 +66,39 @@ public struct SnapResolver: Sendable, Equatable {
         return nil
     }
 
-    /// 邊緣熱區（橫向螢幕）。角落優先於邊緣。
-    public func edgeCandidate(pointX: Double, pointY: Double, screen: ScreenMetrics) -> Candidate? {
+    /// 邊緣熱區的兩種模式：不按修飾鍵＝基本型；按住 Shift＝特型。
+    public enum EdgeMode: Sendable, Equatable {
+        /// 左右半屏、四角、上緣填滿、下緣下半屏。
+        case basic
+        /// 下緣五段：左 1/3、左 2/3、中 1/3、右 2/3、右 1/3（僅橫向螢幕）。
+        case special
+    }
+
+    /// 邊緣熱區。基本型角落優先於邊緣。
+    public func edgeCandidate(
+        pointX: Double,
+        pointY: Double,
+        screen: ScreenMetrics,
+        mode: EdgeMode = .basic
+    ) -> Candidate? {
         let f = screen.frame
         let onLeft = pointX <= f.x + edgeThickness
         let onRight = pointX >= f.maxX - edgeThickness
         let onBottom = pointY <= f.y + edgeThickness
         let onTop = pointY >= f.maxY - edgeThickness
+
+        if mode == .special {
+            guard onBottom, screen.isLandscape else { return nil }
+            let usableLeft = f.x + cornerSize
+            let usableRight = f.maxX - cornerSize
+            let width = max(1, usableRight - usableLeft)
+            let t = (pointX - usableLeft) / width
+            if t < 0.2 { return Candidate(action: .leftThird) }
+            if t < 0.4 { return Candidate(action: .leftTwoThirds) }
+            if t < 0.6 { return Candidate(action: .centerThird) }
+            if t < 0.8 { return Candidate(action: .rightTwoThirds) }
+            return Candidate(action: .rightThird)
+        }
 
         let nearLeft = pointX <= f.x + cornerSize
         let nearRight = pointX >= f.maxX - cornerSize
@@ -87,19 +113,7 @@ public struct SnapResolver: Sendable, Equatable {
         if onLeft { return Candidate(action: .leftHalf) }
         if onRight { return Candidate(action: .rightHalf) }
         if onTop { return Candidate(action: .maximize) }
-
-        if onBottom && screen.isLandscape {
-            let usableLeft = f.x + cornerSize
-            let usableRight = f.maxX - cornerSize
-            let width = max(1, usableRight - usableLeft)
-            let t = (pointX - usableLeft) / width
-            if t < 0.2 { return Candidate(action: .leftThird) }
-            if t < 0.4 { return Candidate(action: .leftTwoThirds) }
-            if t < 0.6 { return Candidate(action: .centerThird) }
-            if t < 0.8 { return Candidate(action: .rightTwoThirds) }
-            return Candidate(action: .rightThird)
-        }
-
+        if onBottom { return Candidate(action: .bottomHalf) }
         return nil
     }
 

@@ -137,15 +137,30 @@ struct SnapResolverMatrixTests {
         isLandscape: true
     )
 
-    @Test("下緣五段對應三分版型")
+    @Test("特型（按住 Shift）：下緣五段對應三分版型")
     func bottomEdgeSegments() {
         let y = 4.0
         // 可用下緣扣除角落 48pt：x ∈ [48, 1952]
-        #expect(resolver.edgeCandidate(pointX: 100, pointY: y, screen: screen)?.action == .leftThird)
-        #expect(resolver.edgeCandidate(pointX: 500, pointY: y, screen: screen)?.action == .leftTwoThirds)
-        #expect(resolver.edgeCandidate(pointX: 1000, pointY: y, screen: screen)?.action == .centerThird)
-        #expect(resolver.edgeCandidate(pointX: 1500, pointY: y, screen: screen)?.action == .rightTwoThirds)
-        #expect(resolver.edgeCandidate(pointX: 1900, pointY: y, screen: screen)?.action == .rightThird)
+        #expect(resolver.edgeCandidate(pointX: 100, pointY: y, screen: screen, mode: .special)?.action == .leftThird)
+        #expect(resolver.edgeCandidate(pointX: 500, pointY: y, screen: screen, mode: .special)?.action == .leftTwoThirds)
+        #expect(resolver.edgeCandidate(pointX: 1000, pointY: y, screen: screen, mode: .special)?.action == .centerThird)
+        #expect(resolver.edgeCandidate(pointX: 1500, pointY: y, screen: screen, mode: .special)?.action == .rightTwoThirds)
+        #expect(resolver.edgeCandidate(pointX: 1900, pointY: y, screen: screen, mode: .special)?.action == .rightThird)
+    }
+
+    @Test("基本型：上填滿、下半屏、左右半屏、四角；不出現三分")
+    func basicEdges() {
+        #expect(resolver.edgeCandidate(pointX: 1000, pointY: 4, screen: screen)?.action == .bottomHalf)
+        #expect(resolver.edgeCandidate(pointX: 500, pointY: 4, screen: screen)?.action == .bottomHalf)
+        #expect(resolver.edgeCandidate(pointX: 4, pointY: 500, screen: screen)?.action == .leftHalf)
+        #expect(resolver.edgeCandidate(pointX: 1996, pointY: 500, screen: screen)?.action == .rightHalf)
+        #expect(resolver.edgeCandidate(pointX: 10, pointY: 10, screen: screen)?.action == .bottomLeft)
+    }
+
+    @Test("特型只認下緣：其他邊緣不產生候選")
+    func specialIgnoresOtherEdges() {
+        #expect(resolver.edgeCandidate(pointX: 4, pointY: 500, screen: screen, mode: .special) == nil)
+        #expect(resolver.edgeCandidate(pointX: 1000, pointY: 996, screen: screen, mode: .special) == nil)
     }
 
     @Test("上緣中段 → 填滿")
@@ -176,12 +191,13 @@ struct SnapResolverMatrixTests {
         #expect(hit?.zoneID == "reading")
     }
 
-    @Test("直立螢幕不做下緣三分")
+    @Test("直立螢幕不做下緣三分；基本型仍有下半屏")
     func portraitSkipsBottomThirds() {
         let portrait = SnapResolver.ScreenMetrics(
             frame: LayoutRect(x: 0, y: 0, width: 1080, height: 1920),
             isLandscape: false
         )
-        #expect(resolver.edgeCandidate(pointX: 540, pointY: 4, screen: portrait) == nil)
+        #expect(resolver.edgeCandidate(pointX: 540, pointY: 4, screen: portrait, mode: .special) == nil)
+        #expect(resolver.edgeCandidate(pointX: 540, pointY: 4, screen: portrait)?.action == .bottomHalf)
     }
 }

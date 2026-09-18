@@ -160,7 +160,7 @@ final class DragMonitor {
             y: y,
             shiftDown: shift,
             now: elapsed(),
-            edgeScreen: shift ? nil : edge,
+            edgeScreen: edge,
             zoneContext: zoneContext
         )
 
@@ -219,6 +219,7 @@ final class DragMonitor {
         case .centerThird: return "中 1/3"
         case .rightThird: return "右 1/3"
         case .leftTwoThirds: return "左 2/3"
+        case .centerTwoThirds: return "中 2/3"
         case .rightTwoThirds: return "右 2/3"
         case .maximize: return "填滿"
         default: return action.rawValue

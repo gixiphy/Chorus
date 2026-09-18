@@ -5,90 +5,170 @@ import SwiftUI
 struct WindowArrangementMenuSection: View {
     @Environment(AppState.self) private var appState
 
+    private static let basicGroups: [WindowCommand.Group] = [
+        .halves, .quarters, .thirds, .twoThirds, .displays, .common,
+    ]
+
+    private var manager: WindowManager { appState.windowManager }
+
     var body: some View {
         if appState.settings.windowArrangementEnabled {
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 6) {
-                    if let name = appState.windowManager.targetAppName {
+                    if let name = manager.targetAppName {
                         Text("目標：\(name)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                    } else if let message = appState.windowManager.statusMessage {
-                        Text(message)
+                    } else {
+                        Text(manager.statusMessage ?? String(localized: "沒有可排列的視窗"))
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
 
-                    actionGrid
-                    Divider()
-                    ultrawideSection
-                    Divider()
-                    HStack {
-                        Button("還原") { appState.windowManager.restoreLast() }
-                        Button("鍵盤選區") { appState.windowManager.beginKeyboardZoneSelection() }
-                        Button("上一螢幕") { appState.windowManager.moveToAdjacentDisplay(delta: -1) }
-                        Button("下一螢幕") { appState.windowManager.moveToAdjacentDisplay(delta: 1) }
+                    let screenCount = ScreenTopology.capture(generation: 0).screens.count
+                    ForEach(Self.basicGroups, id: \.self) { group in
+                        groupRow(group, screenCount: screenCount)
                     }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .font(.caption)
+                    disabledReasons(screenCount: screenCount)
+
+                    Divider()
+                    DisclosureGroup {
+                        advancedSection
+                    } label: {
+                        Text(WindowCommand.Group.advanced.title)
+                            .font(.caption)
+                    }
+
+                    Divider()
+                    managementRow
                 }
                 .padding(.top, 4)
             } label: {
                 Label("排列目前視窗", systemImage: "rectangle.split.3x1")
                     .font(.callout)
             }
-            .onAppear { appState.windowManager.captureMenuTarget() }
+            .onAppear { manager.captureMenuTarget() }
         }
     }
 
-    private var actionGrid: some View {
-        let landscape = currentScreen()?.isLandscape ?? true
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                tile("左半", .leftHalf)
-                tile("右半", .rightHalf)
-                tile("上半", .topHalf)
-                tile("下半", .bottomHalf)
+    // MARK: - 基本動作
+
+    private func groupRow(_ group: WindowCommand.Group, screenCount: Int) -> some View {
+        HStack(alignment: .center, spacing: 4) {
+            Text(group.title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(width: 58, alignment: .leading)
+            ForEach(WindowCommand.commands(in: group), id: \.self) { command in
+                commandTile(command, screenCount: screenCount)
             }
-            HStack {
-                tile("左上", .topLeft)
-                tile("右上", .topRight)
-                tile("左下", .bottomLeft)
-                tile("右下", .bottomRight)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func commandTile(_ command: WindowCommand, screenCount: Int) -> some View {
+        let reason = disabledReason(for: command, screenCount: screenCount)
+        let chord = appState.settings.windowArrangementShortcuts[command]?.displayString
+        return Button {
+            manager.perform(command)
+        } label: {
+            VStack(spacing: 2) {
+                WindowCommandGlyph(command: command)
+                Text(command.shortTitle)
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            if landscape {
-                HStack {
-                    tile("左 1/3", .leftThird)
-                    tile("中 1/3", .centerThird)
-                    tile("右 1/3", .rightThird)
-                }
-                HStack {
-                    tile("左 2/3", .leftTwoThirds)
-                    tile("右 2/3", .rightTwoThirds)
-                    tile("填滿", .maximize)
-                    tile("置中", .centerPreserveSize)
-                }
-            } else {
+            .frame(minWidth: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .disabled(reason != nil)
+        .help(reason ?? [command.title, chord].compactMap { $0 }.joined(separator: "　"))
+        .accessibilityLabel(command.title)
+        .accessibilityHint(reason ?? chord ?? "")
+    }
+
+    /// 停用原因；`nil`＝可用。沒有目標（含缺權限、已忽略）時所有排列動作都停用。
+    private func disabledReason(for command: WindowCommand, screenCount: Int) -> String? {
+        guard manager.targetAppName != nil else {
+            return manager.statusMessage ?? String(localized: "沒有可排列的視窗")
+        }
+        switch command {
+        case .nextDisplay, .previousDisplay:
+            return screenCount > 1 ? nil : String(localized: "只有一台螢幕，無法移到其他螢幕")
+        case .restore:
+            return manager.canRestoreTarget ? nil : String(localized: "這個視窗還沒有排列過，沒有可還原的位置")
+        default:
+            return nil
+        }
+    }
+
+    /// 把個別停用的原因寫成看得到的字，不只靠灰掉與滑鼠停留提示。
+    @ViewBuilder
+    private func disabledReasons(screenCount: Int) -> some View {
+        if manager.targetAppName != nil {
+            let reasons = [WindowCommand.nextDisplay, .restore]
+                .compactMap { disabledReason(for: $0, screenCount: screenCount) }
+            ForEach(reasons, id: \.self) { reason in
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - 超寬與進階
+
+    @ViewBuilder
+    private var advancedSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ultrawideSection
+            if currentScreen()?.isLandscape == false {
                 HStack {
                     tile("上 1/3", .topThird)
                     tile("中 1/3", .middleThird)
                     tile("下 1/3", .bottomThird)
-                }
-                HStack {
                     tile("上 2/3", .topTwoThirds)
                     tile("下 2/3", .bottomTwoThirds)
-                    tile("填滿", .maximize)
-                    tile("置中", .centerPreserveSize)
+                }
+            }
+            Button(WindowCommand.selectZone.title) { manager.perform(.selectZone) }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .font(.caption)
+                .disabled(manager.targetAppName == nil)
+                .help("方向鍵移動、Enter 套用、Esc 取消")
+        }
+        .padding(.top, 2)
+    }
+
+    // MARK: - 管理
+
+    private var managementRow: some View {
+        HStack {
+            SettingsLink {
+                Text("視窗排列設定…")
+            }
+            Spacer()
+            if let app = manager.menuApp {
+                if app.isIgnored {
+                    Button("恢復管理「\(app.name)」") { manager.unignoreMenuApp() }
+                } else {
+                    Button("忽略「\(app.name)」") { manager.ignoreMenuApp() }
+                        .help("不再排列這個 App 的視窗；可在設定的「排除 App」移除")
                 }
             }
         }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .font(.caption)
     }
 
     @ViewBuilder
     private var ultrawideSection: some View {
         if let screen = currentScreen() {
-            let templateID = appState.windowManager.templateID(for: screen)
+            let templateID = manager.templateID(for: screen)
             let template = LayoutTemplateCatalog.template(id: templateID)
             let gap = appState.settings.windowArrangementGap
             let zones = template.resolvedZones(visible: screen.visibleFrame, gap: gap)
@@ -100,14 +180,15 @@ struct WindowArrangementMenuSection: View {
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }
-            VStack(alignment: .leading, spacing: 4) {
+            HStack {
                 ForEach(template.zones) { zone in
                     Button(zoneLabel(zone)) {
-                        appState.windowManager.applyUltrawide(zoneID: zone.id)
+                        manager.applyUltrawide(zoneID: zone.id)
                     }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
                     .font(.caption)
+                    .disabled(manager.targetAppName == nil)
                 }
             }
         }
@@ -121,11 +202,12 @@ struct WindowArrangementMenuSection: View {
         }) ?? topology.screens.first
     }
 
-    private func tile(_ title: String, _ action: LayoutAction) -> some View {
-        Button(title) { appState.windowManager.apply(action) }
+    private func tile(_ title: LocalizedStringKey, _ action: LayoutAction) -> some View {
+        Button(title) { manager.apply(action) }
             .buttonStyle(.borderless)
             .controlSize(.small)
             .font(.caption)
+            .disabled(manager.targetAppName == nil)
     }
 
     private func templateTitle(_ id: LayoutTemplateID) -> String {

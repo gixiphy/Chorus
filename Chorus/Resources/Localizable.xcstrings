@@ -146,6 +146,22 @@
         }
       }
     },
+    "%@ 已被「%@」使用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ is already used by \"%2$@\"."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 已被“%@”使用。"
+          }
+        }
+      }
+    },
     "%@ 支援：" : {
       "localizations" : {
         "en" : {
@@ -388,6 +404,7 @@
       }
     },
     "%lld 個動作" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "variations" : {
@@ -416,6 +433,7 @@
       }
     },
     "%lld 分鐘" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -492,6 +510,7 @@
       }
     },
     "%lld 項未還原（%@離線）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "variations" : {
@@ -551,6 +570,22 @@
         }
       }
     },
+    "0" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "0"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "0"
+          }
+        }
+      }
+    },
     "1 小時" : {
       "localizations" : {
         "en" : {
@@ -563,6 +598,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "1 小时"
+          }
+        }
+      }
+    },
+    "24" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "24"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "24"
           }
         }
       }
@@ -776,6 +827,22 @@
         }
       }
     },
+    "Chorus 基本" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus Basic"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus 基本"
+          }
+        }
+      }
+    },
     "Chorus 完全不碰這個 App 的音訊——per-app 調整與裝置等化／軟體音量都略過它" : {
       "localizations" : {
         "en" : {
@@ -952,6 +1019,22 @@
         }
       }
     },
+    "Magnet 習慣" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Magnet Style"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Magnet 习惯"
+          }
+        }
+      }
+    },
     "R&B" : {
       "localizations" : {
         "en" : {
@@ -1028,6 +1111,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "boost"
+          }
+        }
+      }
+    },
+    "bundle id，例如 com.apple.Safari" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "bundle id, e.g. com.apple.Safari"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "bundle id，例如 com.apple.Safari"
           }
         }
       }
@@ -1346,6 +1445,50 @@
         }
       }
     },
+    "⌃⌥C" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌃⌥C"
+          }
+        }
+      }
+    },
+    "⌃⌥Z" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌃⌥Z"
+          }
+        }
+      }
+    },
+    "⌃⌥← → ↑ ↓" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌃⌥← → ↑ ↓"
+          }
+        }
+      }
+    },
+    "⌃⌥↩" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌃⌥↩"
+          }
+        }
+      }
+    },
     "ⓘ 若拖曳滑桿後畫面雪花／訊號異常：部分螢幕的 scaler 承受不了連續 I2C 寫入（已內建節流）。復發時開啟「強制軟體調光」並保留此診斷輸出回報。" : {
       "localizations" : {
         "en" : {
@@ -1636,6 +1779,7 @@
       }
     },
     "「%@」限時套用中" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1716,6 +1860,134 @@
         }
       }
     },
+    "三分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thirds"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "三分之一"
+          }
+        }
+      }
+    },
+    "三分之二" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Two Thirds"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "三分之二"
+          }
+        }
+      }
+    },
+    "上 1/3" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Top 1/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上 1/3"
+          }
+        }
+      }
+    },
+    "上 2/3" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Top 2/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上 2/3"
+          }
+        }
+      }
+    },
+    "上一個螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Previous Display"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上一个显示器"
+          }
+        }
+      }
+    },
+    "上一螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prev Display"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上一显示器"
+          }
+        }
+      }
+    },
+    "上半" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Top Half"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上半"
+          }
+        }
+      }
+    },
+    "上半屏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Top Half"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上半屏"
+          }
+        }
+      }
+    },
     "上次備份" : {
       "localizations" : {
         "en" : {
@@ -1749,6 +2021,7 @@
       }
     },
     "上次的「%@」已於啟動時還原" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1776,6 +2049,102 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上次载入此插件时 Chorus 崩溃了——不再自动载入"
+          }
+        }
+      }
+    },
+    "下 1/3" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bottom 1/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下 1/3"
+          }
+        }
+      }
+    },
+    "下 2/3" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bottom 2/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下 2/3"
+          }
+        }
+      }
+    },
+    "下一個螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next Display"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一个显示器"
+          }
+        }
+      }
+    },
+    "下一螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next Display"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一显示器"
+          }
+        }
+      }
+    },
+    "下半" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bottom Half"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下半"
+          }
+        }
+      }
+    },
+    "下半屏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bottom Half"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下半屏"
           }
         }
       }
@@ -1828,6 +2197,38 @@
         }
       }
     },
+    "不再排列這個 App 的視窗；可在設定的「排除 App」移除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop arranging this app's windows; remove it under \"Excluded Apps\" in Settings"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不再排列这个 App 的窗口；可在设置的“排除 App”移除"
+          }
+        }
+      }
+    },
+    "不可用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unavailable"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不可用"
+          }
+        }
+      }
+    },
     "不支援或讀取失敗" : {
       "localizations" : {
         "en" : {
@@ -1872,6 +2273,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "不匹配"
+          }
+        }
+      }
+    },
+    "中 1/3" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Center 1/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中 1/3"
+          }
+        }
+      }
+    },
+    "中 2/3" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Center 2/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中 2/3"
+          }
+        }
+      }
+    },
+    "中央三分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Center Third"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中间三分之一"
+          }
+        }
+      }
+    },
+    "中央三分之二" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Center Two Thirds"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中间三分之二"
           }
         }
       }
@@ -2005,6 +2470,7 @@
       }
     },
     "以目前的亮度、音量與自動亮度狀態建立場景" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2357,6 +2823,22 @@
         }
       }
     },
+    "偵測到：%@。可能與拖曳吸附重疊。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Detected: %@. May overlap with drag snapping."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检测到：%@。可能与拖移吸附重叠。"
+          }
+        }
+      }
+    },
     "備份" : {
       "localizations" : {
         "en" : {
@@ -2390,6 +2872,7 @@
       }
     },
     "備份的是**這台**的設定：場景、等化器與效果鏈、排除清單、各種偏好。寫進你的 iCloud Drive，**不會自動套到別台**——要用得在下面挑一份匯入。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2401,6 +2884,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "备份的是**这台**的设置：场景、均衡器与效果链、排除列表、各种偏好。写入你的 iCloud Drive，**不会自动应用到其他设备**——要使用，得在下面选择一份导入。"
+          }
+        }
+      }
+    },
+    "備份的是**這台**的設定：等化器與效果鏈、排除清單、各種偏好。寫進你的 iCloud Drive，**不會自動套到別台**——要用得在下面挑一份匯入。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This backs up **this Mac's** settings: equalizer and effect chain, exclusion list, and preferences. It's written to your iCloud Drive and is **not applied to other Macs automatically** - to use it, pick a backup below and import it."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "备份的是**这台**的设置：均衡器与效果链、排除列表、各种偏好设置。写入你的 iCloud Drive，**不会自动应用到别台**——要用得在下面挑一份导入。"
           }
         }
       }
@@ -2422,6 +2921,7 @@
       }
     },
     "儲存" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2562,6 +3062,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "全部 %lld"
+          }
+        }
+      }
+    },
+    "全部不綁定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unbind All"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部不绑定"
           }
         }
       }
@@ -2836,6 +3352,7 @@
       }
     },
     "刪除" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2852,6 +3369,7 @@
       }
     },
     "刪除「%@」" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2964,6 +3482,22 @@
         }
       }
     },
+    "加入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加"
+          }
+        }
+      }
+    },
     "加入效果" : {
       "localizations" : {
         "en" : {
@@ -3043,6 +3577,25 @@
           }
         }
       }
+    },
+    "半屏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Halves"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "半屏"
+          }
+        }
+      }
+    },
+    "半屏、三分、超寬分區與還原。預設關閉，啟用時需輔助使用權限。" : {
+      "extractionState" : "stale"
     },
     "卡住（超過 2 秒）" : {
       "localizations" : {
@@ -3284,6 +3837,22 @@
         }
       }
     },
+    "只有一台螢幕，無法移到其他螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only one display, so windows can't move to another display"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有一台显示器，无法移到其他显示器"
+          }
+        }
+      }
+    },
     "只看使用中" : {
       "localizations" : {
         "en" : {
@@ -3340,6 +3909,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "可一次选择多张（最多 %lld 张）：第一张作为配置图背景与坐标基准，其余为分析用补充视角。拍摄不同照明情境（白天／夜晚／仅开挂灯）并分别标注，分析会更准确"
+          }
+        }
+      }
+    },
+    "可以只用選單而不綁快捷鍵。同一組按鍵只能給一個動作；其他 App 自己的快捷鍵無法完整偵測，撞鍵時請換一組。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can use the menu alone without binding shortcuts. A key combination can belong to only one action; other apps' own shortcuts can't be fully detected, so pick a different combination if there's a conflict."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可以只用菜单而不绑定快捷键。同一组按键只能分配给一个操作；其他 App 自己的快捷键无法完整检测，冲突时请换一组。"
           }
         }
       }
@@ -3452,6 +4037,134 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "右 %lld%%"
+          }
+        }
+      }
+    },
+    "右 1/3" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right 1/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右 1/3"
+          }
+        }
+      }
+    },
+    "右 2/3" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right 2/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右 2/3"
+          }
+        }
+      }
+    },
+    "右三分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right Third"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右三分之一"
+          }
+        }
+      }
+    },
+    "右三分之二" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right Two Thirds"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右三分之二"
+          }
+        }
+      }
+    },
+    "右上" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Top Right"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右上"
+          }
+        }
+      }
+    },
+    "右下" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bottom Right"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右下"
+          }
+        }
+      }
+    },
+    "右半" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right Half"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右半"
+          }
+        }
+      }
+    },
+    "右半屏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right Half"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右半屏"
           }
         }
       }
@@ -3649,6 +4362,22 @@
         }
       }
     },
+    "啟用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用"
+          }
+        }
+      }
+    },
     "啟用 App 音訊接管" : {
       "localizations" : {
         "en" : {
@@ -3681,6 +4410,38 @@
         }
       }
     },
+    "啟用拖曳吸附" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Drag Snapping"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用拖移吸附"
+          }
+        }
+      }
+    },
+    "啟用視窗排列" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Window Arrangement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用窗口排列"
+          }
+        }
+      }
+    },
     "嘻哈" : {
       "localizations" : {
         "en" : {
@@ -3709,6 +4470,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "严重"
+          }
+        }
+      }
+    },
+    "四角" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Corners"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "四角"
           }
         }
       }
@@ -3858,6 +4635,7 @@
       }
     },
     "場景" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3923,6 +4701,7 @@
       }
     },
     "場景名稱" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4002,6 +4781,22 @@
         }
       }
     },
+    "填滿" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fill"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "填满"
+          }
+        }
+      }
+    },
     "增益超過 100%，超出部分會過 soft limiter 防削波" : {
       "localizations" : {
         "en" : {
@@ -4030,6 +4825,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "压力严重时暂停自动备份，也不启动 AI 引擎；手动操作照常。"
+          }
+        }
+      }
+    },
+    "外觀" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Appearance"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外观"
           }
         }
       }
@@ -4146,6 +4957,34 @@
         }
       }
     },
+    "套用「%@」會更動 %lld 項：" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Applying \"%@\" will change %lld item:"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Applying \"%@\" will change %lld items:"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用“%@”会更改 %lld 项："
+          }
+        }
+      }
+    },
     "套用勾選項" : {
       "localizations" : {
         "en" : {
@@ -4174,6 +5013,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "应用后读回不符，已中止"
+          }
+        }
+      }
+    },
+    "套用方案" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apply Preset"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用方案"
           }
         }
       }
@@ -4404,6 +5259,7 @@
       }
     },
     "專注中：「%@」" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4436,6 +5292,7 @@
       }
     },
     "對方" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4564,6 +5421,7 @@
       }
     },
     "尚無場景——按 ＋ 把目前的亮度與音量存成一組" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4580,6 +5438,7 @@
       }
     },
     "尚無場景。在選單列按場景列的 ＋ 可把目前的亮度、音量與自動亮度狀態存成一組。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4675,6 +5534,134 @@
         }
       }
     },
+    "左 1/3" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left 1/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左 1/3"
+          }
+        }
+      }
+    },
+    "左 2/3" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left 2/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左 2/3"
+          }
+        }
+      }
+    },
+    "左三分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left Third"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左三分之一"
+          }
+        }
+      }
+    },
+    "左三分之二" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left Two Thirds"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左三分之二"
+          }
+        }
+      }
+    },
+    "左上" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Top Left"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左上"
+          }
+        }
+      }
+    },
+    "左下" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bottom Left"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左下"
+          }
+        }
+      }
+    },
+    "左半" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left Half"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左半"
+          }
+        }
+      }
+    },
+    "左半屏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left Half"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左半屏"
+          }
+        }
+      }
+    },
     "左右切著聽，判斷這組等化有沒有讓聲音變好。切到「原聲」只是暫時不送出等化，設定不會被清掉。" : {
       "localizations" : {
         "en" : {
@@ -4738,6 +5725,9 @@
           }
         }
       }
+    },
+    "左／右／上／下半屏" : {
+      "extractionState" : "stale"
     },
     "差異值會疊加在環境基準亮度上" : {
       "localizations" : {
@@ -4804,6 +5794,7 @@
       }
     },
     "已套用「%@」" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4820,6 +5811,7 @@
       }
     },
     "已套用「%@」，%lld 項未生效（裝置已不在）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "variations" : {
@@ -4897,6 +5889,7 @@
       }
     },
     "已建立「%@」" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4952,6 +5945,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已从“%@”恢复全部设置"
+          }
+        }
+      }
+    },
+    "已忽略「%@」，不會排列它的視窗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ignoring \"%@\"; its windows won't be arranged"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已忽略“%@”，不会排列它的窗口"
           }
         }
       }
@@ -5268,6 +6277,22 @@
         }
       }
     },
+    "常用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Common"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "常用"
+          }
+        }
+      }
+    },
     "常用／HiDPI" : {
       "localizations" : {
         "en" : {
@@ -5446,6 +6471,57 @@
         }
       }
     },
+    "快捷鍵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shortcuts"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快捷键"
+          }
+        }
+      }
+    },
+    "快捷鍵至少要包含 ⌃、⌥ 或 ⌘ 其中一個修飾鍵。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A shortcut must include at least one of the ⌃, ⌥ or ⌘ modifier keys."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快捷键至少要包含 ⌃、⌥ 或 ⌘ 其中一个修饰键。"
+          }
+        }
+      }
+    },
+    "快捷鍵（啟用後）" : {
+      "extractionState" : "stale"
+    },
+    "忽略「%@」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ignore \"%@\""
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "忽略“%@”"
+          }
+        }
+      }
+    },
     "恢復 Chorus 對這個 App 的處理——先前的調整原樣回來" : {
       "localizations" : {
         "en" : {
@@ -5458,6 +6534,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "恢复 Chorus 对此 App 的处理——先前的调整原样恢复"
+          }
+        }
+      }
+    },
+    "恢復管理「%@」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resume Managing \"%@\""
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复管理“%@”"
           }
         }
       }
@@ -5523,6 +6615,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "手动 10 段"
+          }
+        }
+      }
+    },
+    "打開桌面與 Dock 設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Desktop & Dock Settings"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开桌面与程序坞设置"
           }
         }
       }
@@ -5639,6 +6747,22 @@
         }
       }
     },
+    "找不到螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No display found"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "找不到显示器"
+          }
+        }
+      }
+    },
     "找不到輸出裝置" : {
       "localizations" : {
         "en" : {
@@ -5751,6 +6875,9 @@
         }
       }
     },
+    "拖到螢幕邊緣預覽半屏／三分／填滿；按住 Shift 拖曳則依目前螢幕的超寬版型選區。放開 Shift 或按 Esc 取消本趟。" : {
+      "extractionState" : "stale"
+    },
     "拖拉節點擺放實際位置" : {
       "localizations" : {
         "en" : {
@@ -5779,6 +6906,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "拖移以标示此设备在桌面上的实际位置"
+          }
+        }
+      }
+    },
+    "拖曳吸附" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag Snapping"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拖移吸附"
           }
         }
       }
@@ -5848,6 +6991,38 @@
         }
       }
     },
+    "排列目前視窗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arrange Current Window"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "排列当前窗口"
+          }
+        }
+      }
+    },
+    "排除 App" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excluded Apps"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "排除 App"
+          }
+        }
+      }
+    },
     "排除於音訊處理之外" : {
       "localizations" : {
         "en" : {
@@ -5876,6 +7051,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "排除此设备（不进行音频处理）"
+          }
+        }
+      }
+    },
+    "排除的 App 不會成為排列目標。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excluded apps won't be arrangement targets."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "排除的 App 不会成为排列目标。"
           }
         }
       }
@@ -5977,6 +7168,7 @@
       }
     },
     "提前結束" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6036,6 +7228,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "提示音音量（与输出音量分开）"
+          }
+        }
+      }
+    },
+    "換一組" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try Another"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "换一组"
           }
         }
       }
@@ -6120,7 +7328,24 @@
         }
       }
     },
+    "改為" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Change to"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "改为"
+          }
+        }
+      }
+    },
     "放棄" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6249,6 +7474,38 @@
         }
       }
     },
+    "新的按鍵註冊失敗，原本的也無法完整恢復。目前不可用：%@。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't register the new shortcut, and the previous one couldn't be fully restored. Currently unavailable: %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新的按键注册失败，原来的也无法完整恢复。当前不可用：%@。"
+          }
+        }
+      }
+    },
+    "方向鍵移動、Enter 套用、Esc 取消" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arrow keys to move, Enter to apply, Esc to cancel"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "方向键移动、Enter 应用、Esc 取消"
+          }
+        }
+      }
+    },
     "日出 %@ · 日落 %@" : {
       "localizations" : {
         "en" : {
@@ -6314,6 +7571,7 @@
       }
     },
     "時長（25m／1h／90s）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6650,6 +7908,22 @@
         }
       }
     },
+    "未綁定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unassigned"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未绑定"
+          }
+        }
+      }
+    },
     "未讀取" : {
       "localizations" : {
         "en" : {
@@ -6960,6 +8234,7 @@
       }
     },
     "正在套用「%@」…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -7088,6 +8363,22 @@
         }
       }
     },
+    "此分區較窄，部分 App 可能無法縮入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This zone is narrow; some apps may not shrink to fit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此分区较窄，部分 App 可能无法缩入"
+          }
+        }
+      }
+    },
     "此螢幕沒有相符的模式" : {
       "localizations" : {
         "en" : {
@@ -7184,6 +8475,22 @@
         }
       }
     },
+    "每台螢幕的超寬佈局" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per-Display Ultrawide Layout"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每台显示器的超宽布局"
+          }
+        }
+      }
+    },
     "沒有" : {
       "localizations" : {
         "en" : {
@@ -7276,6 +8583,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有其他设备上报时，按时间计划估算环境光"
+          }
+        }
+      }
+    },
+    "沒有可排列的視窗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No windows to arrange"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可排列的窗口"
           }
         }
       }
@@ -7400,6 +8723,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "清除所有调整——这个 App 会回到完全原生的音频路径，不再建立 tap"
+          }
+        }
+      }
+    },
+    "清除「%@」的快捷鍵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear shortcut for \"%@\""
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除“%@”的快捷键"
+          }
+        }
+      }
+    },
+    "清除快捷鍵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear Shortcut"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除快捷键"
           }
         }
       }
@@ -7836,6 +9191,22 @@
         }
       }
     },
+    "目前 %lld pt" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Now %lld pt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前 %lld pt"
+          }
+        }
+      }
+    },
     "目前偵測到" : {
       "localizations" : {
         "en" : {
@@ -8076,6 +9447,38 @@
         }
       }
     },
+    "目標：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Target: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目标：%@"
+          }
+        }
+      }
+    },
+    "直接拖到螢幕邊緣是基本型：左右半屏、四角、上緣填滿、下緣下半屏。按住 Shift 才切到特型：下緣分五段選 1/3、2/3，其餘位置依這台螢幕的超寬版型選區。放開 Shift 立即回到基本型；按 Esc 取消本趟。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dragging straight to a display edge uses the basic set: left and right halves, corners, top edge to fill, bottom edge for the bottom half. Hold Shift to switch to the special set: the bottom edge splits into five segments for 1/3 and 2/3, and everywhere else picks zones from this display's ultrawide layout. Release Shift to return to the basic set right away; press Esc to cancel this drag."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接拖到屏幕边缘是基本型：左右半屏、四角、上缘填满、下缘下半屏。按住 Shift 才切到特型：下缘分五段选 1/3、2/3，其余位置按这台显示器的超宽版型选区。松开 Shift 立即回到基本型；按 Esc 取消本次。"
+          }
+        }
+      }
+    },
     "相符" : {
       "localizations" : {
         "en" : {
@@ -8136,6 +9539,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在确认权限——播放任何声音即可完成检查（权限被拒不会有错误信息，只能靠声音判断）。"
+          }
+        }
+      }
+    },
+    "移轉給這個動作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reassign to This Action"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "转移给这个操作"
           }
         }
       }
@@ -8364,6 +9783,22 @@
         }
       }
     },
+    "等待輔助使用權限…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for Accessibility permission…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待辅助功能权限…"
+          }
+        }
+      }
+    },
     "系統已找不到此模式" : {
       "localizations" : {
         "en" : {
@@ -8376,6 +9811,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "系统已找不到此模式"
+          }
+        }
+      }
+    },
+    "系統拒絕註冊「%@」的按鍵，已撤回這次變更並恢復原本的快捷鍵。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The system refused to register the keys for \"%@\". This change was reverted and the original shortcut restored."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统拒绝注册“%@”的按键，已撤回这次更改并恢复原本的快捷键。"
+          }
+        }
+      }
+    },
+    "系統拒絕註冊這組按鍵，可能已被其他程式占用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The system refused to register this key combination; it may be in use by another app"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统拒绝注册这组按键，可能已被其他程序占用"
+          }
+        }
+      }
+    },
+    "系統排列" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "System Tiling"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统排列"
           }
         }
       }
@@ -8397,6 +9880,7 @@
       }
     },
     "系統設定裡未允許 Chorus 通知" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8602,6 +10086,7 @@
       }
     },
     "結束時通知我" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8618,6 +10103,7 @@
       }
     },
     "結束時還原 %lld 項" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "variations" : {
@@ -8869,6 +10355,22 @@
         }
       }
     },
+    "自訂" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Custom"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定义"
+          }
+        }
+      }
+    },
     "自訂 %@ 路徑（例：/opt/homebrew/bin/%@）" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -8887,6 +10389,7 @@
       }
     },
     "自訂…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8935,6 +10438,7 @@
       }
     },
     "與輸出音量分開的系統設定——「會議」場景可以只關提示音、不動音樂。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8946,6 +10450,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "与输出音量分开的系统设置——“会议”场景可以只关闭提示音、不动音乐。"
+          }
+        }
+      }
+    },
+    "與輸出音量分開的系統設定——開會時可以只關提示音、不動音樂。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A system setting separate from output volume - in meetings you can mute just the alert sounds without touching your music."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "与输出音量分开的系统设置——开会时可以只关提示音、不动音乐。"
           }
         }
       }
@@ -8962,6 +10482,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "舞曲"
+          }
+        }
+      }
+    },
+    "若與 macOS 內建邊緣拖曳重疊，請到「桌面與 Dock」自行關閉系統選項。Chorus 不會代改系統偏好。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If this overlaps with macOS's built-in edge dragging, turn off the system option yourself in \"Desktop & Dock\". Chorus won't change system preferences for you."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "若与 macOS 内置边缘拖移重叠，请到“桌面与程序坞”自行关闭系统选项。Chorus 不会代改系统偏好设置。"
           }
         }
       }
@@ -9218,7 +10754,24 @@
         }
       }
     },
+    "裝置插拔、預設輸出切換、App 音訊接管的每一步都記在這裡，2 MB 一輪、留三輪。聲音或畫面突然不對時，把這個檔連同發生時間一起回報。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Every step of device plugging and unplugging, default output switching and App audio takeover is logged here, 2 MB per file, three files kept. When sound or picture suddenly goes wrong, report this file along with the time it happened."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设备插拔、默认输出切换、App 音频接管的每一步都记在这里，2 MB 一轮、留三轮。声音或画面突然不对时，把这个文件连同发生时间一起反馈。"
+          }
+        }
+      }
+    },
     "裝置插拔、預設輸出切換、場景套用與還原、App 音訊接管的每一步都記在這裡，2 MB 一輪、留三輪。聲音或畫面突然不對時，把這個檔連同發生時間一起回報。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9326,6 +10879,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "要应用“%@”的设置吗？"
+          }
+        }
+      }
+    },
+    "視窗排列" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Window Arrangement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "窗口排列"
+          }
+        }
+      }
+    },
+    "視窗排列設定…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Window Arrangement Settings…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "窗口排列设置…"
           }
         }
       }
@@ -9603,6 +11188,22 @@
         }
       }
     },
+    "請按下快捷鍵…（Esc 取消）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Press a shortcut… (Esc to cancel)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请按下快捷键…（Esc 取消）"
+          }
+        }
+      }
+    },
     "請給 0–1 的比例、百分比（80%）或相對增減（+10%）" : {
       "localizations" : {
         "en" : {
@@ -9711,6 +11312,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已粘贴的校正文件"
+          }
+        }
+      }
+    },
+    "起始方案" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starting Preset"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "起始方案"
+          }
+        }
+      }
+    },
+    "超寬與進階" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ultrawide & Advanced"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "超宽与高级"
+          }
+        }
+      }
+    },
+    "超寬：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ultrawide: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "超宽：%@"
           }
         }
       }
@@ -9855,6 +11504,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "软件音量生效中——此设备的所有音频经过 Chorus（约增加 10 ms 延迟）"
+          }
+        }
+      }
+    },
+    "輔助使用權限已授予" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accessibility permission granted"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "辅助功能权限已授予"
           }
         }
       }
@@ -10052,6 +11717,22 @@
         }
       }
     },
+    "這個視窗還沒有排列過，沒有可還原的位置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This window hasn't been arranged yet, so there's no position to restore"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个窗口还没有排列过，没有可恢复的位置"
+          }
+        }
+      }
+    },
     "這台 Mac 沒有光線感測器，將跟隨已配對裝置回報的環境光。" : {
       "localizations" : {
         "en" : {
@@ -10213,6 +11894,7 @@
       }
     },
     "選單列、`chorus scene <名稱>` 與 HTTP 觸發的是同一份。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10373,6 +12055,7 @@
       }
     },
     "配對資訊與自動化介面的 token（存在鑰匙串，備份是明文 JSON）、亮度與音量的當下值、進行中的限時場景。換機器後配對要重做一次。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10384,6 +12067,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "配对信息与自动化界面的 token（存于钥匙串，备份为明文 JSON）、亮度与音量的当前值、进行中的限时场景。换设备后需重新配对。"
+          }
+        }
+      }
+    },
+    "配對資訊與自動化介面的 token（存在鑰匙串，備份是明文 JSON）、亮度與音量的當下值。換機器後配對要重做一次。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pairing info and the automation interface token (stored in the keychain; the backup is plain-text JSON), and the current brightness and volume values. After switching Macs, you'll need to pair again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对信息与自动化接口的 token（存在钥匙串，备份是明文 JSON）、亮度与音量的当前值。换机器后配对要重做一次。"
           }
         }
       }
@@ -10596,6 +12295,22 @@
         }
       }
     },
+    "錄製" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "录制"
+          }
+        }
+      }
+    },
     "鍵盤媒體鍵" : {
       "localizations" : {
         "en" : {
@@ -10611,6 +12326,25 @@
           }
         }
       }
+    },
+    "鍵盤選區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keyboard Zones"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "键盘选区"
+          }
+        }
+      }
+    },
+    "鍵盤選區請用選單「鍵盤選區」：方向鍵移動、Enter 套用、Esc 取消。" : {
+      "extractionState" : "stale"
     },
     "鏈未生效（未播放或未達成立條件）時無法編輯參數" : {
       "localizations" : {
@@ -10853,6 +12587,7 @@
       }
     },
     "開始" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10913,6 +12648,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "开关与触发条件（30 分钟／1 小时／无限期／连接某台显示器时／某个 App 运行时／有 agent 在工作时）在菜单栏。"
+          }
+        }
+      }
+    },
+    "間距" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gap"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "间距"
           }
         }
       }
@@ -11031,6 +12782,7 @@
       }
     },
     "限時套用" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -11350,6 +13102,22 @@
         }
       }
     },
+    "預設關閉。啟用後可用選單與 ⌃⌥ 快捷鍵排列前景視窗；拖曳吸附可另外開啟。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off by default. When enabled, you can arrange the frontmost window with the menu and ⌃⌥ shortcuts; drag snapping can be turned on separately."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认关闭。启用后可用菜单与 ⌃⌥ 快捷键排列前台窗口；拖移吸附可另外开启。"
+          }
+        }
+      }
+    },
     "顯示 %lld 個隱藏裝置" : {
       "localizations" : {
         "en" : {
@@ -11603,6 +13371,7 @@
       }
     },
     "；%lld 項不會自動還原" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "variations" : {
