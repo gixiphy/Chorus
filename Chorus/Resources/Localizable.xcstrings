@@ -2868,6 +2868,7 @@
       }
     },
     "刪除目前情境" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3584,6 +3585,7 @@
       }
     },
     "名稱（例：家、公司）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4385,6 +4387,7 @@
       }
     },
     "將目前桌面存為新情境…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -5460,6 +5463,7 @@
       }
     },
     "情境" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6229,6 +6233,7 @@
       }
     },
     "新增桌面情境" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6341,6 +6346,7 @@
       }
     },
     "更新目前情境（含螢幕組合）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6774,6 +6780,7 @@
       }
     },
     "桌面情境：各自記住照片、節點位置與亮度設定；接上對應螢幕組合時自動切換" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9356,6 +9363,7 @@
       }
     },
     "記住目前的照片、節點位置與亮度設定；之後接上同一組螢幕會自動切換。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

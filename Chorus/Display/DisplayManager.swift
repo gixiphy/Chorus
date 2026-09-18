@@ -39,8 +39,6 @@ final class DisplayManager {
     @ObservationIgnored weak var autoController: AutoBrightnessController?
     /// DDC 能力分類完成後回呼音訊層重算橋接（音訊 snapshot 常比 DDC 探測先到）。
     @ObservationIgnored weak var audioManager: AudioDeviceManager?
-    /// 螢幕組合變更後通知桌面情境自動切換（防抖在對方）。
-    @ObservationIgnored weak var scenarioStore: DeskScenarioStore?
     /// 「接著某台螢幕時防睡眠」需要知道螢幕組合何時變動。
     @ObservationIgnored weak var keepAwake: KeepAwakeController?
     /// 有螢幕被關掉時才掛上 ⌘×8 手勢監聽（見 EmergencyRestoreMonitor）。
@@ -386,9 +384,7 @@ final class DisplayManager {
         displays = models
         reapplySoftwareDimming()
         audioManager?.refreshBridges()
-        // 情境切換與防睡眠看的是「實體接著哪些螢幕」——被 Chorus 關掉的
-        // 螢幕線還在，算連接中，否則關個螢幕就會誤觸桌面情境自動切換。
-        scenarioStore?.displaysDidChange(Set(models.map(\.uuid)))
+        // 防睡眠看的是「實體接著哪些螢幕」——被 Chorus 關掉的螢幕線還在，算連接中。
         keepAwake?.displaysDidChange()
         automationEvents?.publish(kind: "displays", payload: ["names": models.map(\.name)])
         configurationController?.displaysDidChange()
@@ -848,7 +844,6 @@ final class DisplayManager {
 @MainActor
 enum AppStateRegistry {
     static var displayManager: DisplayManager?
-    static var scenarioStore: DeskScenarioStore?
     static var keepAwake: KeepAwakeController?
     /// 限時場景（B7）。睡醒通知的 observer 靠它回到 controller——
     /// closure 直接捕獲 self 在 Swift 6 的嚴格併發下不合法（non-Sendable

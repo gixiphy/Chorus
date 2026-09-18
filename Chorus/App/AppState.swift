@@ -19,7 +19,6 @@ final class AppState {
     let diagram: DiagramStore
     let advisor: LightingAdvisor
     let mediaKeys: MediaKeyInterceptor
-    let scenarios: DeskScenarioStore
     let virtualDriver: VirtualAudioDriverController
     let keepAwake: KeepAwakeController
     let emergencyRestore: EmergencyRestoreMonitor
@@ -126,14 +125,6 @@ final class AppState {
         sessionManager.localCapabilities = capabilities
         pairing.localCapabilities = capabilities
 
-        scenarios = DeskScenarioStore(
-            instance: instance,
-            settings: settings,
-            diagram: diagram,
-            displayManager: displayManager,
-            autoBrightness: autoBrightness
-        )
-        timeline.mark("scenarios")
         mediaKeys = MediaKeyInterceptor(
             settings: settings,
             displayManager: displayManager,
@@ -151,12 +142,10 @@ final class AppState {
         timeline.mark("keepAwake")
         displayManager.autoController = autoBrightness
         displayManager.audioManager = audioManager
-        displayManager.scenarioStore = scenarios
         displayManager.keepAwake = keepAwake
         displayManager.emergencyRestore = emergencyRestore
         displayManager.configurationController = displayConfiguration
         displayConfiguration.attach(displayManager: displayManager)
-        AppStateRegistry.scenarioStore = scenarios
         AppStateRegistry.keepAwake = keepAwake
         coordinator.attachAutoController(autoBrightness)
         coordinator.attachKeepAwake(keepAwake)

@@ -92,7 +92,6 @@ GLOSSARY = {
     "隱藏的裝置": "hidden devices",
     "預設輸出": "default output",
     "配置圖": "layout (the desk layout diagram)",
-    "情境": "scenario (a saved desk lighting scenario)",
     "顧問／建議": "advisor / advice",
     "AI 引擎": "AI engine (an external AI CLI such as Claude Code; also the Settings tab name)",
     "動詞層／動作": "action (in scenes: 「%lld 個動作」= actions)",

@@ -2,10 +2,9 @@ import Foundation
 
 /// 具名的狀態組合（B4-5）。選單列、CLI 與 localhost HTTP 觸發的是同一份。
 ///
-/// 與 `DeskScenario` 刻意分開：DeskScenario 是「依螢幕組合**自動**切換的桌面
-/// 記憶」（背景照、節點位置、自動亮度曲線），ControlScene 是「使用者具名、**手動或
-/// 被程式觸發**的動作組」。前者描述環境、後者描述意圖，混在一起會讓
-/// 「接上這組螢幕就自動套用」和「我現在想要電影模式」互相打架。
+/// 這是「使用者具名、**手動或被程式觸發**的動作組」——描述意圖，不描述環境。
+/// 每台螢幕與輸出裝置各自的設定（差異值、排除、配置圖位置）本來就以裝置
+/// UUID 為 key 記在 live 狀態裡，接上哪台就用哪台的，不需要另一層「情境」。
 public struct ControlScene: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var name: String

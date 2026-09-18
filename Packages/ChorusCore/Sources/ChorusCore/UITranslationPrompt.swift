@@ -74,7 +74,6 @@ public enum UITranslationPrompt {
         ("鏡射 / mirror", "mirroring volume to a device's own control"),
         ("排除 / exclude", "leaving a device or app untouched by Chorus"),
         ("配置圖 / layout", "the desk layout diagram"),
-        ("情境 / scenario", "a saved desk lighting scenario"),
         ("AI 引擎 / AI engine", "an external AI CLI such as Claude Code; the Settings tab of that name"),
         ("還原 / restore", "putting values back after a timed scene"),
         ("選單列 / menu bar", "the macOS menu bar"),

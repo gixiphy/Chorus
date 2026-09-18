@@ -77,7 +77,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 body()
                 timings.append("\(name) \(OperationMetrics.format(metrics.now - started))")
             }
-            timed("scenario") { AppStateRegistry.scenarioStore?.saveOnTerminate() }
             // 結束 Chorus 一定還原限時場景（與 B3 的螢幕電源同態度）：
             // 使用者不該因為關掉 Chorus 就被留在「Slack 靜音、螢幕 30%」
             timed("focus") { AppStateRegistry.focus?.shutdown() }
