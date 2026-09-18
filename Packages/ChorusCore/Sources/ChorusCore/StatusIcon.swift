@@ -5,21 +5,92 @@ import Foundation
 public struct StatusIconState: Equatable, Sendable {
     /// 主要顯示器亮度 0–1。nil ＝ 沒有可控顯示器（環只畫軌道）。
     public var brightness: Double?
-    /// 預設輸出裝置音量 0–1。nil ＝ 沒有可控輸出（聲波柱畫成最小）。
+    /// 預設輸出裝置音量 0–1。nil ＝ 沒有可控輸出（喇叭淡化）。
     public var volume: Double?
-    /// 靜音（或音量被壓到 0 的 mute 狀態）——聲波柱改畫成一條橫線。
+    /// 靜音（或音量被壓到 0 的 mute 狀態）——喇叭旁改畫叉號，裝置符號上畫斜線。
     public var isMuted: Bool
+    /// 中央那格畫哪種輸出裝置——沿用系統聲音選單的圖示語彙。
+    public var output: StatusOutputGlyph
     /// 圖示右側的附加文字（倒數 `29:59`／無限期 `∞`）。nil ＝ 只畫圖示。
     ///
     /// 帶 `kind` 而不是只帶字串：畫出來兩者一樣，但**唸出來不一樣**。
     /// 無障礙標籤把限時場景的倒數唸成「螢幕長亮剩餘」，是說謊。
     public var badge: StatusBadge?
 
-    public init(brightness: Double?, volume: Double?, isMuted: Bool, badge: StatusBadge?) {
+    public init(
+        brightness: Double?, volume: Double?, isMuted: Bool,
+        output: StatusOutputGlyph = .speaker, badge: StatusBadge?
+    ) {
         self.brightness = brightness
         self.volume = volume
         self.isMuted = isMuted
+        self.output = output
         self.badge = badge
+    }
+}
+
+/// 輸出裝置接在哪條線上——只保留分類圖示需要的粗分，不帶 CoreAudio 型別。
+public enum StatusOutputTransport: Sendable, Equatable {
+    case builtIn
+    /// HDMI／DisplayPort：聲音從螢幕出。
+    case display
+    case bluetooth
+    case airPlay
+    case other
+}
+
+/// 選單列圖示中央那格的裝置種類。
+///
+/// 系統的聲音選單怎麼畫，這裡就怎麼畫：內建喇叭是那台 Mac、HDMI 是螢幕、
+/// AirPods 是自己的形狀——使用者一眼就知道聲音現在從哪裡出來，
+/// 不必點開選單確認。分類只靠 transport type 與裝置名，沒有藍牙產品碼
+/// 也判得出常見的幾種。
+public enum StatusOutputGlyph: Sendable, Equatable, Hashable {
+    case laptop
+    case desktop
+    case display
+    case airPods
+    case airPodsPro
+    case airPodsMax
+    case headphones
+    case airPlay
+    /// 一般喇叭、USB 介面、虛擬裝置：畫 renderer 自己的喇叭，聲波隨音量亮起。
+    case speaker
+
+    /// 對應的 SF Symbol；`speaker` 回 nil，由 renderer 手繪。
+    public var symbolName: String? {
+        switch self {
+        case .laptop: "laptopcomputer"
+        case .desktop: "desktopcomputer"
+        case .display: "display"
+        case .airPods: "airpods"
+        case .airPodsPro: "airpodspro"
+        case .airPodsMax: "airpodsmax"
+        case .headphones: "headphones"
+        case .airPlay: "airplayaudio"
+        case .speaker: nil
+        }
+    }
+
+    public static func classify(transport: StatusOutputTransport, name: String) -> StatusOutputGlyph {
+        let lowered = name.lowercased()
+        switch transport {
+        case .builtIn:
+            // 「MacBook Pro的揚聲器」／「MacBook Air Speakers」——名字裡就有機型
+            return lowered.contains("macbook") ? .laptop : .desktop
+        case .display:
+            return .display
+        case .bluetooth:
+            if lowered.contains("airpods max") { return .airPodsMax }
+            if lowered.contains("airpods pro") { return .airPodsPro }
+            if lowered.contains("airpods") { return .airPods }
+            // 藍牙喇叭沒有產品碼可查，只能靠名字；其餘藍牙輸出多半是耳機
+            return lowered.contains("speaker") ? .speaker : .headphones
+        case .airPlay:
+            return .airPlay
+        case .other:
+            return .speaker
+        }
     }
 }
 

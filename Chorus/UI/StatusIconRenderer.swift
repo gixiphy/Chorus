@@ -7,9 +7,12 @@ import ChorusCore
 /// 這樣淺色／深色選單列、以及選單被點開時的反白全部自動正確，
 /// 不必自己追蹤 appearance。
 ///
-/// 版面：外環（開口朝下的 270° gauge）＝主要顯示器亮度；中心三根聲波柱
-/// ＝預設輸出音量，靜音時塌成一條橫線；右側文字＝防睡眠或限時場景的倒數
-/// （兩個都沒在跑就不畫，圖示也就窄一格）。
+/// 共用標誌：亮度開口環、中央輸出裝置、底部活動標記。App icon 也由此 renderer
+/// 產生，避免兩套輪廓漸漸分歧。右側保留防睡眠或限時場景的倒數。
+///
+/// 中央那格沿用系統聲音選單的圖示語彙：內建喇叭畫那台 Mac、HDMI 畫螢幕、
+/// AirPods 畫 AirPods（SF Symbol）；一般喇叭與虛擬裝置維持手繪喇叭，
+/// 聲波隨音量亮起——app icon 用的就是這個狀態，符號換了它也不動。
 enum StatusIconRenderer {
     /// 選單列圖示的標準邊長。NSStatusItem 高 22pt，18pt 是留白後的可用範圍。
     static let side: CGFloat = 18
@@ -54,17 +57,23 @@ enum StatusIconRenderer {
         context.setLineCap(.round)
 
         drawBrightnessRing(state.brightness, center: center, in: context)
-        drawVolumeBars(state.volume, muted: state.isMuted, center: center, in: context)
+        if let symbol = state.output.symbolName {
+            drawDeviceSymbol(symbol, volume: state.volume, muted: state.isMuted, in: context)
+        } else {
+            drawSpeaker(state.volume, muted: state.isMuted, in: context)
+        }
+        drawActivity(state.badge?.kind, in: context)
 
         if let badge = state.badge, badgeWidth > 0 {
+            context.setAlpha(1)
             draw(badge: badge.text, in: CGRect(x: side + badgeGap, y: 0, width: badgeWidth, height: side))
         }
     }
 
-    /// 外環：開口朝正下方的 270° gauge，從左下順時針填。
+    /// 外環：280°，下方開口留給活動標記；和內部喇叭保持至少一個線寬的留白。
     private static func drawBrightnessRing(_ brightness: Double?, center: CGPoint, in context: CGContext) {
-        context.setLineWidth(2.2)
-        context.setAlpha(0.25)
+        context.setLineWidth(1.7)
+        context.setAlpha(0.28)
         context.addPath(ringPath(center: center, fraction: 1))
         context.strokePath()
 
@@ -75,45 +84,110 @@ enum StatusIconRenderer {
     }
 
     private static func ringPath(center: CGPoint, fraction: Double) -> CGPath {
-        let start: CGFloat = 225 * .pi / 180
+        let start: CGFloat = 230 * .pi / 180
         let path = CGMutablePath()
         path.addArc(
             center: center,
-            radius: 6.6,
+            radius: 7.2,
             startAngle: start,
-            endAngle: start - 270 * CGFloat(fraction) * .pi / 180,
+            endAngle: start - 280 * CGFloat(fraction) * .pi / 180,
             clockwise: true
         )
         return path
     }
 
-    /// 中心三根聲波柱。中間最高，整組隨音量長高；靜音塌成一條橫線
-    /// ——和「音量 0」（三根縮到最短的點）刻意畫得不一樣。
-    private static func drawVolumeBars(_ volume: Double?, muted: Bool, center: CGPoint, in context: CGContext) {
-        context.setLineWidth(barWidth)
-        context.setAlpha(volume == nil ? 0.25 : 1)
+    /// 固定的喇叭輪廓讓低音量也能辨識；兩道聲波依音量逐段亮起。
+    /// 零音量保留喇叭，靜音另畫叉號，未知輸出則整組淡化。
+    private static func drawSpeaker(_ volume: Double?, muted: Bool, in context: CGContext) {
+        context.setFillColor(NSColor.black.cgColor)
+        context.setAlpha(volume == nil && !muted ? 0.28 : 1)
+        let speaker = CGMutablePath()
+        speaker.move(to: CGPoint(x: 5.0, y: 8.6))
+        speaker.addLine(to: CGPoint(x: 6.3, y: 8.6))
+        speaker.addLine(to: CGPoint(x: 8.3, y: 7.0))
+        speaker.addQuadCurve(to: CGPoint(x: 8.7, y: 7.2), control: CGPoint(x: 8.7, y: 6.7))
+        speaker.addLine(to: CGPoint(x: 8.7, y: 12.0))
+        speaker.addQuadCurve(to: CGPoint(x: 8.3, y: 12.2), control: CGPoint(x: 8.7, y: 12.5))
+        speaker.addLine(to: CGPoint(x: 6.3, y: 10.6))
+        speaker.addLine(to: CGPoint(x: 5.0, y: 10.6))
+        speaker.closeSubpath()
+        context.addPath(speaker)
+        context.fillPath()
 
+        context.setLineWidth(1.15)
         if muted {
-            context.move(to: CGPoint(x: center.x - 2.7, y: center.y))
-            context.addLine(to: CGPoint(x: center.x + 2.7, y: center.y))
-            context.strokePath()
-            return
-        }
-
-        // 柱長從 0 起算（音量 0 時只剩 round cap 的那顆點），不設最小長度——
-        // 多數人的音量落在 20–50%，若給了最小長度，這段就全都長得一樣。
-        let level = CGFloat(volume ?? 0)
-        for (offset, ratio) in zip([-2.6, 0, 2.6] as [CGFloat], [0.62, 1.0, 0.62] as [CGFloat]) {
-            let half = 4.4 * level * ratio / 2
-            context.move(to: CGPoint(x: center.x + offset, y: center.y - half))
-            context.addLine(to: CGPoint(x: center.x + offset, y: center.y + half))
-            context.strokePath()
+            for (start, end) in [(CGPoint(x: 10.4, y: 8.4), CGPoint(x: 12.8, y: 10.8)),
+                                 (CGPoint(x: 10.4, y: 10.8), CGPoint(x: 12.8, y: 8.4))] {
+                context.move(to: start)
+                context.addLine(to: end)
+                context.strokePath()
+            }
+        } else {
+            let level = volume ?? 0
+            for (index, radius) in [2.5, 4.6].enumerated() {
+                context.setAlpha(0.18 + 0.82 * min(max(level * 2 - Double(index), 0), 1))
+                context.addArc(center: CGPoint(x: 8.0, y: 9.6), radius: radius,
+                               startAngle: -.pi / 4, endAngle: .pi / 4, clockwise: false)
+                context.strokePath()
+            }
         }
     }
 
-    /// 聲波柱的線寬。比環細一階：環是「量表」、柱是「內容」，
-    /// 同粗會糊成一團。
-    private static let barWidth: CGFloat = 1.4
+    /// 環內、活動標記上方能放符號的範圍：四角離圓心約 6.1pt，
+    /// 剛好留在 7.2pt 半徑、1.7pt 線寬的環的內緣裡面。
+    private static let symbolBox = CGRect(x: 4.0, y: 6.1, width: 10.0, height: 7.0)
+
+    /// 系統風格的裝置符號，等比縮到 `symbolBox` 內置中。音量畫不進
+    /// 一台筆電的輪廓裡，所以這條只管「哪個裝置」與靜音；
+    /// 靜音照系統的 slash 變體：先挖一道透明溝，再畫斜線。
+    private static func drawDeviceSymbol(_ name: String, volume: Double?, muted: Bool, in context: CGContext) {
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            // 只要輪廓：階層式著色會把筆電螢幕那塊畫成半透明，在 template 上變成灰底
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .medium).applying(.preferringMonochrome())),
+            symbol.size.width > 0, symbol.size.height > 0
+        else { return }
+        let scale = min(symbolBox.width / symbol.size.width, symbolBox.height / symbol.size.height)
+        let size = CGSize(width: symbol.size.width * scale, height: symbol.size.height * scale)
+        let rect = CGRect(
+            x: symbolBox.midX - size.width / 2, y: symbolBox.midY - size.height / 2,
+            width: size.width, height: size.height
+        )
+        context.setAlpha(1)
+        symbol.draw(in: rect, from: .zero, operation: .sourceOver,
+                    fraction: volume == nil && !muted ? 0.28 : 1)
+
+        guard muted else { return }
+        // 斜線與挖出的透明溝都得留在環的內緣裡，不然會把環也切斷
+        let start = CGPoint(x: symbolBox.minX + 1.6, y: symbolBox.maxY - 0.2)
+        let end = CGPoint(x: symbolBox.maxX - 1.6, y: symbolBox.minY + 0.2)
+        context.saveGState()
+        context.setBlendMode(.clear)
+        context.setLineWidth(2.0)
+        context.move(to: start)
+        context.addLine(to: end)
+        context.strokePath()
+        context.restoreGState()
+        context.setLineWidth(1.15)
+        context.move(to: start)
+        context.addLine(to: end)
+        context.strokePath()
+    }
+
+    /// 底部的短橫是長亮；雙點是專注。未啟用時保留淡色短橫，輪廓維持一致。
+    private static func drawActivity(_ kind: StatusBadgeKind?, in context: CGContext) {
+        context.setAlpha(kind == nil ? 0.28 : 1)
+        context.setLineWidth(1.7)
+        if kind == .focus {
+            context.setFillColor(NSColor.black.cgColor)
+            for x in [6.8, 9.5] {
+                context.fillEllipse(in: CGRect(x: x, y: 1.05, width: 1.7, height: 1.7))
+            }
+        } else {
+            context.move(to: CGPoint(x: 7.4, y: 1.9))
+            context.addLine(to: CGPoint(x: 10.6, y: 1.9))
+            context.strokePath()
+        }
+    }
 
     private static func draw(badge: String, in rect: CGRect) {
         let text = NSAttributedString(string: badge, attributes: [

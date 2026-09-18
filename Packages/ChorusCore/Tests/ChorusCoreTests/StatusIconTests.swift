@@ -98,3 +98,43 @@ struct StatusIconBadgeTests {
         #expect(StatusIcon.keepAwakeBadge(remainingSeconds: nil, isHolding: false) == nil)
     }
 }
+
+@Suite("選單列中央的輸出裝置符號")
+struct StatusOutputGlyphTests {
+    @Test("內建喇叭依機型名畫筆電或桌機")
+    func builtIn() {
+        #expect(StatusOutputGlyph.classify(transport: .builtIn, name: "MacBook Pro的揚聲器") == .laptop)
+        #expect(StatusOutputGlyph.classify(transport: .builtIn, name: "MacBook Air Speakers") == .laptop)
+        #expect(StatusOutputGlyph.classify(transport: .builtIn, name: "iMac 揚聲器") == .desktop)
+    }
+
+    @Test("HDMI／DisplayPort 畫螢幕；AirPlay 畫 AirPlay")
+    func wired() {
+        #expect(StatusOutputGlyph.classify(transport: .display, name: "ASUS VS207") == .display)
+        #expect(StatusOutputGlyph.classify(transport: .airPlay, name: "客廳") == .airPlay)
+    }
+
+    @Test("藍牙依名字分出三種 AirPods，其餘當耳機，名字說是喇叭才畫喇叭")
+    func bluetooth() {
+        #expect(StatusOutputGlyph.classify(transport: .bluetooth, name: "憲有的AirPods4（🍸）") == .airPods)
+        #expect(StatusOutputGlyph.classify(transport: .bluetooth, name: "憲有的AirPods Pro") == .airPodsPro)
+        #expect(StatusOutputGlyph.classify(transport: .bluetooth, name: "憲有的AirPods Max #2") == .airPodsMax)
+        #expect(StatusOutputGlyph.classify(transport: .bluetooth, name: "WH-1000XM5") == .headphones)
+        #expect(StatusOutputGlyph.classify(transport: .bluetooth, name: "JBL Flip Speaker") == .speaker)
+    }
+
+    @Test("USB 與虛擬裝置維持手繪喇叭，沒有對應的符號")
+    func other() {
+        #expect(StatusOutputGlyph.classify(transport: .other, name: "Chorus Screen Output") == .speaker)
+        #expect(StatusOutputGlyph.speaker.symbolName == nil)
+        #expect(StatusOutputGlyph.laptop.symbolName == "laptopcomputer")
+    }
+
+    @Test("裝置換了就是不同 state，圖示會重畫")
+    func stateIncludesOutput() {
+        let laptop = StatusIconState(brightness: 0.5, volume: 0.5, isMuted: false, output: .laptop, badge: nil)
+        var airPods = laptop
+        airPods.output = .airPods
+        #expect(laptop != airPods)
+    }
+}

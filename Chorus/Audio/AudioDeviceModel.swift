@@ -1,3 +1,4 @@
+import ChorusCore
 import CoreAudio
 import CoreGraphics
 import Foundation
@@ -69,6 +70,18 @@ final class AudioDeviceModel: Identifiable {
         if bridgedDisplayID != nil, !bridgeUnresponsive { return .ddc }
         if canSetVolume { return .native }
         return .digital
+    }
+
+    /// 選單列圖示中央畫的裝置種類（沿用系統聲音選單的圖示語彙）。
+    var outputGlyph: StatusOutputGlyph {
+        let transport: StatusOutputTransport = switch transportType {
+        case kAudioDeviceTransportTypeBuiltIn: .builtIn
+        case kAudioDeviceTransportTypeHDMI, kAudioDeviceTransportTypeDisplayPort: .display
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE: .bluetooth
+        case kAudioDeviceTransportTypeAirPlay: .airPlay
+        default: .other
+        }
+        return .classify(transport: transport, name: name)
     }
 
     var transportLabel: String? {
