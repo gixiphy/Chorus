@@ -3,7 +3,7 @@ import ChorusCore
 import Observation
 import SwiftUI
 
-/// 設定頁的「快捷鍵」：預設沿用 Magnet 的按鍵（單一版本），可逐項錄製／清除、一鍵恢復預設。
+/// 設定頁的「快捷鍵」：單一一組預設按鍵，可逐項錄製／清除、一鍵恢復預設。
 struct WindowShortcutSettingsSection: View {
     @Environment(AppState.self) private var appState
     @State private var recorder = ShortcutRecorder()

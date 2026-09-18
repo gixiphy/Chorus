@@ -240,7 +240,7 @@ final class SettingsStore {
         }
     }
 
-    /// 視窗指令的全域快捷鍵（JSON）。沒存過＝預設（沿用 Magnet 的按鍵）。
+    /// 視窗指令的全域快捷鍵（JSON）。沒存過＝預設那一組。
     var windowArrangementShortcuts: ShortcutBindings {
         didSet {
             defaults.set(

@@ -1052,23 +1052,6 @@
         }
       }
     },
-    "Magnet 習慣" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Magnet Style"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Magnet 习惯"
-          }
-        }
-      }
-    },
     "R&B" : {
       "localizations" : {
         "en" : {
@@ -2693,23 +2676,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用默认按键"
-          }
-        }
-      }
-    },
-    "使用預設按鍵（與 Magnet 相同）" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Use default shortcuts (same as Magnet)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用默认按键（与 Magnet 相同）"
           }
         }
       }

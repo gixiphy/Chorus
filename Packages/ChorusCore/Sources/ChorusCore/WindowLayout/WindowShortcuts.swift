@@ -181,7 +181,7 @@ public struct ShortcutBindings: Sendable, Equatable {
 
     public private(set) var chords: [WindowCommand: KeyChord]
 
-    /// 預設：沿用 Magnet 的按鍵（使用者裁決，單一版本、不設方案）。
+    /// 預設按鍵（使用者裁決：單一版本、不設方案）。
     public init() {
         chords = Self.defaultChords
     }

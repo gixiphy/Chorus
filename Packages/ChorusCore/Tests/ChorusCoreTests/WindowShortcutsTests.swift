@@ -16,7 +16,7 @@ struct WindowShortcutsTests {
         #expect(WindowCommand.restore.layoutAction == nil)
     }
 
-    @Test("預設＝Magnet 那一組：19 項全綁，還原是 ⌃⌥⌫，沒有其他方案")
+    @Test("預設按鍵：19 項全綁，還原是 ⌃⌥⌫，沒有其他方案")
     func defaults() {
         let bindings = ShortcutBindings()
         #expect(bindings.chords.count == 19)
