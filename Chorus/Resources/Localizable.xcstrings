@@ -2681,7 +2681,24 @@
         }
       }
     },
+    "使用預設按鍵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Using default shortcuts"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用默认按键"
+          }
+        }
+      }
+    },
     "使用預設按鍵（與 Magnet 相同）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

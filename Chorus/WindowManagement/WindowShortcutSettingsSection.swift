@@ -21,7 +21,7 @@ struct WindowShortcutSettingsSection: View {
     var body: some View {
         Section("快捷鍵") {
             HStack {
-                Text(bindings.isDefault ? "使用預設按鍵（與 Magnet 相同）" : "已自訂")
+                Text(bindings.isDefault ? "使用預設按鍵" : "已自訂")
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("恢復預設") {
