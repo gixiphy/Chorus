@@ -16,6 +16,7 @@ struct StatusIconTests {
         #expect(StatusIcon.quantize(1.8) == 1)
     }
 
+
     @Test("Countdown reads M:SS below 100 minutes")
     func countdownMinutesSeconds() {
         #expect(StatusIcon.countdownText(remainingSeconds: 1800) == "30:00")

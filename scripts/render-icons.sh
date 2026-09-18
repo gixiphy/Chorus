@@ -6,6 +6,7 @@ ICON_WORK=$(mktemp -d /tmp/chorus-icons.XXXXXX)
 trap 'rm -rf "$ICON_WORK"' EXIT
 xcrun swiftc -emit-library -emit-module -module-name ChorusCore \
   Packages/ChorusCore/Sources/ChorusCore/StatusIcon.swift \
+  Packages/ChorusCore/Sources/ChorusCore/StatusIconGeometry.swift \
   -emit-module-path "$ICON_WORK/ChorusCore.swiftmodule" -o "$ICON_WORK/libChorusCore.dylib"
 xcrun swiftc -parse-as-library -I "$ICON_WORK" -L "$ICON_WORK" -lChorusCore \
   -Xlinker -rpath -Xlinker "$ICON_WORK" \

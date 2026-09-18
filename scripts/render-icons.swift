@@ -49,37 +49,40 @@ struct RenderIcons {
                 ("MacBook", state(0.75, 0.65, output: .laptop)),
                 ("Display", state(0.75, 0.65, output: .display)),
                 ("AirPods", state(0.75, 0.65, output: .airPods)),
-                ("Max muted", state(0.75, 0.65, muted: true, output: .airPodsMax))
+                ("Max muted", state(0.75, 0.65, muted: true, output: .airPodsMax)),
+                ("Adjusting", state(0.76, 0.65, output: .laptop, readout: .init(kind: .brightness, value: 0.76)))
             ]
             for (row, dark) in [false, true].enumerated() {
                 let y = CGFloat(485 - row * 205)
-                let card = CGRect(x: 570, y: y, width: 810, height: 176)
+                let card = CGRect(x: 570, y: y, width: 830, height: 176)
                 (dark ? NSColor(calibratedWhite: 0.10, alpha: 1) : .white).setFill()
                 NSBezierPath(roundedRect: card, xRadius: 22, yRadius: 22).fill()
                 let ink: NSColor = dark ? .white : .black
                 for (index, sample) in samples.enumerated() {
-                    let x = 600 + CGFloat(index) * 71
+                    let x = 600 + CGFloat(index) * 66
                     context.saveGState()
                     context.translateBy(x: x, y: y + 78)
                     context.scaleBy(x: 2.4, y: 2.4)
-                    context.clip(to: CGRect(x: 0, y: 0, width: 18, height: 18))
+                    context.clip(to: CGRect(x: 0, y: 0, width: 22, height: 22))
                     mark(sample.1, at: .zero, color: ink, in: context)
                     context.restoreGState()
                     text(sample.0, at: CGPoint(x: x - 4, y: y + 34), size: 13, color: ink.withAlphaComponent(0.65))
                 }
             }
-            text("ACTUAL SIZE · 18 PT", at: CGPoint(x: 605, y: 225), size: 13, weight: .semibold, color: .secondaryLabelColor)
+            text("ACTUAL SIZE · 22 PT", at: CGPoint(x: 605, y: 225), size: 13, weight: .semibold, color: .secondaryLabelColor)
             for (index, sample) in samples.enumerated() {
-                mark(sample.1, at: CGPoint(x: 600 + CGFloat(index) * 71, y: 185), color: .black, in: context)
+                mark(sample.1, at: CGPoint(x: 600 + CGFloat(index) * 66, y: 185), color: .black, in: context)
             }
-            text("Brightness ring   /   Output device (system glyphs, speaker shows volume)   /   Awake bar · Focus dots",
+            text("Brightness arc (opens for the readout while adjusting)   /   Output device   /   Volume arc",
                  at: CGPoint(x: 605, y: 125), size: 16, color: .secondaryLabelColor)
         }
     }
 
     static func state(_ brightness: Double?, _ volume: Double?, muted: Bool = false,
-                      output: StatusOutputGlyph = .speaker, badge: StatusBadge? = nil) -> StatusIconState {
-        StatusIconState(brightness: brightness, volume: volume, isMuted: muted, output: output, badge: badge)
+                      output: StatusOutputGlyph = .speaker, badge: StatusBadge? = nil,
+                      readout: StatusReadout? = nil) -> StatusIconState {
+        StatusIconState(brightness: brightness, volume: volume, isMuted: muted, output: output,
+                        badge: badge, readout: readout)
     }
 
     @MainActor
@@ -106,8 +109,8 @@ struct RenderIcons {
 
         context.saveGState()
         context.translateBy(x: 192, y: 192)
-        context.scaleBy(x: 640 / 18, y: 640 / 18)
-        context.clip(to: CGRect(x: 0, y: 0, width: 18, height: 18))
+        context.scaleBy(x: 640 / 22, y: 640 / 22)
+        context.clip(to: CGRect(x: 0, y: 0, width: 22, height: 22))
         mark(state(1, 1, badge: .init(text: "∞", kind: .keepAwake)), at: .zero, color: .white, in: context)
         context.restoreGState()
     }

@@ -1,3 +1,4 @@
+import ChorusCore
 import Foundation
 import Observation
 
@@ -9,6 +10,8 @@ final class AppState {
     let settings: SettingsStore
     let displayManager: DisplayManager
     let audioManager: AudioDeviceManager
+    /// 選單列圖示「調整當下才出現的數字」。
+    let statusReadout = StatusReadoutController()
     let pairedPeers: PairedPeersStore
     let sessionManager: SyncSessionManager
     let pairing: PairingController
@@ -144,6 +147,8 @@ final class AppState {
         timeline.mark("keepAwake")
         displayManager.autoController = autoBrightness
         displayManager.audioManager = audioManager
+        displayManager.statusReadout = statusReadout
+        audioManager.statusReadout = statusReadout
         displayManager.keepAwake = keepAwake
         displayManager.emergencyRestore = emergencyRestore
         displayManager.configurationController = displayConfiguration

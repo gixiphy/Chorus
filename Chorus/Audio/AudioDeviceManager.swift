@@ -22,6 +22,8 @@ final class AudioDeviceManager {
     /// 逐 App 路由（B6-3）要知道裝置清單何時變動——指定的目標裝置
     /// 插回來時 session 要接回去。
     @ObservationIgnored weak var tapEngine: TapEngine?
+    /// 選單列圖示的讀數：只有預設輸出（圖示畫的那台）的使用者調整才端出數字。
+    @ObservationIgnored weak var statusReadout: StatusReadoutController?
 
     /// 我們自己剛寫入的值：snapshot 回報若與其相近則不覆蓋 UI（避免拖曳中跳動）。
     @ObservationIgnored private var recentLocalSets: [String: (value: Double, at: ContinuousClock.Instant)] = [:]
@@ -221,6 +223,7 @@ final class AudioDeviceManager {
         let clamped = min(max(value, 0), 1)
         writeVolume(clamped, to: device)
         if device.isDefault {
+            statusReadout?.show(.volume, value: clamped)
             coordinator?.localVolumeChanged(clamped)
         }
     }

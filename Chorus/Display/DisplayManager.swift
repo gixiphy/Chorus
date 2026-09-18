@@ -45,6 +45,8 @@ final class DisplayManager {
     @ObservationIgnored weak var emergencyRestore: EmergencyRestoreMonitor?
     /// 顯示器組合變更要進自動化事件流（CLI listen 的訂閱者靠它重抓清單）。
     @ObservationIgnored weak var automationEvents: AutomationEventHub?
+    /// 選單列圖示的讀數：只有主顯示器（圖示畫的那台）的使用者調整才端出數字。
+    @ObservationIgnored weak var statusReadout: StatusReadoutController?
 
     /// 被我們關掉、並因此從 active list 消失的顯示器（uuid → model）。
     ///
@@ -409,6 +411,9 @@ final class DisplayManager {
         settings.setLastBrightness(clamped, for: model.uuid)
         localWrites[model.uuid] = BrightnessReconcile.LocalWrite(target: clamped, writtenAt: monotonicNow)
         apply(model, source: .localWrite)
+        if model.id == CGMainDisplayID() {
+            statusReadout?.show(.brightness, value: clamped)
+        }
         if let autoController, autoController.isAutoActive(for: model.uuid) {
             autoController.learnOffsetFromManualSet(uuid: model.uuid, value: clamped)
             return

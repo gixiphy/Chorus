@@ -16,16 +16,38 @@ public struct StatusIconState: Equatable, Sendable {
     /// 帶 `kind` 而不是只帶字串：畫出來兩者一樣，但**唸出來不一樣**。
     /// 無障礙標籤把限時場景的倒數唸成「螢幕長亮剩餘」，是說謊。
     public var badge: StatusBadge?
+    /// 調整當下端出來的百分比。非 nil 時亮度弧頂端打開一個開口放數字；
+    /// nil ＝ 整圈閉合，平常都是這樣（見 `StatusReadoutController`）。
+    public var readout: StatusReadout?
 
     public init(
         brightness: Double?, volume: Double?, isMuted: Bool,
-        output: StatusOutputGlyph = .speaker, badge: StatusBadge?
+        output: StatusOutputGlyph = .speaker, badge: StatusBadge?,
+        readout: StatusReadout? = nil
     ) {
         self.brightness = brightness
         self.volume = volume
         self.isMuted = isMuted
         self.output = output
         self.badge = badge
+        self.readout = readout
+    }
+}
+
+/// 讀數在講哪個值。
+public enum StatusReadoutKind: Sendable, Equatable, Hashable {
+    case brightness
+    case volume
+}
+
+/// 弧頂開口裡那個數字：四捨五入的整數百分比。
+public struct StatusReadout: Sendable, Equatable, Hashable {
+    public var kind: StatusReadoutKind
+    public var percent: Int
+
+    public init(kind: StatusReadoutKind, value: Double) {
+        self.kind = kind
+        self.percent = Int((min(max(value, 0), 1) * 100).rounded())
     }
 }
 
@@ -118,6 +140,10 @@ public enum StatusIcon {
     /// 但 18pt 的圖示上根本畫不出 1% 的差別——量化到 2.5% 一階，
     /// SwiftUI 才不會為了看不見的差異一直重畫。
     public static let steps = 40
+
+    /// 鬼影／idle／未知輸出共用的淡化——對齊 Status Trio 的 inactive track。
+    public static let inactiveTrackAlpha: Double = 0.22
+
 
     public static func quantize(_ value: Double?) -> Double? {
         guard let value else { return nil }
