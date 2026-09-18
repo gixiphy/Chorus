@@ -8,7 +8,7 @@ struct WindowShortcutsTests {
 
     @Test("截圖的 19 個排列動作都有對應指令，ID 不重複")
     func commandCatalog() {
-        let arrangement = WindowCommand.allCases.filter { $0.group != .advanced }
+        let arrangement = WindowCommand.allCases.filter { $0.group != .advanced && $0.group != .arrange }
         #expect(arrangement.count == 19)
         #expect(Set(WindowCommand.allCases.map(\.rawValue)).count == WindowCommand.allCases.count)
         #expect(WindowCommand.centerTwoThirds.rawValue == "center-two-thirds")

@@ -586,6 +586,38 @@
         }
       }
     },
+    "1 大 2 小（右大）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Large + 2 Small (Large Right)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 大 2 小（右大）"
+          }
+        }
+      }
+    },
+    "1 大 2 小（左大）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Large + 2 Small (Large Left)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 大 2 小（左大）"
+          }
+        }
+      }
+    },
     "1 小時" : {
       "localizations" : {
         "en" : {
@@ -1888,6 +1920,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "三分之二"
+          }
+        }
+      }
+    },
+    "三欄並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Three Columns"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "三栏并排"
           }
         }
       }
@@ -4474,6 +4522,22 @@
         }
       }
     },
+    "四分並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Four Quarters"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "四分并排"
+          }
+        }
+      }
+    },
     "四角" : {
       "localizations" : {
         "en" : {
@@ -4793,6 +4857,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "填满"
+          }
+        }
+      }
+    },
+    "填滿與排列" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fill & Arrange"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "填满与排列"
           }
         }
       }
@@ -5658,6 +5738,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "左半屏"
+          }
+        }
+      }
+    },
+    "左右並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Side by Side"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左右并排"
           }
         }
       }
@@ -9432,6 +9528,22 @@
         }
       }
     },
+    "目前視窗放主要位置，這台螢幕上其餘視窗依最近使用的順序填入。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The current window takes the main position; other windows on this display fill in by most recent use."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前窗口放主要位置，这台显示器上其余窗口按最近使用的顺序填入。"
+          }
+        }
+      }
+    },
     "目前送到" : {
       "localizations" : {
         "en" : {
@@ -9573,6 +9685,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在确认权限——播放任何声音即可完成检查（权限被拒不会有错误信息，只能靠声音判断）。"
+          }
+        }
+      }
+    },
+    "移到「%@」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to \"%@\""
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移到“%@”"
+          }
+        }
+      }
+    },
+    "移動與調整大小" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move & Resize"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移动与调整大小"
           }
         }
       }
@@ -11812,6 +11956,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这台显示器不是超宽比例，没有分区版型"
+          }
+        }
+      }
+    },
+    "這台螢幕只有 %lld 個可排列的視窗，其餘位置留空" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "This display has only %lld arrangeable window; remaining positions stay empty"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "This display has only %lld arrangeable windows; remaining positions stay empty"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台显示器只有 %lld 个可排列的窗口，其余位置留空"
           }
         }
       }

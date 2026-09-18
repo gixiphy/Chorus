@@ -45,6 +45,8 @@ final class WindowManager {
     private(set) var lastOutcome: Outcome?
     private(set) var statusMessage: String?
     private(set) var menuApp: MenuApp?
+    /// 選單目標視窗所在的螢幕（選單用它決定列出哪些「移到…」）。
+    private(set) var targetDisplayUUID: String?
     /// 選單目標視窗是否有可還原的記錄。
     private(set) var canRestoreTarget = false
     /// 註冊失敗、目前按了沒反應的快捷鍵。
@@ -129,6 +131,7 @@ final class WindowManager {
         guard settings.windowArrangementEnabled else { return }
         captured = nil
         canRestoreTarget = false
+        targetDisplayUUID = nil
         menuApp = currentMenuApp()
         if let menuApp, menuApp.isIgnored {
             targetAppName = nil
@@ -148,6 +151,9 @@ final class WindowManager {
             captured = ref
             targetAppName = ref.appName
             canRestoreTarget = restore.entry(for: ref.token) != nil
+            let topology = bumpTopology()
+            targetDisplayUUID = (try? worker.getFrame(token: ref.token, topology: topology))
+                .flatMap { topology.screen(containing: $0)?.displayUUID }
             statusMessage = nil
         } catch AXWindowWorker.WorkerError.permissionRequired {
             lastTrusted = false
@@ -178,6 +184,53 @@ final class WindowManager {
         default:
             if let action = command.layoutAction {
                 apply(action, source: source)
+            } else if let arrangement = command.arrangement {
+                arrange(arrangement, source: source)
+            }
+        }
+    }
+
+    /// 一次排多個視窗：目標視窗放第一格，同螢幕其餘視窗依由前到後的順序填入。
+    /// 視窗不夠就只排現有的；每個視窗各自記住原位，之後可逐一還原。
+    func arrange(_ arrangement: WindowArrangement, source: Source = .menu) {
+        runArrangement(source: source) { topology, screen, current, ref in
+            do {
+                let others = try worker.frontToBackWindows(
+                    on: screen,
+                    topology: topology,
+                    excludingBundleIDs: excludedBundleIDs(),
+                    excludingTokens: [ref.token],
+                    limit: arrangement.slotCount - 1
+                )
+                let plan = arrangement.plan(
+                    windows: [ref] + others,
+                    visible: screen.visibleFrame,
+                    gap: settings.windowArrangementGap
+                )
+                var constrained = false
+                for placement in plan {
+                    let before = placement.window.token == ref.token
+                        ? current
+                        : try worker.getFrame(token: placement.window.token, topology: topology)
+                    let outcome = applyFrame(
+                        placement.frame, ref: placement.window,
+                        topology: topology, screen: screen, before: before
+                    )
+                    if outcome == .constrained { constrained = true }
+                }
+                // 主要視窗最後一個被其他視窗蓋過狀態，這裡收一個總結
+                if plan.count < arrangement.slotCount {
+                    lastOutcome = .applied
+                    statusMessage = String(localized: "這台螢幕只有 \(plan.count) 個可排列的視窗，其餘位置留空")
+                } else if constrained {
+                    lastOutcome = .constrained
+                    statusMessage = "此 App 的最小尺寸超過所選區域"
+                }
+                ChorusLog.window.info("多視窗排列 \(arrangement.rawValue)：\(plan.count)/\(arrangement.slotCount) 個視窗")
+            } catch let error as AXWindowWorker.WorkerError {
+                mapError(error)
+            } catch {
+                lastOutcome = .failed(error.localizedDescription)
             }
         }
     }
@@ -254,19 +307,43 @@ final class WindowManager {
             }
             guard let index = ordered.firstIndex(where: { $0.displayUUID == screen.displayUUID }) else { return }
             let next = ordered[(index + delta + ordered.count) % ordered.count]
-            let relX = (current.x - screen.visibleFrame.x) / max(screen.visibleFrame.width, 1)
-            let relY = (current.y - screen.visibleFrame.y) / max(screen.visibleFrame.height, 1)
-            let relW = current.width / max(screen.visibleFrame.width, 1)
-            let relH = current.height / max(screen.visibleFrame.height, 1)
-            var target = LayoutRect(
-                x: next.visibleFrame.x + relX * next.visibleFrame.width,
-                y: next.visibleFrame.y + relY * next.visibleFrame.height,
-                width: relW * next.visibleFrame.width,
-                height: relH * next.visibleFrame.height
-            )
-            target = clamp(target, to: next.visibleFrame)
-            _ = applyFrame(target, ref: ref, topology: topology, screen: next, before: current)
+            move(ref, from: screen, to: next, current: current, topology: topology)
         }
+    }
+
+    /// 選單的「移到〈螢幕名稱〉」。
+    func moveToDisplay(uuid: String) {
+        runArrangement(source: .menu) { topology, screen, current, ref in
+            guard let destination = topology.screen(uuid: uuid) else {
+                lastOutcome = .failed("找不到螢幕")
+                statusMessage = "找不到螢幕"
+                return
+            }
+            move(ref, from: screen, to: destination, current: current, topology: topology)
+            targetDisplayUUID = destination.displayUUID
+        }
+    }
+
+    /// 保持相對位置與大小搬到另一台螢幕，並限制在可用區域內。
+    private func move(
+        _ ref: AXWindowWorker.WindowRef,
+        from screen: ScreenTopology.ScreenInfo,
+        to next: ScreenTopology.ScreenInfo,
+        current: LayoutRect,
+        topology: ScreenTopology
+    ) {
+        let relX = (current.x - screen.visibleFrame.x) / max(screen.visibleFrame.width, 1)
+        let relY = (current.y - screen.visibleFrame.y) / max(screen.visibleFrame.height, 1)
+        let relW = current.width / max(screen.visibleFrame.width, 1)
+        let relH = current.height / max(screen.visibleFrame.height, 1)
+        var target = LayoutRect(
+            x: next.visibleFrame.x + relX * next.visibleFrame.width,
+            y: next.visibleFrame.y + relY * next.visibleFrame.height,
+            width: relW * next.visibleFrame.width,
+            height: relH * next.visibleFrame.height
+        )
+        target = clamp(target, to: next.visibleFrame)
+        _ = applyFrame(target, ref: ref, topology: topology, screen: next, before: current)
     }
 
     func templateID(for screen: ScreenTopology.ScreenInfo) -> LayoutTemplateID {

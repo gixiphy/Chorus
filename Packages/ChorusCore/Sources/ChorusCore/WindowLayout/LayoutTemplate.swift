@@ -52,6 +52,11 @@ public struct LayoutTemplate: Sendable, Equatable {
             return [(zone, rect)]
         }
 
+        return Self.alignedFrames(zones: zones, inner: inner, gap: g)
+    }
+
+    /// 一組正規化分區 → 像素對齊、共用邊各退 gap/2 的矩形。版型與多視窗排列共用。
+    static func alignedFrames(zones: [LayoutZone], inner: LayoutRect, gap g: Double) -> [(LayoutZone, LayoutRect)] {
         let engine = LayoutEngine()
         return zones.compactMap { zone in
             guard let n = zone.normalized else { return nil }
@@ -67,7 +72,7 @@ public struct LayoutTemplate: Sendable, Equatable {
         }
     }
 
-    private func resolveAligned(
+    private static func resolveAligned(
         zone: LayoutZone,
         all: [LayoutZone],
         inner: LayoutRect,

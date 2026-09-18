@@ -21,6 +21,11 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
     case maximize
     case center
     case restore
+    case arrangeLeftRight = "arrange-left-right"
+    case arrangeMainLeft = "arrange-main-left"
+    case arrangeMainRight = "arrange-main-right"
+    case arrangeThreeColumns = "arrange-three-columns"
+    case arrangeQuarters = "arrange-quarters"
     case selectZone = "select-zone"
 
     public enum Group: String, Sendable, CaseIterable, Hashable {
@@ -30,6 +35,8 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
         case twoThirds
         case displays
         case common
+        /// 一次排多個視窗。
+        case arrange
         case advanced
     }
 
@@ -41,6 +48,8 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
         case .leftTwoThirds, .centerTwoThirds, .rightTwoThirds: return .twoThirds
         case .nextDisplay, .previousDisplay: return .displays
         case .maximize, .center, .restore: return .common
+        case .arrangeLeftRight, .arrangeMainLeft, .arrangeMainRight, .arrangeThreeColumns, .arrangeQuarters:
+            return .arrange
         case .selectZone: return .advanced
         }
     }
@@ -64,7 +73,21 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
         case .rightTwoThirds: return .rightTwoThirds
         case .maximize: return .maximize
         case .center: return .centerPreserveSize
-        case .nextDisplay, .previousDisplay, .restore, .selectZone: return nil
+        case .nextDisplay, .previousDisplay, .restore, .selectZone,
+             .arrangeLeftRight, .arrangeMainLeft, .arrangeMainRight, .arrangeThreeColumns, .arrangeQuarters:
+            return nil
+        }
+    }
+
+    /// 多視窗排列指令對應的佈局。
+    public var arrangement: WindowArrangement? {
+        switch self {
+        case .arrangeLeftRight: return .leftRight
+        case .arrangeMainLeft: return .mainLeft
+        case .arrangeMainRight: return .mainRight
+        case .arrangeThreeColumns: return .threeColumns
+        case .arrangeQuarters: return .quarters
+        default: return nil
         }
     }
 

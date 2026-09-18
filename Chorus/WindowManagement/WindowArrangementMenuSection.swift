@@ -4,17 +4,29 @@ import SwiftUI
 
 struct WindowArrangementMenuSection: View {
     @Environment(AppState.self) private var appState
+    @State private var isExpanded: Bool
 
-    private static let basicGroups: [WindowCommand.Group] = [
-        .halves, .quarters, .thirds, .twoThirds, .displays, .common,
+    init(startExpanded: Bool = false) {
+        _isExpanded = State(initialValue: startExpanded)
+    }
+
+    /// 比照 macOS 綠燈選單：分段標題＋純圖示格子，一列四格。
+    private static let singleWindowRows: [[WindowCommand]] = [
+        [.leftHalf, .rightHalf, .topHalf, .bottomHalf],
+        [.topLeft, .topRight, .bottomLeft, .bottomRight],
+        [.leftThird, .centerThird, .rightThird, .center],
+        [.leftTwoThirds, .centerTwoThirds, .rightTwoThirds, .restore],
     ]
+    private static let arrangeRow: [WindowCommand] =
+        [.maximize] + WindowCommand.commands(in: .arrange)
+    private static let glyphSize = CGSize(width: 30, height: 21)
 
     private var manager: WindowManager { appState.windowManager }
 
     var body: some View {
         if appState.settings.windowArrangementEnabled {
-            DisclosureGroup {
-                VStack(alignment: .leading, spacing: 6) {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
                     if let name = manager.targetAppName {
                         Text("目標：\(name)")
                             .font(.caption)
@@ -25,11 +37,25 @@ struct WindowArrangementMenuSection: View {
                             .foregroundStyle(.orange)
                     }
 
-                    let screenCount = ScreenTopology.capture(generation: 0).screens.count
-                    ForEach(Self.basicGroups, id: \.self) { group in
-                        groupRow(group, screenCount: screenCount)
+                    let screens = ScreenTopology.capture(generation: 0).screens
+
+                    sectionHeader("移動與調整大小")
+                    ForEach(Self.singleWindowRows, id: \.self) { row in
+                        tileRow(row, screenCount: screens.count)
                     }
-                    disabledReasons(screenCount: screenCount)
+
+                    Divider()
+                    sectionHeader("填滿與排列")
+                    tileRow(Self.arrangeRow, screenCount: screens.count)
+                    Text("目前視窗放主要位置，這台螢幕上其餘視窗依最近使用的順序填入。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let message = manager.statusMessage, manager.targetAppName != nil {
+                        Text(message)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
 
                     // 橫向的一般比例螢幕沒有進階內容，整組不出現
                     if let screen = currentScreen(), screen.isUltrawide || !screen.isLandscape {
@@ -41,6 +67,23 @@ struct WindowArrangementMenuSection: View {
                                 ? WindowCommand.Group.advanced.title
                                 : String(localized: "直立螢幕"))
                                 .font(.caption)
+                        }
+                    }
+
+                    let destinations = screens.filter { $0.displayUUID != manager.targetDisplayUUID }
+                    if screens.count > 1, !destinations.isEmpty {
+                        Divider()
+                        ForEach(destinations, id: \.displayUUID) { screen in
+                            Button {
+                                manager.moveToDisplay(uuid: screen.displayUUID)
+                            } label: {
+                                Label("移到「\(screen.name)」", systemImage: "display")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.callout)
+                            .disabled(manager.targetAppName == nil)
                         }
                     }
 
@@ -56,18 +99,20 @@ struct WindowArrangementMenuSection: View {
         }
     }
 
-    // MARK: - 基本動作
+    // MARK: - 格子
 
-    private func groupRow(_ group: WindowCommand.Group, screenCount: Int) -> some View {
-        HStack(alignment: .center, spacing: 4) {
-            Text(group.title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(width: 58, alignment: .leading)
-            ForEach(WindowCommand.commands(in: group), id: \.self) { command in
+    private func sectionHeader(_ title: LocalizedStringKey) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+    }
+
+    private func tileRow(_ commands: [WindowCommand], screenCount: Int) -> some View {
+        HStack(spacing: 0) {
+            ForEach(commands, id: \.self) { command in
                 commandTile(command, screenCount: screenCount)
+                    .frame(maxWidth: .infinity)
             }
-            Spacer(minLength: 0)
         }
     }
 
@@ -77,17 +122,15 @@ struct WindowArrangementMenuSection: View {
         return Button {
             manager.perform(command)
         } label: {
-            VStack(spacing: 2) {
-                WindowCommandGlyph(command: command)
-                Text(command.shortTitle)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .frame(minWidth: 44)
-            .contentShape(Rectangle())
+            WindowCommandGlyph(command: command, size: Self.glyphSize)
+                .padding(.vertical, 5)
+                .padding(.horizontal, 8)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
+        // 前景色固定成 primary 之後，停用不會自己變淡，要手動補
+        .foregroundStyle(.primary)
+        .opacity(reason == nil ? 1 : 0.3)
         .disabled(reason != nil)
         .help(reason ?? [command.title, chord].compactMap { $0 }.joined(separator: "　"))
         .accessibilityLabel(command.title)
@@ -106,20 +149,6 @@ struct WindowArrangementMenuSection: View {
             return manager.canRestoreTarget ? nil : String(localized: "這個視窗還沒有排列過，沒有可還原的位置")
         default:
             return nil
-        }
-    }
-
-    /// 把個別停用的原因寫成看得到的字，不只靠灰掉與滑鼠停留提示。
-    @ViewBuilder
-    private func disabledReasons(screenCount: Int) -> some View {
-        if manager.targetAppName != nil {
-            let reasons = [WindowCommand.nextDisplay, .restore]
-                .compactMap { disabledReason(for: $0, screenCount: screenCount) }
-            ForEach(reasons, id: \.self) { reason in
-                Text(reason)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 

@@ -102,6 +102,87 @@ final class AXWindowWorker: @unchecked Sendable {
         )
     }
 
+    /// 某台螢幕上由前到後的一般視窗（多視窗排列用），最多 `limit` 個。
+    ///
+    /// z-order 只有 CGWindowList 給得出來，AX 的視窗清單沒有跨 App 的順序；所以先用
+    /// CGWindowList 排序、再以 frame 對回 AX 視窗。只讀 pid／layer／bounds，
+    /// 不碰視窗標題，不需要螢幕錄製權限。
+    func frontToBackWindows(
+        on screen: ScreenTopology.ScreenInfo,
+        topology: ScreenTopology,
+        excludingBundleIDs: Set<String>,
+        excludingTokens: Set<String>,
+        limit: Int
+    ) throws -> [WindowRef] {
+        guard limit > 0 else { return [] }
+        return try sync {
+            guard AXIsProcessTrusted() else { throw WorkerError.permissionRequired }
+            let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+            let list = (CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]) ?? []
+            let ownPID = ProcessInfo.processInfo.processIdentifier
+            var axWindowsByPID: [pid_t: [(AXUIElement, LayoutRect)]] = [:]
+            var skipped: Set<pid_t> = []
+            var result: [WindowRef] = []
+
+            for info in list {
+                guard result.count < limit else { break }
+                guard (info[kCGWindowLayer as String] as? Int) == 0,
+                      let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+                      pid != ownPID, !skipped.contains(pid),
+                      let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+                      let bounds = CGRect(dictionaryRepresentation: boundsDict),
+                      bounds.width >= 120, bounds.height >= 80
+                else { continue }
+                let frame = topology.fromAX(origin: bounds.origin, size: bounds.size)
+                guard topology.screen(containing: frame)?.displayUUID == screen.displayUUID else { continue }
+
+                let running = NSRunningApplication(processIdentifier: pid)
+                if let bundleID = running?.bundleIdentifier, excludingBundleIDs.contains(bundleID) {
+                    skipped.insert(pid)
+                    continue
+                }
+                if axWindowsByPID[pid] == nil {
+                    axWindowsByPID[pid] = self.standardWindows(pid: pid, topology: topology)
+                }
+                guard let match = axWindowsByPID[pid]?.first(where: { Self.sameFrame($0.1, frame) }) else { continue }
+                let token = "\(pid):\(CFHash(match.0))"
+                guard !excludingTokens.contains(token), !result.contains(where: { $0.token == token }) else { continue }
+                self.elements[token] = match.0
+                result.append(WindowRef(
+                    token: token,
+                    pid: pid,
+                    bundleID: running?.bundleIdentifier,
+                    appName: running?.localizedName ?? "App"
+                ))
+            }
+            return result
+        }
+    }
+
+    /// 一個 App 可排列的視窗：標準視窗、未最小化、非全螢幕、位置與大小可設。
+    private func standardWindows(pid: pid_t, topology: ScreenTopology) -> [(AXUIElement, LayoutRect)] {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, Float(timeout))
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &ref) == .success,
+              let windows = ref as? [AXUIElement]
+        else { return [] }
+        return windows.compactMap { window in
+            var subrole: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subrole) == .success,
+                  (subrole as? String) == (kAXStandardWindowSubrole as String),
+                  !isMinimized(window), !isFullScreen(window), isSettable(window),
+                  let frame = try? readFrame(window, topology: topology)
+            else { return nil }
+            return (window, frame)
+        }
+    }
+
+    private static func sameFrame(_ a: LayoutRect, _ b: LayoutRect) -> Bool {
+        abs(a.x - b.x) <= 2 && abs(a.y - b.y) <= 2
+            && abs(a.width - b.width) <= 2 && abs(a.height - b.height) <= 2
+    }
+
     func getFrame(token: String, topology: ScreenTopology) throws -> LayoutRect {
         try sync {
             guard let window = self.elements[token] else { throw WorkerError.targetGone }

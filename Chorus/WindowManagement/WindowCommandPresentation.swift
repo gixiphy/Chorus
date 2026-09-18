@@ -24,6 +24,11 @@ extension WindowCommand {
         case .center: return String(localized: "置中")
         case .restore: return String(localized: "還原")
         case .selectZone: return String(localized: "鍵盤選區")
+        case .arrangeLeftRight: return String(localized: "左右並排")
+        case .arrangeMainLeft: return String(localized: "1 大 2 小（左大）")
+        case .arrangeMainRight: return String(localized: "1 大 2 小（右大）")
+        case .arrangeThreeColumns: return String(localized: "三欄並排")
+        case .arrangeQuarters: return String(localized: "四分並排")
         }
     }
 
@@ -65,7 +70,16 @@ extension WindowCommand {
         case .rightTwoThirds: return CGRect(x: 1.0 / 3, y: 0, width: 2.0 / 3, height: 1)
         case .maximize: return CGRect(x: 0, y: 0, width: 1, height: 1)
         case .center: return CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
-        case .nextDisplay, .previousDisplay, .restore, .selectZone: return nil
+        default: return nil
+        }
+    }
+
+    /// 縮圖裡的區塊（單位空間、原點左上）；`primary`＝目標視窗會去的那格。
+    var previewBlocks: [(rect: CGRect, primary: Bool)] {
+        if let rect = previewRect { return [(rect, true)] }
+        guard let arrangement else { return [] }
+        return arrangement.slots.enumerated().map { index, slot in
+            (CGRect(x: slot.x, y: 1 - slot.y - slot.height, width: slot.width, height: slot.height), index == 0)
         }
     }
 
@@ -89,6 +103,7 @@ extension WindowCommand.Group {
         case .twoThirds: return String(localized: "三分之二")
         case .displays: return String(localized: "螢幕")
         case .common: return String(localized: "常用")
+        case .arrange: return String(localized: "填滿與排列")
         case .advanced: return String(localized: "超寬與進階")
         }
     }
@@ -104,32 +119,36 @@ extension ShortcutScheme {
     }
 }
 
-/// 版型縮圖：螢幕外框＋目標區塊。純裝飾，名稱由旁邊的文字與輔助說明負責。
+/// 版型縮圖：螢幕外框＋區塊，畫法比照 macOS 綠燈選單——目標視窗那格實心，
+/// 其他視窗的格子淡一階。純裝飾，名稱由輔助說明負責。
 struct WindowCommandGlyph: View {
     let command: WindowCommand
     var size = CGSize(width: 20, height: 13)
 
     var body: some View {
+        let blocks = command.previewBlocks
+        let inset = max(2, size.height * 0.16)
+        let spacing = blocks.count > 1 ? max(0.75, size.height * 0.05) : 0
         Group {
-            if let rect = command.previewRect {
-                ZStack(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .strokeBorder(.secondary, lineWidth: 1)
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(.tint)
-                        .frame(
-                            width: max(2, (size.width - 4) * rect.width),
-                            height: max(2, (size.height - 4) * rect.height)
-                        )
-                        .offset(
-                            x: 2 + (size.width - 4) * rect.minX,
-                            y: 2 + (size.height - 4) * rect.minY
-                        )
-                }
-            } else {
+            if blocks.isEmpty {
                 Image(systemName: command.symbolName)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: size.height * 0.75, weight: .medium))
+            } else {
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: size.height * 0.2)
+                        .strokeBorder(lineWidth: max(1, size.height * 0.09))
+                    ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                        let w = (size.width - inset * 2) * block.rect.width
+                        let h = (size.height - inset * 2) * block.rect.height
+                        RoundedRectangle(cornerRadius: size.height * 0.08)
+                            .opacity(block.primary ? 1 : 0.45)
+                            .frame(width: max(2, w - spacing), height: max(2, h - spacing))
+                            .offset(
+                                x: inset + (size.width - inset * 2) * block.rect.minX + spacing / 2,
+                                y: inset + (size.height - inset * 2) * block.rect.minY + spacing / 2
+                            )
+                    }
+                }
             }
         }
         .frame(width: size.width, height: size.height)
