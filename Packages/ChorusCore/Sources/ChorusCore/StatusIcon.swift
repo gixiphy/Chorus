@@ -16,8 +16,8 @@ public struct StatusIconState: Equatable, Sendable {
     /// 帶 `kind` 而不是只帶字串：畫出來兩者一樣，但**唸出來不一樣**。
     /// 無障礙標籤把限時場景的倒數唸成「螢幕長亮剩餘」，是說謊。
     public var badge: StatusBadge?
-    /// 調整當下端出來的百分比。非 nil 時亮度弧頂端打開一個開口放數字；
-    /// nil ＝ 整圈閉合，平常都是這樣（見 `StatusReadoutController`）。
+    /// 調整當下顯示的百分比。非 nil 時以中央數字取代裝置圖示；
+    /// nil ＝ 恢復裝置圖示（見 `StatusReadoutController`）。
     public var readout: StatusReadout?
 
     public init(
@@ -40,7 +40,7 @@ public enum StatusReadoutKind: Sendable, Equatable, Hashable {
     case volume
 }
 
-/// 弧頂開口裡那個數字：四捨五入的整數百分比。
+/// 圖示中央的讀數：四捨五入的整數百分比。
 public struct StatusReadout: Sendable, Equatable, Hashable {
     public var kind: StatusReadoutKind
     public var percent: Int

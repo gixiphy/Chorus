@@ -74,7 +74,7 @@ struct RenderIcons {
             for (index, sample) in samples.enumerated() {
                 mark(sample.1, at: CGPoint(x: 600 + CGFloat(index) * 62, y: 185), color: .black, in: context)
             }
-            text("Volume arc (opens for the readout while adjusting)   /   Output device   /   Brightness arc",
+            text("Volume arc   /   Output device (value while adjusting)   /   Brightness arc",
                  at: CGPoint(x: 605, y: 125), size: 16, color: .secondaryLabelColor)
         }
     }

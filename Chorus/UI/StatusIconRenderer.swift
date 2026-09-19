@@ -8,8 +8,8 @@ import ChorusCore
 /// 不必自己追蹤 appearance。
 ///
 /// 排法沿用 Status Trio：外圈一道從左下掃到右下的主弧是**音量**（比亮度常調，
-/// 給它最長的那道），平常整圈閉合，調整當下頂端打開一個開口把百分比端出來；
-/// 中央是預設輸出裝置；底部沿同一個圓畫一小段**亮度**弧。未點亮的軌道一律淡化。
+/// 給它最長的那道）；中央平常是預設輸出裝置，調整當下換成放大的百分比讀數；
+/// 底部沿同一個圓畫一小段**亮度**弧。未點亮的軌道一律淡化。
 /// 調整當下主弧改畫讀數那個量（數字與圖形對齊），另一個量暫時換到底弧。
 /// App icon 也由此 renderer 產生，避免兩套輪廓漸漸分歧。
 /// 右側保留防睡眠或限時場景的倒數。
@@ -26,9 +26,9 @@ enum StatusIconRenderer {
     /// 但繪製會在非 main actor 的 drawingHandler 裡跑。NSFont 本身不可變，
     /// 每次取用實際上走的是系統的字型快取。
     private static var badgeFont: NSFont { .monospacedDigitSystemFont(ofSize: 11, weight: .regular) }
-    /// 開口裡的數字：圓體粗字，跟 Status Trio 一樣。
+    /// 中央讀數：圓體粗字，三位數依環內空間縮放。
     private static var readoutFont: NSFont {
-        let size = side * 0.25
+        let size = side * 0.5
         let base = NSFont.systemFont(ofSize: size, weight: .bold)
         guard let descriptor = base.fontDescriptor.withDesign(.rounded) else { return base }
         return NSFont(descriptor: descriptor, size: size) ?? base
@@ -79,13 +79,15 @@ enum StatusIconRenderer {
         context.setLineCap(.round)
 
         // 音量比亮度常調，平常放在最長的主弧、亮度在底部那一小段；
-        // 調整當下主弧改畫讀數本身，讓開口裡的數字與包著它的弧一致
+        // 調整當下主弧改畫讀數本身，讓中央數字與包著它的弧一致
         let arcs = StatusIconGeometry.arcs(
             brightness: state.brightness, volume: state.volume,
             muted: state.isMuted, readout: state.readout
         )
-        drawMainArc(arcs.main, readout: state.readout, in: context)
-        if let symbol = state.output.symbolName {
+        drawMainArc(arcs.main, in: context)
+        if let readout = state.readout {
+            drawReadout(readout, in: context)
+        } else if let symbol = state.output.symbolName {
             drawDeviceSymbol(symbol, volume: state.volume, muted: state.isMuted, in: context)
         } else {
             drawSpeaker(state.volume, muted: state.isMuted, in: context)
@@ -101,34 +103,32 @@ enum StatusIconRenderer {
     // MARK: 主弧（平常是音量；調整當下是讀數）
 
     /// 軌道整段淡化，照比例點亮；`progress == nil`（靜音、沒裝置）只剩軌道。
-    /// 有讀數時頂端開口，數字畫在開口裡。
-    private static func drawMainArc(_ progress: Double?, readout: StatusReadout?, in context: CGContext) {
-        let text = readout.map { NSAttributedString(string: String($0.percent), attributes: [
-            .font: readoutFont, .foregroundColor: NSColor.black, .kern: -readoutFont.pointSize * 0.04,
-        ]) }
-        let gap = text.map {
-            StatusIconGeometry.gapFraction(
-                contentWidth: $0.size().width, padding: ringLineWidth * 0.8, radius: ringRadius
-            )
-        } ?? 0
-
+    private static func drawMainArc(_ progress: Double?, in context: CGContext) {
         context.setLineWidth(ringLineWidth)
         context.setAlpha(inactiveAlpha)
-        strokeMain(segments: StatusIconGeometry.arcSegments(progress: 1, gapFraction: gap), in: context)
+        strokeMain(segments: StatusIconGeometry.arcSegments(progress: 1, gapFraction: 0), in: context)
 
         if let progress {
             context.setAlpha(1)
-            strokeMain(segments: StatusIconGeometry.arcSegments(progress: progress, gapFraction: gap), in: context)
+            strokeMain(segments: StatusIconGeometry.arcSegments(progress: progress, gapFraction: 0), in: context)
         }
+    }
 
-        guard let text else { return }
-        context.setAlpha(1)
-        // 數字以 cap height 的中線對齊環的頂點再往內收一點，坐在開口正中，
-        // 上緣不出畫布（環頂離畫布上緣只有 1.8pt）
+    private static func drawReadout(_ readout: StatusReadout, in context: CGContext) {
+        let font = readoutFont
+        let text = NSAttributedString(string: String(readout.percent), attributes: [
+            .font: font, .foregroundColor: NSColor.black, .kern: -font.pointSize * 0.04,
+        ])
         let size = text.size()
-        let top = CGPoint(x: ringCenter.x, y: ringCenter.y + ringRadius - readoutFont.capHeight * 0.3)
-        let baseline = top.y - readoutFont.capHeight / 2
-        text.draw(at: CGPoint(x: top.x - size.width / 2, y: baseline + readoutFont.descender))
+        // 以數字外框的對角線限制縮放，讓 100 的四角也留在環內並保有留白。
+        let diameter = 2 * (ringRadius - ringLineWidth / 2 - 0.7)
+        let scale = min(1, diameter / hypot(size.width, font.capHeight))
+        context.saveGState()
+        context.setAlpha(1)
+        context.translateBy(x: ringCenter.x, y: ringCenter.y)
+        context.scaleBy(x: scale, y: scale)
+        text.draw(at: CGPoint(x: -size.width / 2, y: -font.capHeight / 2 + font.descender))
+        context.restoreGState()
     }
 
     private static func strokeMain(segments: [StatusIconGeometry.ArcSegment], in context: CGContext) {
