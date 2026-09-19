@@ -27,3 +27,12 @@ dist/
 
 # xcodebuild -target 直接建置時的 SYMROOT（package.sh 走 dist/）
 build/
+
+# repo 在 iCloud 同步的 ~/Documents 裡：build 快取若被同步，xcodebuild 開專案時會卡死在
+# NSFileCoordinator（2026-09-19 查明，.build 長到 36 GB）。實體放在 iCloud 不同步的 *.nosync，
+# 原名是指過去的 symlink——`build/` 這種結尾帶斜線的規則對 symlink 無效，所以另列不帶斜線的。
+# clone 或整個刪掉之後要重建：mkdir X.nosync && ln -s X.nosync X
+*.nosync
+/build
+/DerivedData
+/Packages/ChorusCore/.build
