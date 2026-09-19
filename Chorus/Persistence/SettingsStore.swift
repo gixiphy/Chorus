@@ -82,6 +82,7 @@ final class SettingsStore {
         static let windowArrangementExcludedBundleIDs = "chorus.windowArrangement.excludedBundleIDs"
         static let windowArrangementTemplatesByDisplay = "chorus.windowArrangement.templatesByDisplay"
         static let windowArrangementShortcuts = "chorus.windowArrangement.shortcuts"
+        static let windowArrangementShortcutsBuild = "chorus.windowArrangement.shortcutsBuild"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -566,10 +567,17 @@ final class SettingsStore {
             (defaults.dictionary(forKey: Key.windowArrangementTemplatesByDisplay) as? [String: String]) ?? [:]
         if let data = defaults.data(forKey: Key.windowArrangementShortcuts),
            let bindings = try? JSONDecoder().decode(ShortcutBindings.self, from: data) {
-            windowArrangementShortcuts = bindings.migratedFromLegacy()
+            var migrated = bindings.migratedFromLegacy()
+            // 113 之前存的對照沒有 1/4、3/4、放進第 N 區：補一次預設鍵，之後清掉就不再長回來
+            if defaults.integer(forKey: Key.windowArrangementShortcutsBuild) < 113 {
+                migrated = migrated.addingDefaults(for: ShortcutBindings.addedInBuild113)
+                defaults.set(try? JSONEncoder().encode(migrated), forKey: Key.windowArrangementShortcuts)
+            }
+            windowArrangementShortcuts = migrated
         } else {
             windowArrangementShortcuts = ShortcutBindings()
         }
+        defaults.set(113, forKey: Key.windowArrangementShortcutsBuild)
         audioBridgeDisabled = Set(defaults.stringArray(forKey: Key.audioBridgeDisabled) ?? [])
         peerKnownControls = (defaults.dictionary(forKey: Key.peerKnownControls) as? [String: [String: Double]]) ?? [:]
         advisorEngineID = defaults.string(forKey: Key.advisorEngineID) ?? "claude"

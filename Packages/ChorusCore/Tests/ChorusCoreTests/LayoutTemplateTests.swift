@@ -27,6 +27,23 @@ struct LayoutTemplateTests {
         #expect(zones.map(\.1.width).reduce(0, +) + 24 == 3424)
     }
 
+    @Test("1/4＋3/4：側欄四分之一、主區四分之三，鏡像左右對調")
+    func quarterSide() {
+        let zones = LayoutTemplateCatalog.template(id: .quarterSide)
+            .resolvedZones(visible: visible, gap: gap)
+        #expect(zones.map(\.0.id) == ["side", "primary"])
+        // 內寬 3424；切點 .25 → 856 / 2568，共用邊各退 4
+        #expect(zones[0].1.width == 852)
+        #expect(zones[1].1.width == 2564)
+        #expect(zones[0].1.maxX + 8 == zones[1].1.x)
+
+        let mirrored = LayoutTemplateCatalog.template(id: .quarterSideMirrored)
+            .resolvedZones(visible: visible, gap: gap)
+        #expect(mirrored.map(\.0.id) == ["primary", "side"])
+        #expect(mirrored[0].1.width == 2564)
+        #expect(mirrored[1].1.maxX == visible.maxX - 8)
+    }
+
     @Test("主區＋雙側窗：主區 2/3，側欄上下各半")
     func primaryStack() {
         let zones = LayoutTemplateCatalog.template(id: .primaryStack)
@@ -58,6 +75,7 @@ struct LayoutTemplateTests {
     @Test("比例推薦：21:9 類與 32:9 類")
     func recommendations() {
         #expect(LayoutTemplateCatalog.recommended(aspectRatio: 3440.0 / 1440.0) == .centerStage)
+        #expect(LayoutTemplateCatalog.recommended(aspectRatio: 1512.0 / 982.0) == .widePrimary)
         #expect(LayoutTemplateCatalog.secondaryRecommendation(aspectRatio: 3440.0 / 1440.0) == .threeColumns)
         #expect(LayoutTemplateCatalog.secondaryRecommendation(aspectRatio: 5120.0 / 1440.0) == .fourColumns)
     }
@@ -75,7 +93,7 @@ struct LayoutTemplateTests {
         }
     }
 
-    @Test("超寬判定：寬高比 ≥ 2.2 才提供超寬版型；16:9、16:10、直立都不算")
+    @Test("超寬判定（只影響預設推薦）：寬高比 ≥ 2.2；16:9、16:10、直立都不算")
     func ultrawideEligibility() {
         #expect(LayoutTemplateCatalog.isUltrawide(width: 3440, height: 1440))
         #expect(LayoutTemplateCatalog.isUltrawide(width: 2560, height: 1080))

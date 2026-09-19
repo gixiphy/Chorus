@@ -58,6 +58,12 @@ public enum LayoutAction: String, Sendable, Codable, CaseIterable, Hashable {
     case leftTwoThirds
     case centerTwoThirds
     case rightTwoThirds
+    case firstFourth
+    case secondFourth
+    case thirdFourth
+    case lastFourth
+    case leftThreeFourths
+    case rightThreeFourths
     case topThird
     case middleThird
     case bottomThird

@@ -51,6 +51,18 @@ public struct LayoutEngine: Sendable, Equatable {
             )
         case .rightTwoThirds:
             return horizontalSlice(inner: inner, gap: g, startFraction: 1.0 / 3.0, endFraction: 1)
+        case .firstFourth:
+            return horizontalSlice(inner: inner, gap: g, startFraction: 0, endFraction: 0.25)
+        case .secondFourth:
+            return horizontalSlice(inner: inner, gap: g, startFraction: 0.25, endFraction: 0.5)
+        case .thirdFourth:
+            return horizontalSlice(inner: inner, gap: g, startFraction: 0.5, endFraction: 0.75)
+        case .lastFourth:
+            return horizontalSlice(inner: inner, gap: g, startFraction: 0.75, endFraction: 1)
+        case .leftThreeFourths:
+            return horizontalSlice(inner: inner, gap: g, startFraction: 0, endFraction: 0.75)
+        case .rightThreeFourths:
+            return horizontalSlice(inner: inner, gap: g, startFraction: 0.25, endFraction: 1)
         case .topThird:
             return verticalSlice(inner: inner, gap: g, startFraction: 2.0 / 3.0, endFraction: 1)
         case .middleThird:

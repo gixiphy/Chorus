@@ -42,6 +42,25 @@ struct LayoutEngineTests {
         #expect(wide.maxX == thin.x - 8)
     }
 
+    @Test("四分之一四欄相接；左／右四分之三與另一側的四分之一對齊")
+    func fourths() {
+        let actions: [LayoutAction] = [.firstFourth, .secondFourth, .thirdFourth, .lastFourth]
+        let columns = actions.map { engine.frame(for: $0, visible: screen, gap: 8) }
+        #expect(columns[0].x == 108)
+        for (a, b) in zip(columns, columns.dropFirst()) {
+            #expect(a.maxX + 8 == b.x)
+        }
+        #expect(columns[3].maxX == screen.maxX - 8)
+        #expect(columns.map(\.width).reduce(0, +) + 24 == 1584)
+
+        let leftWide = engine.frame(for: .leftThreeFourths, visible: screen, gap: 8)
+        let rightWide = engine.frame(for: .rightThreeFourths, visible: screen, gap: 8)
+        #expect(leftWide.x == columns[0].x)
+        #expect(leftWide.maxX + 8 == columns[3].x)
+        #expect(columns[0].maxX + 8 == rightWide.x)
+        #expect(rightWide.maxX == columns[3].maxX)
+    }
+
     @Test("中央三分之二：全高、左右各留 1/6，不再扣內間距")
     func centerTwoThirds() {
         let result = engine.frame(for: .centerTwoThirds, visible: screen, gap: 8)

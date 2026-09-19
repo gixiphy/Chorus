@@ -6,6 +6,10 @@ public enum LayoutTemplateID: String, Sendable, Codable, CaseIterable, Hashable 
     case fourColumns
     case widePrimary
     case widePrimaryMirrored
+    /// 側欄 1/4 在左、主區 3/4 在右。
+    case quarterSide
+    /// 主區 3/4 在左、側欄 1/4 在右。
+    case quarterSideMirrored
     case primaryStack
     case primaryStackMirrored
     case centerReading
@@ -23,6 +27,9 @@ public struct LayoutZone: Sendable, Equatable, Identifiable, Hashable {
         self.nameKey = nameKey
         self.normalized = normalized
     }
+
+    /// 版型裡的主要工作區（中央主區／主區）；均分版型沒有。
+    public var isPrimary: Bool { id == "center" || id == "primary" }
 }
 
 public struct LayoutTemplate: Sendable, Equatable {
@@ -146,6 +153,16 @@ public enum LayoutTemplateCatalog {
                 zone("side", "ultrawide.side", x: 0, y: 0, w: 1.0 / 3.0, h: 1),
                 zone("primary", "ultrawide.primary", x: 1.0 / 3.0, y: 0, w: 2.0 / 3.0, h: 1),
             ])
+        case .quarterSide:
+            return LayoutTemplate(id: id, zones: [
+                zone("side", "ultrawide.side", x: 0, y: 0, w: 0.25, h: 1),
+                zone("primary", "ultrawide.primary", x: 0.25, y: 0, w: 0.75, h: 1),
+            ])
+        case .quarterSideMirrored:
+            return LayoutTemplate(id: id, zones: [
+                zone("primary", "ultrawide.primary", x: 0, y: 0, w: 0.75, h: 1),
+                zone("side", "ultrawide.side", x: 0.75, y: 0, w: 0.25, h: 1),
+            ])
         case .primaryStack:
             return LayoutTemplate(id: id, zones: [
                 zone("primary", "ultrawide.primary", x: 0, y: 0, w: 2.0 / 3.0, h: 1),
@@ -167,20 +184,17 @@ public enum LayoutTemplateCatalog {
         }
     }
 
-    /// 提供超寬版型的寬高比下限（21:9 類約 2.33 起）。
+    /// 算作超寬的寬高比下限（21:9 類約 2.33 起）；只影響預設推薦，版型每台橫向螢幕都能選。
     public static let ultrawideMinimumAspectRatio = 2.2
 
-    /// 這台螢幕要不要給超寬版型。16:9、16:10 與直立螢幕切成三四欄只會得到塞不進 App 的窄條，
-    /// 所以選單、設定與 Shift 拖曳分區都整個不出現，而不是給了再警告「分區較窄」。
     public static func isUltrawide(width: Double, height: Double) -> Bool {
         guard height > 0 else { return false }
         return width / height >= ultrawideMinimumAspectRatio
     }
 
-    /// 21:9／32:9 類都以中央主區為初始推薦。
+    /// 21:9／32:9 類以中央主區為初始推薦；一般比例切三區太窄，改給主副欄（2/3＋1/3）。
     public static func recommended(aspectRatio: Double) -> LayoutTemplateID {
-        _ = aspectRatio
-        return .centerStage
+        aspectRatio >= ultrawideMinimumAspectRatio ? .centerStage : .widePrimary
     }
 
     public static func secondaryRecommendation(aspectRatio: Double) -> LayoutTemplateID {

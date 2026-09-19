@@ -5,6 +5,21 @@ import Testing
 struct WindowArrangementTests {
     private let visible = LayoutRect(x: 0, y: 0, width: 1600, height: 900)
 
+    @Test("特型版型排列：沿用版型分區，主區排第一格")
+    func templateArrangements() {
+        #expect(WindowArrangement.centerStage.slots.map(\.x) == [0.25, 0, 0.75])
+        #expect(WindowArrangement.fourColumns.slotCount == 4)
+        #expect(WindowArrangement.quarterSide.slots.map(\.width) == [0.75, 0.25])
+        #expect(WindowArrangement.quarterSideMirrored.slots.first?.x == 0)
+        #expect(WindowArrangement.primaryStackMirrored.slots.first?.width == 2.0 / 3.0)
+        #expect(WindowCommand.arrangeQuarterSide.arrangement == .quarterSide)
+        #expect(WindowCommand.arrangeCenterStage.rawValue == "arrange-center-stage")
+        for arrangement in WindowArrangement.allCases where arrangement.templateID != nil {
+            let zones = LayoutTemplateCatalog.template(id: arrangement.templateID!).zones
+            #expect(arrangement.slotCount == zones.count)
+        }
+    }
+
     @Test("格數：左右 2、1 大 2 小 3、三欄 3、四分 4")
     func slotCounts() {
         #expect(WindowArrangement.leftRight.slotCount == 2)

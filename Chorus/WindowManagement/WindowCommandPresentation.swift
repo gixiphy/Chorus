@@ -18,17 +18,35 @@ extension WindowCommand {
         case .leftTwoThirds: return String(localized: "左三分之二")
         case .centerTwoThirds: return String(localized: "中央三分之二")
         case .rightTwoThirds: return String(localized: "右三分之二")
+        case .firstFourth: return String(localized: "第 1 個四分之一")
+        case .secondFourth: return String(localized: "第 2 個四分之一")
+        case .thirdFourth: return String(localized: "第 3 個四分之一")
+        case .lastFourth: return String(localized: "第 4 個四分之一")
+        case .leftThreeFourths: return String(localized: "左四分之三")
+        case .rightThreeFourths: return String(localized: "右四分之三")
         case .nextDisplay: return String(localized: "下一個螢幕")
         case .previousDisplay: return String(localized: "上一個螢幕")
         case .maximize: return String(localized: "填滿")
         case .center: return String(localized: "置中")
         case .restore: return String(localized: "還原")
         case .selectZone: return String(localized: "鍵盤選區")
+        case .zone1: return String(localized: "放進第 1 區")
+        case .zone2: return String(localized: "放進第 2 區")
+        case .zone3: return String(localized: "放進第 3 區")
+        case .zone4: return String(localized: "放進第 4 區")
         case .arrangeLeftRight: return String(localized: "左右並排")
         case .arrangeMainLeft: return String(localized: "1 大 2 小（左大）")
         case .arrangeMainRight: return String(localized: "1 大 2 小（右大）")
         case .arrangeThreeColumns: return String(localized: "三欄並排")
         case .arrangeQuarters: return String(localized: "四分並排")
+        case .arrangeCenterStage: return String(localized: "中央主區並排")
+        case .arrangeFourColumns: return String(localized: "四欄並排")
+        case .arrangeWidePrimary: return String(localized: "2/3＋1/3 並排")
+        case .arrangeWidePrimaryMirrored: return String(localized: "1/3＋2/3 並排")
+        case .arrangeQuarterSide: return String(localized: "1/4＋3/4 並排")
+        case .arrangeQuarterSideMirrored: return String(localized: "3/4＋1/4 並排")
+        case .arrangePrimaryStack: return String(localized: "主區＋雙側窗並排")
+        case .arrangePrimaryStackMirrored: return String(localized: "主區＋雙側窗並排（鏡像）")
         }
     }
 
@@ -68,6 +86,12 @@ extension WindowCommand {
         case .leftTwoThirds: return CGRect(x: 0, y: 0, width: 2.0 / 3, height: 1)
         case .centerTwoThirds: return CGRect(x: 1.0 / 6, y: 0, width: 2.0 / 3, height: 1)
         case .rightTwoThirds: return CGRect(x: 1.0 / 3, y: 0, width: 2.0 / 3, height: 1)
+        case .firstFourth: return CGRect(x: 0, y: 0, width: 0.25, height: 1)
+        case .secondFourth: return CGRect(x: 0.25, y: 0, width: 0.25, height: 1)
+        case .thirdFourth: return CGRect(x: 0.5, y: 0, width: 0.25, height: 1)
+        case .lastFourth: return CGRect(x: 0.75, y: 0, width: 0.25, height: 1)
+        case .leftThreeFourths: return CGRect(x: 0, y: 0, width: 0.75, height: 1)
+        case .rightThreeFourths: return CGRect(x: 0.25, y: 0, width: 0.75, height: 1)
         case .maximize: return CGRect(x: 0, y: 0, width: 1, height: 1)
         case .center: return CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
         default: return nil
@@ -89,6 +113,10 @@ extension WindowCommand {
         case .previousDisplay: return "arrow.left.to.line"
         case .restore: return "arrow.uturn.backward"
         case .selectZone: return "keyboard"
+        case .zone1: return "1.square"
+        case .zone2: return "2.square"
+        case .zone3: return "3.square"
+        case .zone4: return "4.square"
         default: return "rectangle"
         }
     }
@@ -101,10 +129,12 @@ extension WindowCommand.Group {
         case .quarters: return String(localized: "四角")
         case .thirds: return String(localized: "三分之一")
         case .twoThirds: return String(localized: "三分之二")
+        case .fourths: return String(localized: "四分之一")
+        case .threeFourths: return String(localized: "四分之三")
         case .displays: return String(localized: "螢幕")
         case .common: return String(localized: "常用")
         case .arrange: return String(localized: "填滿與排列")
-        case .advanced: return String(localized: "超寬與進階")
+        case .advanced: return String(localized: "特型分區")
         }
     }
 }
@@ -116,12 +146,22 @@ struct WindowCommandGlyph: View {
     var size = CGSize(width: 20, height: 13)
 
     var body: some View {
-        let blocks = command.previewBlocks
+        WindowLayoutGlyph(blocks: command.previewBlocks, symbolName: command.symbolName, size: size)
+    }
+}
+
+/// 一般排列、直立與超寬分區共用相同外框、線寬與填色。
+struct WindowLayoutGlyph: View {
+    let blocks: [(rect: CGRect, primary: Bool)]
+    var symbolName = "rectangle"
+    var size = CGSize(width: 30, height: 21)
+
+    var body: some View {
         let inset = max(2, size.height * 0.16)
         let spacing = blocks.count > 1 ? max(0.75, size.height * 0.05) : 0
         Group {
             if blocks.isEmpty {
-                Image(systemName: command.symbolName)
+                Image(systemName: symbolName)
                     .font(.system(size: size.height * 0.75, weight: .medium))
             } else {
                 ZStack(alignment: .topLeading) {
@@ -143,6 +183,78 @@ struct WindowCommandGlyph: View {
         }
         .frame(width: size.width, height: size.height)
         .accessibilityHidden(true)
+    }
+}
+
+/// 選版型只更新每台螢幕的偏好；移動視窗仍由選單的分區按鈕負責。
+struct WindowLayoutTemplatePicker: View {
+    let visibleFrame: LayoutRect
+    @Binding var selection: LayoutTemplateID
+
+    var body: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+            ForEach(LayoutTemplateID.allCases, id: \.self) { id in
+                let selected = selection == id
+                Button {
+                    selection = id
+                } label: {
+                    VStack(spacing: 8) {
+                        WindowLayoutGlyph(blocks: previewBlocks(for: id), size: CGSize(width: 48, height: 32))
+                        Text(title(for: id))
+                            .font(.caption)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .frame(height: 28)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(8)
+                    .background(selected ? Color.accentColor.opacity(0.12) : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(selected ? Color.accentColor : Color.secondary.opacity(0.2),
+                                          lineWidth: selected ? 2 : 1)
+                    }
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary)
+                .help(title(for: id))
+                .accessibilityLabel(title(for: id))
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func previewBlocks(for id: LayoutTemplateID) -> [(rect: CGRect, primary: Bool)] {
+        // 使用這台螢幕的可見比例，中央閱讀的留白也會隨 21:9／32:9 正確改變。
+        let zones = LayoutTemplateCatalog.template(id: id).resolvedZones(visible: visibleFrame, gap: 0)
+        return zones.map { zone, rect in
+            let primary = zone.isPrimary || zones.count == 1
+                || id == .threeColumns || id == .fourColumns
+            return (CGRect(
+                x: (rect.x - visibleFrame.x) / visibleFrame.width,
+                y: (visibleFrame.maxY - rect.maxY) / visibleFrame.height,
+                width: rect.width / visibleFrame.width,
+                height: rect.height / visibleFrame.height
+            ), primary)
+        }
+    }
+
+    private func title(for id: LayoutTemplateID) -> String {
+        switch id {
+        case .centerStage: return "中央主區"
+        case .threeColumns: return "三欄"
+        case .fourColumns: return "四欄"
+        case .widePrimary: return "2/3＋1/3"
+        case .widePrimaryMirrored: return "1/3＋2/3"
+        case .quarterSide: return "1/4＋3/4"
+        case .quarterSideMirrored: return "3/4＋1/4"
+        case .primaryStack: return "主區＋雙側窗"
+        case .primaryStackMirrored: return "主區＋雙側窗（鏡像）"
+        case .centerReading: return "中央閱讀"
+        }
     }
 }
 

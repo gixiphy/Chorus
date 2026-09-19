@@ -6,26 +6,50 @@ import Testing
 struct WindowShortcutsTests {
     private let ctrlOpt: KeyChord.Modifiers = [.control, .option]
 
-    @Test("截圖的 19 個排列動作都有對應指令，ID 不重複")
+    @Test("25 個單視窗排列動作（含 1/4、3/4）都有對應指令，ID 不重複")
     func commandCatalog() {
         let arrangement = WindowCommand.allCases.filter { $0.group != .advanced && $0.group != .arrange }
-        #expect(arrangement.count == 19)
+        #expect(arrangement.count == 25)
         #expect(Set(WindowCommand.allCases.map(\.rawValue)).count == WindowCommand.allCases.count)
         #expect(WindowCommand.centerTwoThirds.rawValue == "center-two-thirds")
         #expect(WindowCommand.centerTwoThirds.layoutAction == .centerTwoThirds)
         #expect(WindowCommand.restore.layoutAction == nil)
     }
 
-    @Test("預設按鍵：19 項全綁，還原是 ⌃⌥⌫，沒有其他方案")
+    @Test("升級補綁：只補新指令的預設鍵；自己綁過的、預設鍵被佔用的不動")
+    func addingDefaults() {
+        var saved = ShortcutBindings.empty
+        saved.assign(KeyChord(keyCode: 123, modifiers: ctrlOpt), to: .leftHalf)
+        saved.assign(KeyChord(keyCode: 18, modifiers: [.control, .option, .shift]), to: .zone1)
+        // ⌃⌥2 已經給了別的指令 → 第 2 個四分之一不補
+        saved.assign(KeyChord(keyCode: 19, modifiers: ctrlOpt), to: .center)
+        let migrated = saved.addingDefaults(for: ShortcutBindings.addedInBuild113)
+        #expect(migrated[.firstFourth] == KeyChord(keyCode: 18, modifiers: ctrlOpt))
+        #expect(migrated[.secondFourth] == nil)
+        #expect(migrated[.center] == KeyChord(keyCode: 19, modifiers: ctrlOpt))
+        #expect(migrated[.rightThreeFourths]?.displayString == "⌃⌥6")
+        #expect(migrated[.zone1] == KeyChord(keyCode: 18, modifiers: [.control, .option, .shift]))
+        #expect(migrated[.zone2]?.displayString == "⌃⌥⇧2")
+        #expect(migrated[.rightHalf] == nil)
+    }
+
+    @Test("預設按鍵：25 項排列全綁（⌃⌥1–4＝1/4、⌃⌥5–6＝3/4），放進第 N 區是 ⌃⌥⇧1–4，還原是 ⌃⌥⌫")
     func defaults() {
         let bindings = ShortcutBindings()
-        #expect(bindings.chords.count == 19)
+        #expect(bindings.chords.count == 29)
+        #expect(bindings[.firstFourth] == KeyChord(keyCode: 18, modifiers: ctrlOpt))
+        #expect(bindings[.lastFourth]?.displayString == "⌃⌥4")
+        #expect(bindings[.leftThreeFourths]?.displayString == "⌃⌥5")
+        #expect(bindings[.rightThreeFourths]?.displayString == "⌃⌥6")
+        #expect(bindings[.zone1]?.displayString == "⌃⌥⇧1")
+        #expect(bindings[.zone4] == KeyChord(keyCode: 21, modifiers: [.control, .option, .shift]))
+        #expect(WindowCommand.allCases.compactMap(\.zoneIndex) == [0, 1, 2, 3])
         #expect(bindings[.leftHalf] == KeyChord(keyCode: 123, modifiers: ctrlOpt))
         #expect(bindings[.centerTwoThirds] == KeyChord(keyCode: 15, modifiers: ctrlOpt))
         #expect(bindings[.restore] == KeyChord(keyCode: 51, modifiers: ctrlOpt))
         #expect(bindings[.nextDisplay] == KeyChord(keyCode: 124, modifiers: [.control, .option, .command]))
         #expect(!bindings.chords.values.contains(KeyChord(keyCode: 6, modifiers: ctrlOpt)))
-        #expect(Set(bindings.chords.values).count == 19)
+        #expect(Set(bindings.chords.values).count == 29)
         #expect(bindings[.selectZone] == nil)
         #expect(bindings.isDefault)
         #expect(ShortcutBindings.empty.chords.isEmpty)

@@ -51,7 +51,7 @@ struct WindowArrangementSettingsView: View {
                     }
                 ))
                 .disabled(!appState.settings.windowArrangementEnabled)
-                Text("直接拖到螢幕邊緣是基本型：左右半屏、四角、上緣填滿、下緣下半屏。按住 Shift 才切到特型：下緣分五段選 1/3、2/3；超寬螢幕的其餘位置另外依版型選區。放開 Shift 立即回到基本型；按 Esc 取消本趟。")
+                Text("直接拖到螢幕邊緣是基本型：左右半屏、四角、上緣填滿、下緣下半屏。按住 Shift 才切到特型：下緣分五段選 1/3、2/3；其餘位置依下方「特型拖曳佈局」選區。放開 Shift 立即回到基本型；按 Esc 取消本趟。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -76,23 +76,25 @@ struct WindowArrangementSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // 只列超寬比例的螢幕；一台都沒有就整段不出現
-            let ultrawideScreens = ScreenTopology.capture(generation: 0).screens.filter(\.isUltrawide)
-            if !ultrawideScreens.isEmpty {
-                Section("每台螢幕的超寬佈局") {
-                    ForEach(ultrawideScreens, id: \.displayUUID) { screen in
+            // 每台橫向螢幕各記一個版型（以 display UUID 存）；直立螢幕不切直欄，不列
+            let templateScreens = ScreenTopology.capture(generation: 0).screens.filter(\.supportsZoneTemplates)
+            if !templateScreens.isEmpty {
+                Section("特型拖曳佈局") {
+                    ForEach(templateScreens, id: \.displayUUID) { screen in
                         VStack(alignment: .leading, spacing: 6) {
-                            Picker(screenLabel(screen, among: ultrawideScreens), selection: Binding(
+                            Text(screenLabel(screen, among: templateScreens))
+                                .font(.callout.weight(.medium))
+                            WindowLayoutTemplatePicker(visibleFrame: screen.visibleFrame, selection: Binding(
                                 get: { appState.windowManager.templateID(for: screen) },
                                 set: { appState.windowManager.setTemplate($0, forDisplayUUID: screen.displayUUID) }
-                            )) {
-                                ForEach(LayoutTemplateID.allCases, id: \.self) { id in
-                                    Text(templateTitle(id)).tag(id)
-                                }
-                            }
+                            ))
+                            .accessibilityLabel(screenLabel(screen, among: templateScreens))
                             narrowZoneHint(for: screen)
                         }
                     }
+                    Text("按住 Shift 拖曳視窗時，依視窗所在螢幕在這裡選的版型選區，每台螢幕各自記住；⌃⌥⇧1–4 則直接把目前視窗放進第 1–4 區（由左到右、由上到下）。切換版型不會搬動現有視窗。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -173,16 +175,4 @@ struct WindowArrangementSettingsView: View {
         return String(format: "%@（%.0f×%.0f）", screen.name, screen.frame.width, screen.frame.height)
     }
 
-    private func templateTitle(_ id: LayoutTemplateID) -> String {
-        switch id {
-        case .centerStage: return "中央主區"
-        case .threeColumns: return "三欄"
-        case .fourColumns: return "四欄"
-        case .widePrimary: return "主副欄"
-        case .widePrimaryMirrored: return "主副欄（鏡像）"
-        case .primaryStack: return "主區＋雙側窗"
-        case .primaryStackMirrored: return "主區＋雙側窗（鏡像）"
-        case .centerReading: return "中央閱讀"
-        }
-    }
 }

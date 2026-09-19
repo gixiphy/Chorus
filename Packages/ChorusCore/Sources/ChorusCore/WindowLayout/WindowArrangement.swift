@@ -13,6 +13,30 @@ public enum WindowArrangement: String, Sendable, Codable, CaseIterable, Hashable
     case threeColumns
     /// 四分。
     case quarters
+    // 以下沿用特型版型的分區（三欄已有、中央閱讀只有一區，不重複）；主區排第一格。
+    case centerStage
+    case fourColumns
+    case widePrimary
+    case widePrimaryMirrored
+    case quarterSide
+    case quarterSideMirrored
+    case primaryStack
+    case primaryStackMirrored
+
+    /// 這個排列沿用哪個特型版型的分區。
+    public var templateID: LayoutTemplateID? {
+        switch self {
+        case .leftRight, .mainLeft, .mainRight, .threeColumns, .quarters: return nil
+        case .centerStage: return .centerStage
+        case .fourColumns: return .fourColumns
+        case .widePrimary: return .widePrimary
+        case .widePrimaryMirrored: return .widePrimaryMirrored
+        case .quarterSide: return .quarterSide
+        case .quarterSideMirrored: return .quarterSideMirrored
+        case .primaryStack: return .primaryStack
+        case .primaryStackMirrored: return .primaryStackMirrored
+        }
+    }
 
     public struct Placement<Window>: Sendable where Window: Sendable {
         public let window: Window
@@ -21,6 +45,11 @@ public enum WindowArrangement: String, Sendable, Codable, CaseIterable, Hashable
 
     /// 單位空間的各格（AppKit 座標，原點左下）；順序＝填入順序，主要視窗第一。
     public var slots: [LayoutRect] {
+        if let templateID {
+            let zones = LayoutTemplateCatalog.template(id: templateID).zones
+            let primaryFirst = zones.filter(\.isPrimary) + zones.filter { !$0.isPrimary }
+            return primaryFirst.compactMap(\.normalized)
+        }
         switch self {
         case .leftRight:
             return [unit(0, 0, 0.5, 1), unit(0.5, 0, 0.5, 1)]
@@ -35,6 +64,8 @@ public enum WindowArrangement: String, Sendable, Codable, CaseIterable, Hashable
                 unit(0, 0.5, 0.5, 0.5), unit(0.5, 0.5, 0.5, 0.5),
                 unit(0, 0, 0.5, 0.5), unit(0.5, 0, 0.5, 0.5),
             ]
+        default:
+            return []
         }
     }
 

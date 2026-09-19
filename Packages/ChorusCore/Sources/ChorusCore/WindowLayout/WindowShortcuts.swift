@@ -16,6 +16,12 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
     case leftTwoThirds = "left-two-thirds"
     case centerTwoThirds = "center-two-thirds"
     case rightTwoThirds = "right-two-thirds"
+    case firstFourth = "first-fourth"
+    case secondFourth = "second-fourth"
+    case thirdFourth = "third-fourth"
+    case lastFourth = "last-fourth"
+    case leftThreeFourths = "left-three-fourths"
+    case rightThreeFourths = "right-three-fourths"
     case nextDisplay = "next-display"
     case previousDisplay = "previous-display"
     case maximize
@@ -26,13 +32,27 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
     case arrangeMainRight = "arrange-main-right"
     case arrangeThreeColumns = "arrange-three-columns"
     case arrangeQuarters = "arrange-quarters"
+    case arrangeCenterStage = "arrange-center-stage"
+    case arrangeFourColumns = "arrange-four-columns"
+    case arrangeWidePrimary = "arrange-wide-primary"
+    case arrangeWidePrimaryMirrored = "arrange-wide-primary-mirrored"
+    case arrangeQuarterSide = "arrange-quarter-side"
+    case arrangeQuarterSideMirrored = "arrange-quarter-side-mirrored"
+    case arrangePrimaryStack = "arrange-primary-stack"
+    case arrangePrimaryStackMirrored = "arrange-primary-stack-mirrored"
     case selectZone = "select-zone"
+    case zone1 = "zone-1"
+    case zone2 = "zone-2"
+    case zone3 = "zone-3"
+    case zone4 = "zone-4"
 
     public enum Group: String, Sendable, CaseIterable, Hashable {
         case halves
         case quarters
         case thirds
         case twoThirds
+        case fourths
+        case threeFourths
         case displays
         case common
         /// 一次排多個視窗。
@@ -46,11 +66,26 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
         case .topLeft, .topRight, .bottomLeft, .bottomRight: return .quarters
         case .leftThird, .centerThird, .rightThird: return .thirds
         case .leftTwoThirds, .centerTwoThirds, .rightTwoThirds: return .twoThirds
+        case .firstFourth, .secondFourth, .thirdFourth, .lastFourth: return .fourths
+        case .leftThreeFourths, .rightThreeFourths: return .threeFourths
         case .nextDisplay, .previousDisplay: return .displays
         case .maximize, .center, .restore: return .common
-        case .arrangeLeftRight, .arrangeMainLeft, .arrangeMainRight, .arrangeThreeColumns, .arrangeQuarters:
+        case .arrangeLeftRight, .arrangeMainLeft, .arrangeMainRight, .arrangeThreeColumns, .arrangeQuarters,
+             .arrangeCenterStage, .arrangeFourColumns, .arrangeWidePrimary, .arrangeWidePrimaryMirrored,
+             .arrangeQuarterSide, .arrangeQuarterSideMirrored, .arrangePrimaryStack, .arrangePrimaryStackMirrored:
             return .arrange
-        case .selectZone: return .advanced
+        case .selectZone, .zone1, .zone2, .zone3, .zone4: return .advanced
+        }
+    }
+
+    /// 「放進目前版型第 N 區」的 N − 1；分區順序就是版型宣告的順序（左到右、上到下）。
+    public var zoneIndex: Int? {
+        switch self {
+        case .zone1: return 0
+        case .zone2: return 1
+        case .zone3: return 2
+        case .zone4: return 3
+        default: return nil
         }
     }
 
@@ -71,10 +106,19 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
         case .leftTwoThirds: return .leftTwoThirds
         case .centerTwoThirds: return .centerTwoThirds
         case .rightTwoThirds: return .rightTwoThirds
+        case .firstFourth: return .firstFourth
+        case .secondFourth: return .secondFourth
+        case .thirdFourth: return .thirdFourth
+        case .lastFourth: return .lastFourth
+        case .leftThreeFourths: return .leftThreeFourths
+        case .rightThreeFourths: return .rightThreeFourths
         case .maximize: return .maximize
         case .center: return .centerPreserveSize
         case .nextDisplay, .previousDisplay, .restore, .selectZone,
-             .arrangeLeftRight, .arrangeMainLeft, .arrangeMainRight, .arrangeThreeColumns, .arrangeQuarters:
+             .zone1, .zone2, .zone3, .zone4,
+             .arrangeLeftRight, .arrangeMainLeft, .arrangeMainRight, .arrangeThreeColumns, .arrangeQuarters,
+             .arrangeCenterStage, .arrangeFourColumns, .arrangeWidePrimary, .arrangeWidePrimaryMirrored,
+             .arrangeQuarterSide, .arrangeQuarterSideMirrored, .arrangePrimaryStack, .arrangePrimaryStackMirrored:
             return nil
         }
     }
@@ -87,6 +131,14 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
         case .arrangeMainRight: return .mainRight
         case .arrangeThreeColumns: return .threeColumns
         case .arrangeQuarters: return .quarters
+        case .arrangeCenterStage: return .centerStage
+        case .arrangeFourColumns: return .fourColumns
+        case .arrangeWidePrimary: return .widePrimary
+        case .arrangeWidePrimaryMirrored: return .widePrimaryMirrored
+        case .arrangeQuarterSide: return .quarterSide
+        case .arrangeQuarterSideMirrored: return .quarterSideMirrored
+        case .arrangePrimaryStack: return .primaryStack
+        case .arrangePrimaryStackMirrored: return .primaryStackMirrored
         default: return nil
         }
     }
@@ -198,6 +250,7 @@ public struct ShortcutBindings: Sendable, Equatable {
     public static let defaultChords: [WindowCommand: KeyChord] = {
         let co: KeyChord.Modifiers = [.control, .option]
         let coc: KeyChord.Modifiers = [.control, .option, .command]
+        let cos: KeyChord.Modifiers = [.control, .option, .shift]
         func chord(_ keyCode: UInt16, _ modifiers: KeyChord.Modifiers = co) -> KeyChord {
             KeyChord(keyCode: keyCode, modifiers: modifiers)
         }
@@ -208,6 +261,9 @@ public struct ShortcutBindings: Sendable, Equatable {
             .leftTwoThirds: chord(14), .centerTwoThirds: chord(15), .rightTwoThirds: chord(17),
             .nextDisplay: chord(124, coc), .previousDisplay: chord(123, coc),
             .maximize: chord(36), .center: chord(8), .restore: chord(51),
+            .firstFourth: chord(18), .secondFourth: chord(19), .thirdFourth: chord(20), .lastFourth: chord(21),
+            .leftThreeFourths: chord(23), .rightThreeFourths: chord(22),
+            .zone1: chord(18, cos), .zone2: chord(19, cos), .zone3: chord(20, cos), .zone4: chord(21, cos),
         ]
     }()
 
@@ -225,6 +281,22 @@ public struct ShortcutBindings: Sendable, Equatable {
     /// 存的若正好是舊「Chorus 基本」（＝沒自訂過），換成現在的預設；動過任何一項就原樣保留。
     public func migratedFromLegacy() -> ShortcutBindings {
         self == Self.legacyBasic ? ShortcutBindings() : self
+    }
+
+    /// build 113 才加入的指令（1/4、3/4、放進第 N 區）。
+    public static let addedInBuild113: [WindowCommand] = [
+        .firstFourth, .secondFourth, .thirdFourth, .lastFourth, .leftThreeFourths, .rightThreeFourths,
+        .zone1, .zone2, .zone3, .zone4,
+    ]
+
+    /// 已存的對照是在這些指令出現之前寫的：補上它們的預設鍵。自己綁過的、預設鍵已被別的指令用掉的都不動。
+    public func addingDefaults(for commands: [WindowCommand]) -> ShortcutBindings {
+        var result = self
+        for command in commands where result.chords[command] == nil {
+            guard let chord = Self.defaultChords[command], result.command(for: chord) == nil else { continue }
+            result.chords[command] = chord
+        }
+        return result
     }
 
     public subscript(command: WindowCommand) -> KeyChord? {

@@ -8609,18 +8609,34 @@
         }
       }
     },
-    "每台螢幕的超寬佈局" : {
+    "特型拖曳佈局" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Per-Display Ultrawide Layout"
+            "value" : "Special Drag Layout"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每台显示器的超宽布局"
+            "value" : "特型拖拽布局"
+          }
+        }
+      }
+    },
+    "按住 Shift 拖曳視窗時，依視窗所在螢幕在這裡選的版型選區，每台螢幕各自記住；⌃⌥⇧1–4 則直接把目前視窗放進第 1–4 區（由左到右、由上到下）。切換版型不會搬動現有視窗。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "While Shift-dragging a window, zones follow the layout chosen here for the display the window is on; each display remembers its own. ⌃⌥⇧1–4 put the current window straight into zone 1–4 (left to right, top to bottom). Switching layouts doesn't move existing windows."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按住 Shift 拖拽窗口时，按窗口所在显示器在这里选的版型选区，每台显示器各自记住；⌃⌥⇧1–4 则直接把当前窗口放进第 1–4 区（从左到右、从上到下）。切换版型不会移动现有窗口。"
           }
         }
       }
@@ -9630,18 +9646,18 @@
         }
       }
     },
-    "直接拖到螢幕邊緣是基本型：左右半屏、四角、上緣填滿、下緣下半屏。按住 Shift 才切到特型：下緣分五段選 1/3、2/3；超寬螢幕的其餘位置另外依版型選區。放開 Shift 立即回到基本型；按 Esc 取消本趟。" : {
+    "直接拖到螢幕邊緣是基本型：左右半屏、四角、上緣填滿、下緣下半屏。按住 Shift 才切到特型：下緣分五段選 1/3、2/3；其餘位置依下方「特型拖曳佈局」選區。放開 Shift 立即回到基本型；按 Esc 取消本趟。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dragging straight to a display edge gives the basic zones: left and right halves, the four corners, fill at the top edge, bottom half at the bottom edge. Hold Shift to switch to the special zones: the bottom edge splits into five segments for picking 1/3 or 2/3; elsewhere on an ultrawide display, zones follow the layout template. Release Shift to return to the basic zones at once; press Esc to cancel this drag."
+            "value" : "Dragging straight to a display edge gives the basic zones: left and right halves, the four corners, fill at the top edge, bottom half at the bottom edge. Hold Shift to switch to the special zones: the bottom edge splits into five segments for picking 1/3 or 2/3; elsewhere, zones follow the “Special Drag Layout” below. Release Shift to return to the basic zones at once; press Esc to cancel this drag."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "直接拖到屏幕边缘是基本型：左右半屏、四角、上缘填满、下缘下半屏。按住 Shift 才切到特型：下缘分五段选 1/3、2/3；超宽屏幕的其余位置另外依版型选区。松开 Shift 立即回到基本型；按 Esc 取消本次。"
+            "value" : "直接拖到屏幕边缘是基本型：左右半屏、四角、上缘填满、下缘下半屏。按住 Shift 才切到特型：下缘分五段选 1/3、2/3；其余位置按下方“特型拖拽布局”选区。松开 Shift 立即回到基本型；按 Esc 取消本次。"
           }
         }
       }
@@ -11549,18 +11565,18 @@
         }
       }
     },
-    "超寬與進階" : {
+    "特型分區" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ultrawide & Advanced"
+            "value" : "Special Zones"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "超宽与高级"
+            "value" : "特型分区"
           }
         }
       }
@@ -11983,18 +11999,18 @@
         }
       }
     },
-    "這台螢幕不是超寬比例，沒有分區版型" : {
+    "直立螢幕沒有分區版型" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This display isn't ultrawide, so it has no zone templates"
+            "value" : "Portrait displays have no zone layouts"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这台显示器不是超宽比例，没有分区版型"
+            "value" : "竖屏没有分区版型"
           }
         }
       }
@@ -12601,6 +12617,86 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "键盘选区"
+          }
+        }
+      }
+    },
+    "放進第 1 區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Zone 1"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放进第 1 区"
+          }
+        }
+      }
+    },
+    "放進第 2 區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Zone 2"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放进第 2 区"
+          }
+        }
+      }
+    },
+    "放進第 3 區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Zone 3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放进第 3 区"
+          }
+        }
+      }
+    },
+    "放進第 4 區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Zone 4"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放进第 4 区"
+          }
+        }
+      }
+    },
+    "目前版型只有 %lld 個分區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The current layout has only %lld zones"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前版型只有 %lld 个分区"
           }
         }
       }
@@ -13657,6 +13753,294 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "；%lld 项不会自动恢复"
+          }
+        }
+      }
+    },
+    "第 1 個四分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First Fourth"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 1 个四分之一"
+          }
+        }
+      }
+    },
+    "第 2 個四分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Second Fourth"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 2 个四分之一"
+          }
+        }
+      }
+    },
+    "第 3 個四分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Third Fourth"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 3 个四分之一"
+          }
+        }
+      }
+    },
+    "第 4 個四分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last Fourth"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 4 个四分之一"
+          }
+        }
+      }
+    },
+    "左四分之三" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left Three Fourths"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左四分之三"
+          }
+        }
+      }
+    },
+    "右四分之三" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right Three Fourths"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右四分之三"
+          }
+        }
+      }
+    },
+    "四分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fourths"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "四分之一"
+          }
+        }
+      }
+    },
+    "四分之三" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Three Fourths"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "四分之三"
+          }
+        }
+      }
+    },
+    "已展開" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expanded"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已展开"
+          }
+        }
+      }
+    },
+    "已收合" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapsed"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已收起"
+          }
+        }
+      }
+    },
+    "中央主區並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Center Stage"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中央主区并排"
+          }
+        }
+      }
+    },
+    "四欄並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Four Columns"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "四栏并排"
+          }
+        }
+      }
+    },
+    "2/3＋1/3 並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2/3 + 1/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2/3＋1/3 并排"
+          }
+        }
+      }
+    },
+    "1/3＋2/3 並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/3 + 2/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/3＋2/3 并排"
+          }
+        }
+      }
+    },
+    "1/4＋3/4 並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/4 + 3/4"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/4＋3/4 并排"
+          }
+        }
+      }
+    },
+    "3/4＋1/4 並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3/4 + 1/4"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3/4＋1/4 并排"
+          }
+        }
+      }
+    },
+    "主區＋雙側窗並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Main + Two Side Windows"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主区＋双侧窗并排"
+          }
+        }
+      }
+    },
+    "主區＋雙側窗並排（鏡像）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Main + Two Side Windows (Mirrored)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主区＋双侧窗并排（镜像）"
           }
         }
       }

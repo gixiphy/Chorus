@@ -119,7 +119,8 @@ struct LayoutTemplateFixtureTests {
     private func assertWidthsSum(_ rects: [LayoutRect], visible: LayoutRect, gap: Double, id: LayoutTemplateID) {
         // 僅對全高直欄版型檢查水平寬度和
         let columnIDs: Set<LayoutTemplateID> = [
-            .centerStage, .threeColumns, .fourColumns, .widePrimary, .widePrimaryMirrored
+            .centerStage, .threeColumns, .fourColumns, .widePrimary, .widePrimaryMirrored,
+            .quarterSide, .quarterSideMirrored
         ]
         guard columnIDs.contains(id) else { return }
         let innerW = visible.width - gap * 2

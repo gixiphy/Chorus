@@ -67,15 +67,52 @@ final class AXWindowWorker: @unchecked Sendable {
         }
     }
 
-    private func makeRef(app: AXUIElement, pid: pid_t, excludingBundleIDs: Set<String>) throws -> WindowRef {
-        let running = NSRunningApplication(processIdentifier: pid)
-        let bundleID = running?.bundleIdentifier
-        if let bundleID, excludingBundleIDs.contains(bundleID) {
+    /// 游標下的視窗（拖曳吸附用）。按下滑鼠的當下焦點還沒換過去，拖的若是背景視窗，
+    /// 問「聚焦視窗」會拿到別人；所以直接問該座標上的元素，再往上找它所屬的視窗。
+    func window(atX x: Double, y: Double, topology: ScreenTopology, excludingBundleIDs: Set<String>) throws -> WindowRef {
+        try sync {
+            guard AXIsProcessTrusted() else { throw WorkerError.permissionRequired }
+            let system = AXUIElementCreateSystemWide()
+            AXUIElementSetMessagingTimeout(system, Float(self.timeout))
+
+            var hit: AXUIElement?
+            let status = AXUIElementCopyElementAtPosition(
+                system, Float(x), Float(topology.primaryHeight - y), &hit
+            )
+            guard status == .success, let hit else { throw WorkerError.noTarget }
+
+            var pid: pid_t = 0
+            AXUIElementGetPid(hit, &pid)
+            try self.checkManageable(pid: pid, excludingBundleIDs: excludingBundleIDs)
+            return try self.makeRef(window: self.owningWindow(of: hit), pid: pid)
+        }
+    }
+
+    private func owningWindow(of element: AXUIElement) throws -> AXUIElement {
+        var roleRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef) == .success,
+           (roleRef as? String) == (kAXWindowRole as String) {
+            return element
+        }
+        var windowRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &windowRef) == .success,
+              let windowRef, CFGetTypeID(windowRef) == AXUIElementGetTypeID()
+        else { throw WorkerError.noTarget }
+        return unsafeBitCast(windowRef, to: AXUIElement.self)
+    }
+
+    private func checkManageable(pid: pid_t, excludingBundleIDs: Set<String>) throws {
+        if let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+           excludingBundleIDs.contains(bundleID) {
             throw WorkerError.noTarget
         }
         if pid == ProcessInfo.processInfo.processIdentifier {
             throw WorkerError.noTarget
         }
+    }
+
+    private func makeRef(app: AXUIElement, pid: pid_t, excludingBundleIDs: Set<String>) throws -> WindowRef {
+        try checkManageable(pid: pid, excludingBundleIDs: excludingBundleIDs)
 
         var windowRef: CFTypeRef?
         let winStatus = AXUIElementCopyAttributeValue(
@@ -86,7 +123,11 @@ final class AXWindowWorker: @unchecked Sendable {
         guard winStatus == .success, let windowRef,
               CFGetTypeID(windowRef) == AXUIElementGetTypeID()
         else { throw WorkerError.noTarget }
-        let window = unsafeBitCast(windowRef, to: AXUIElement.self)
+        return try makeRef(window: unsafeBitCast(windowRef, to: AXUIElement.self), pid: pid)
+    }
+
+    private func makeRef(window: AXUIElement, pid: pid_t) throws -> WindowRef {
+        let running = NSRunningApplication(processIdentifier: pid)
 
         if isMinimized(window) || isFullScreen(window) {
             throw WorkerError.unsupported
@@ -97,7 +138,7 @@ final class AXWindowWorker: @unchecked Sendable {
         return WindowRef(
             token: token,
             pid: pid,
-            bundleID: bundleID,
+            bundleID: running?.bundleIdentifier,
             appName: running?.localizedName ?? "App"
         )
     }

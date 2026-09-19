@@ -85,11 +85,15 @@ final class DragMonitor {
 
     private func mouseDown() {
         resetDrag()
-        mouseDownPoint = NSEvent.mouseLocation
+        let point = NSEvent.mouseLocation
+        mouseDownPoint = point
         do {
             let excluded = excludedBundleIDs?() ?? []
-            let ref = try worker.focusedExternalWindow(excludingBundleIDs: excluded)
             let topology = bumpTopology()
+            // 先問游標下的視窗：拖背景視窗時，這一刻的聚焦視窗還是別人
+            let ref = try (try? worker.window(
+                atX: Double(point.x), y: Double(point.y), topology: topology, excludingBundleIDs: excluded
+            )) ?? worker.focusedExternalWindow(excludingBundleIDs: excluded)
             let frame = try worker.getFrame(token: ref.token, topology: topology)
             dragToken = ref.token
             dragStartFrame = frame
@@ -113,6 +117,7 @@ final class DragMonitor {
             let posDelta = abs(current.x - start.x) + abs(current.y - start.y)
             guard posDelta >= 3, sizeDelta < 6 else { return }
             recognizedDrag = true
+            ChorusLog.window.info("拖曳開始：\(token)")
             startedAt = clock.now
             session.beginDrag(at: .zero)
         }
@@ -125,11 +130,21 @@ final class DragMonitor {
             onPreview?(nil, nil)
             resetDrag()
         }
-        guard recognizedDrag, let token = dragToken else { return }
+        guard recognizedDrag, let token = dragToken else {
+            // 選字、拉捲軸也會走到這裡，所以只留 debug；查「拖了沒反應」時才看
+            if let down = mouseDownPoint, let dragToken {
+                let point = NSEvent.mouseLocation
+                ChorusLog.window.debug("拖曳未認定為搬視窗：\(dragToken) 游標位移 \(Int(point.x - down.x)),\(Int(point.y - down.y))")
+            }
+            return
+        }
         pointerMoved(screenPoint: NSEvent.mouseLocation, modifiers: modifiers)
         let shift = modifiers.contains(.shift)
         if let candidate = session.mouseUp(now: elapsed(), shiftDown: shift) {
+            ChorusLog.window.info("拖曳放開 → \(candidate.action?.rawValue ?? candidate.zoneID ?? "?")")
             onCommit?(Commit(candidate: candidate, token: token))
+        } else {
+            ChorusLog.window.info("拖曳放開：沒有吸附候選")
         }
     }
 
@@ -146,7 +161,7 @@ final class DragMonitor {
 
         let edge = SnapResolver.ScreenMetrics(frame: screenInfo.frame, isLandscape: screenInfo.isLandscape)
         var zoneContext: SnapDragSession.ZoneContext?
-        if shift, screenInfo.isUltrawide {
+        if shift, screenInfo.supportsZoneTemplates {
             let templateID = templateProvider?(screenInfo) ?? .centerStage
             zoneContext = SnapDragSession.ZoneContext(
                 template: LayoutTemplateCatalog.template(id: templateID),
@@ -221,6 +236,8 @@ final class DragMonitor {
         case .leftTwoThirds: return "左 2/3"
         case .centerTwoThirds: return "中 2/3"
         case .rightTwoThirds: return "右 2/3"
+        case .leftThreeFourths: return "左 3/4"
+        case .rightThreeFourths: return "右 3/4"
         case .maximize: return "填滿"
         default: return action.rawValue
         }

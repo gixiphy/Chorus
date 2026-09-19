@@ -10,12 +10,14 @@ struct WindowArrangementMenuSection: View {
         _isExpanded = State(initialValue: startExpanded)
     }
 
-    /// 比照 macOS 綠燈選單：分段標題＋純圖示格子，一列四格。
-    private static let singleWindowRows: [[WindowCommand]] = [
-        [.leftHalf, .rightHalf, .topHalf, .bottomHalf],
-        [.topLeft, .topRight, .bottomLeft, .bottomRight],
-        [.leftThird, .centerThird, .rightThird, .center],
-        [.leftTwoThirds, .centerTwoThirds, .rightTwoThirds, .restore],
+    /// 所有排列操作共用四欄格線，未滿一列時仍保留相同欄寬。
+    private static let singleWindowCommands: [WindowCommand] = [
+        .leftHalf, .rightHalf, .topHalf, .bottomHalf,
+        .topLeft, .topRight, .bottomLeft, .bottomRight,
+        .leftThird, .centerThird, .rightThird, .center,
+        .leftTwoThirds, .centerTwoThirds, .rightTwoThirds, .restore,
+        .firstFourth, .secondFourth, .thirdFourth, .lastFourth,
+        .leftThreeFourths, .rightThreeFourths,
     ]
     private static let arrangeRow: [WindowCommand] =
         [.maximize] + WindowCommand.commands(in: .arrange)
@@ -25,7 +27,7 @@ struct WindowArrangementMenuSection: View {
 
     var body: some View {
         if appState.settings.windowArrangementEnabled {
-            DisclosureGroup(isExpanded: $isExpanded) {
+            RowDisclosure(isExpanded: $isExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
                     if let name = manager.targetAppName {
                         Text("目標：\(name)")
@@ -40,13 +42,11 @@ struct WindowArrangementMenuSection: View {
                     let screens = ScreenTopology.capture(generation: 0).screens
 
                     sectionHeader("移動與調整大小")
-                    ForEach(Self.singleWindowRows, id: \.self) { row in
-                        tileRow(row, screenCount: screens.count)
-                    }
+                    commandGrid(Self.singleWindowCommands, screenCount: screens.count)
 
                     Divider()
                     sectionHeader("填滿與排列")
-                    tileRow(Self.arrangeRow, screenCount: screens.count)
+                    commandGrid(Self.arrangeRow, screenCount: screens.count)
                     Text("目前視窗放主要位置，這台螢幕上其餘視窗依最近使用的順序填入。")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -57,17 +57,14 @@ struct WindowArrangementMenuSection: View {
                             .foregroundStyle(.orange)
                     }
 
-                    // 橫向的一般比例螢幕沒有進階內容，整組不出現
-                    if let screen = currentScreen(), screen.isUltrawide || !screen.isLandscape {
+                    if let screen = currentScreen() {
                         Divider()
-                        DisclosureGroup {
-                            advancedSection(screen)
-                        } label: {
-                            Text(screen.isUltrawide
-                                ? WindowCommand.Group.advanced.title
-                                : String(localized: "直立螢幕"))
-                                .font(.caption)
-                        }
+                        Text(screen.supportsZoneTemplates
+                            ? WindowCommand.Group.advanced.title
+                            : String(localized: "直立螢幕"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        advancedSection(screen)
                     }
 
                     let destinations = screens.filter { $0.displayUUID != manager.targetDisplayUUID }
@@ -107,11 +104,16 @@ struct WindowArrangementMenuSection: View {
             .foregroundStyle(.secondary)
     }
 
-    private func tileRow(_ commands: [WindowCommand], screenCount: Int) -> some View {
-        HStack(spacing: 0) {
+    private func tileGrid<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 4), spacing: 8) {
+            content()
+        }
+    }
+
+    private func commandGrid(_ commands: [WindowCommand], screenCount: Int) -> some View {
+        tileGrid {
             ForEach(commands, id: \.self) { command in
                 commandTile(command, screenCount: screenCount)
-                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -119,22 +121,39 @@ struct WindowArrangementMenuSection: View {
     private func commandTile(_ command: WindowCommand, screenCount: Int) -> some View {
         let reason = disabledReason(for: command, screenCount: screenCount)
         let chord = appState.settings.windowArrangementShortcuts[command]?.displayString
-        return Button {
+        return iconTile(
+            title: command.title, hint: chord ?? "", disabledReason: reason
+        ) {
             manager.perform(command)
         } label: {
             WindowCommandGlyph(command: command, size: Self.glyphSize)
-                .padding(.vertical, 5)
-                .padding(.horizontal, 8)
+        }
+    }
+
+    private var targetDisabledReason: String? {
+        manager.targetAppName == nil
+            ? manager.statusMessage ?? String(localized: "沒有可排列的視窗")
+            : nil
+    }
+
+    private func iconTile<Glyph: View>(
+        title: String, hint: String = "", disabledReason: String?,
+        action: @escaping () -> Void, @ViewBuilder label: () -> Glyph
+    ) -> some View {
+        Button(action: action) {
+            label()
+                .frame(maxWidth: .infinity)
+                .frame(height: Self.glyphSize.height + 10)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         // 前景色固定成 primary 之後，停用不會自己變淡，要手動補
         .foregroundStyle(.primary)
-        .opacity(reason == nil ? 1 : 0.3)
-        .disabled(reason != nil)
-        .help(reason ?? [command.title, chord].compactMap { $0 }.joined(separator: "　"))
-        .accessibilityLabel(command.title)
-        .accessibilityHint(reason ?? chord ?? "")
+        .opacity(disabledReason == nil ? 1 : 0.3)
+        .disabled(disabledReason != nil)
+        .help(disabledReason ?? [title, hint].filter { !$0.isEmpty }.joined(separator: "　"))
+        .accessibilityLabel(title)
+        .accessibilityHint(disabledReason ?? hint)
     }
 
     /// 停用原因；`nil`＝可用。沒有目標（含缺權限、已忽略）時所有排列動作都停用。
@@ -152,28 +171,22 @@ struct WindowArrangementMenuSection: View {
         }
     }
 
-    // MARK: - 超寬與進階
+    // MARK: - 特型分區
 
     @ViewBuilder
     private func advancedSection(_ screen: ScreenTopology.ScreenInfo) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if !screen.isLandscape {
-                HStack {
-                    tile("上 1/3", .topThird)
-                    tile("中 1/3", .middleThird)
-                    tile("下 1/3", .bottomThird)
-                    tile("上 2/3", .topTwoThirds)
-                    tile("下 2/3", .bottomTwoThirds)
+                tileGrid {
+                    tile(String(localized: "上 1/3"), .topThird)
+                    tile(String(localized: "中 1/3"), .middleThird)
+                    tile(String(localized: "下 1/3"), .bottomThird)
+                    tile(String(localized: "上 2/3"), .topTwoThirds)
+                    tile(String(localized: "下 2/3"), .bottomTwoThirds)
                 }
             }
-            if screen.isUltrawide {
+            if screen.supportsZoneTemplates {
                 ultrawideSection(screen)
-                Button(WindowCommand.selectZone.title) { manager.perform(.selectZone) }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .font(.caption)
-                    .disabled(manager.targetAppName == nil)
-                    .help("方向鍵移動、Enter 套用、Esc 取消")
             }
         }
         .padding(.top, 2)
@@ -215,17 +228,31 @@ struct WindowArrangementMenuSection: View {
                 .font(.caption2)
                 .foregroundStyle(.orange)
         }
-        HStack {
-            ForEach(template.zones) { zone in
-                Button(zoneLabel(zone)) {
+        tileGrid {
+            ForEach(Array(template.zones.enumerated()), id: \.element.id) { index, zone in
+                iconTile(title: zoneLabel(zone), hint: zoneChord(index), disabledReason: targetDisabledReason) {
                     manager.applyUltrawide(zoneID: zone.id)
+                } label: {
+                    WindowLayoutGlyph(blocks: zones.map { candidate, rect in
+                        (previewRect(rect, in: screen.visibleFrame), candidate.id == zone.id)
+                    }, size: Self.glyphSize)
                 }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .font(.caption)
-                .disabled(manager.targetAppName == nil)
+            }
+            iconTile(
+                title: WindowCommand.selectZone.title,
+                hint: String(localized: "方向鍵移動、Enter 套用、Esc 取消"),
+                disabledReason: targetDisabledReason
+            ) {
+                manager.perform(.selectZone)
+            } label: {
+                WindowCommandGlyph(command: .selectZone, size: Self.glyphSize)
             }
         }
+    }
+
+    private func zoneChord(_ index: Int) -> String {
+        WindowCommand.commands(in: .advanced).first { $0.zoneIndex == index }
+            .flatMap { appState.settings.windowArrangementShortcuts[$0]?.displayString } ?? ""
     }
 
     private func currentScreen() -> ScreenTopology.ScreenInfo? {
@@ -236,12 +263,24 @@ struct WindowArrangementMenuSection: View {
         }) ?? topology.screens.first
     }
 
-    private func tile(_ title: LocalizedStringKey, _ action: LayoutAction) -> some View {
-        Button(title) { manager.apply(action) }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
-            .font(.caption)
-            .disabled(manager.targetAppName == nil)
+    private func tile(_ title: String, _ action: LayoutAction) -> some View {
+        let visible = LayoutRect(x: 0, y: 0, width: 600, height: 600)
+        let rect = LayoutEngine().frame(for: action, visible: visible, gap: 0)
+        return iconTile(title: title, disabledReason: targetDisabledReason) {
+            manager.apply(action)
+        } label: {
+            WindowLayoutGlyph(blocks: [(previewRect(rect, in: visible), true)], size: Self.glyphSize)
+        }
+    }
+
+    /// 排列引擎原點在左下；縮圖原點在左上。
+    private func previewRect(_ rect: LayoutRect, in visible: LayoutRect) -> CGRect {
+        CGRect(
+            x: (rect.x - visible.x) / visible.width,
+            y: (visible.maxY - rect.maxY) / visible.height,
+            width: rect.width / visible.width,
+            height: rect.height / visible.height
+        )
     }
 
     private func templateTitle(_ id: LayoutTemplateID) -> String {
@@ -249,7 +288,10 @@ struct WindowArrangementMenuSection: View {
         case .centerStage: return "中央主區"
         case .threeColumns: return "三欄"
         case .fourColumns: return "四欄"
-        case .widePrimary, .widePrimaryMirrored: return "主副欄"
+        case .widePrimary: return "2/3＋1/3"
+        case .widePrimaryMirrored: return "1/3＋2/3"
+        case .quarterSide: return "1/4＋3/4"
+        case .quarterSideMirrored: return "3/4＋1/4"
         case .primaryStack, .primaryStackMirrored: return "主區＋雙側窗"
         case .centerReading: return "中央閱讀"
         }
@@ -270,6 +312,38 @@ struct WindowArrangementMenuSection: View {
         case "col3": return "第 3 欄"
         case "col4": return "第 4 欄"
         default: return zone.id
+        }
+    }
+}
+
+/// 系統的 DisclosureGroup 只有前面的小箭頭能點；這裡整列（箭頭＋標題到右緣）都是展開鈕。
+private struct RowDisclosure<Label: View, Content: View>: View {
+    @Binding var isExpanded: Bool
+    @ViewBuilder var content: () -> Content
+    @ViewBuilder var label: () -> Label
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 10)
+                    label()
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(isExpanded ? Text("已展開") : Text("已收合"))
+            if isExpanded {
+                content()
+            }
         }
     }
 }

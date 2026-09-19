@@ -182,7 +182,9 @@ final class WindowManager {
         case .selectZone:
             beginKeyboardZoneSelection(source: source)
         default:
-            if let action = command.layoutAction {
+            if let index = command.zoneIndex {
+                applyUltrawide(zoneIndex: index, source: source)
+            } else if let action = command.layoutAction {
                 apply(action, source: source)
             } else if let arrangement = command.arrangement {
                 arrange(arrangement, source: source)
@@ -249,8 +251,8 @@ final class WindowManager {
 
     func applyUltrawide(zoneID: String) {
         runArrangement(source: .menu) { topology, screen, current, ref in
-            guard screen.isUltrawide else {
-                reportNotUltrawide()
+            guard screen.supportsZoneTemplates else {
+                reportNoZoneTemplates()
                 return
             }
             let templateID = templateID(for: screen)
@@ -265,6 +267,24 @@ final class WindowManager {
                 return
             }
             _ = applyFrame(match.1, ref: ref, topology: topology, screen: screen, before: current)
+        }
+    }
+
+    /// ⌃⌥1–4：放進視窗所在螢幕目前版型的第 N 區。
+    func applyUltrawide(zoneIndex: Int, source: Source = .menu) {
+        runArrangement(source: source) { topology, screen, current, ref in
+            guard screen.supportsZoneTemplates else {
+                reportNoZoneTemplates()
+                return
+            }
+            let zones = LayoutTemplateCatalog.template(id: templateID(for: screen))
+                .resolvedZones(visible: screen.visibleFrame, gap: settings.windowArrangementGap)
+            guard zones.indices.contains(zoneIndex) else {
+                lastOutcome = .failed("找不到分區")
+                statusMessage = String(localized: "目前版型只有 \(zones.count) 個分區")
+                return
+            }
+            _ = applyFrame(zones[zoneIndex].1, ref: ref, topology: topology, screen: screen, before: current)
         }
     }
 
@@ -380,8 +400,8 @@ final class WindowManager {
             statusMessage = "找不到螢幕"
             return
         }
-        guard screen.isUltrawide else {
-            reportNotUltrawide()
+        guard screen.supportsZoneTemplates else {
+            reportNoZoneTemplates()
             return
         }
         let template = LayoutTemplateCatalog.template(id: templateID(for: screen))
@@ -656,9 +676,9 @@ final class WindowManager {
         }
     }
 
-    private func reportNotUltrawide() {
+    private func reportNoZoneTemplates() {
         lastOutcome = .unsupported
-        statusMessage = String(localized: "這台螢幕不是超寬比例，沒有分區版型")
+        statusMessage = String(localized: "直立螢幕沒有分區版型")
     }
 
     private func excludedBundleIDs() -> Set<String> {

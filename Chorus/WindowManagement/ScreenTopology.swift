@@ -13,10 +13,8 @@ struct ScreenTopology: Sendable {
         var visibleFrame: LayoutRect
         var isLandscape: Bool
 
-        /// 以完整邏輯 frame 的寬高比判定；不是超寬就不提供超寬版型。
-        var isUltrawide: Bool {
-            LayoutTemplateCatalog.isUltrawide(width: frame.width, height: frame.height)
-        }
+        /// 分區版型都是直欄切法，直立螢幕切下去只剩窄條，改用選單的直立操作；橫向螢幕一律提供。
+        var supportsZoneTemplates: Bool { isLandscape }
     }
 
     var generation: UInt64
