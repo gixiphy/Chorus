@@ -190,7 +190,8 @@ Chorus 內建**繁體中文、简体中文與英文**，預設跟著系統語言
 
 ### 命令列與自動化
 
-`chorus` CLI 內嵌在 App 裡，設定頁一鍵安裝到 `/usr/local/bin`（不需要管理員密碼）。
+`chorus` CLI 內嵌在 App 裡，設定頁一鍵安裝到 `/usr/local/bin`（不需要管理員密碼）；
+用 Homebrew 安裝的話已經連到 PATH，不用再按。
 同一套語意也開在 localhost HTTP 上（預設關閉，設定頁開啟，只綁 `127.0.0.1` 並要 token）。
 
 ```bash
@@ -215,8 +216,18 @@ chorus listen | jq          # 狀態變動的事件流
 
 ## 安裝
 
-到 [Releases](https://github.com/gixiphy/Chorus/releases) 下載 zip，解壓後把
+用 [Homebrew](https://brew.sh)：
+
+```bash
+brew install gixiphy/tap/chorus     # 裝 Chorus.app 與 chorus CLI
+brew upgrade --cask chorus           # 之後更新
+```
+
+或到 [Releases](https://github.com/gixiphy/Chorus/releases) 下載 zip，解壓後把
 `Chorus.app` 拖進「應用程式」。
+
+虛擬音訊裝置（HAL driver）兩種方式都不會自動裝——開啟 Chorus 後到設定頁按「安裝驅動」
+（需管理員密碼）。`brew uninstall --cask chorus` 會連 driver 一起移除。
 
 **上不了 Mac App Store**：亮度與螢幕電源用到 private API，也必須關掉 sandbox，
 所以以 Developer ID 簽章＋Apple 公證直接發行。
@@ -238,6 +249,10 @@ Keychain 裡有多張同名的 Developer ID Application 憑證（例如舊的還
 ```bash
 CHORUS_SIGN_IDENTITY=<40 字元 SHA-1 指紋> ./scripts/package.sh
 ```
+
+發版：`./scripts/release.sh --package --version 1.12.0` 一路做完打包、公證、git tag、
+GitHub Release（上傳 zip）、更新 [Homebrew tap](https://github.com/gixiphy/homebrew-tap) 的 cask
+（version 與 sha256），最後 `brew fetch` 驗證。已有 zip 時省略 `--package`；`--dry-run` 只印指令。
 
 純邏輯集中在 `Packages/ChorusCore`，`cd Packages/ChorusCore && swift test` 不碰硬體就跑得完。
 
