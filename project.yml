@@ -76,6 +76,7 @@ targets:
     dependencies:
       - package: ChorusCore
       - sdk: CoreDisplay.framework
+      - sdk: MetricKit.framework
       - target: ChorusAudioDevice
         embed: true
         copy:

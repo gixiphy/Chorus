@@ -66,6 +66,8 @@ struct ChorusApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
+        // 哨兵第一個寫：後面任何一步卡住或 crash，都不該被記成「上次異常結束」
+        CrashReportCollector.shared.markCleanExit()
         ChorusLog.app.notice("結束（applicationWillTerminate）")
         MainActor.assumeIsolated {
             // 每一步的耗時寫一行：退出被哪一步拖住（例如 iCloud Drive 卡著）要看得出來

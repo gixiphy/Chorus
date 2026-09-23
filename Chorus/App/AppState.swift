@@ -53,6 +53,8 @@ final class AppState {
         #endif
         MainLoopWatchdog.shared.start()
         MemoryPressureMonitor.shared.start()
+        // 哨兵要在任何可能 crash 的初始化之前寫下；MetricKit 訂閱與 .ips 掃描在背景
+        CrashReportCollector.shared.start()
         // 每一步之後打點：選單出來之前主執行緒花在哪裡（Batch F）
         var timeline = StartupTimeline()
         self.instance = instance
