@@ -468,12 +468,18 @@ final class TestHooks {
             appState.emergencyRestore.debugSimulateCommandPresses(Int(info["value"] ?? "") ?? 8)
         case "setKeepAwake":
             // value 依 KeepAwakePlanner 編碼：0 = 關、負值 = 無限期、正值 = 秒數；
-            // "display:<uuid>" 綁定螢幕、"app:<bundleID>" 綁定 App
+            // "display:<uuid>" 綁定螢幕、"app:<bundleID>" 綁定 App、"load" 高負載
             if let raw = info["value"] {
                 if raw.hasPrefix("display:") {
                     appState.keepAwake.activate(.whileDisplayConnected(uuid: String(raw.dropFirst(8))))
                 } else if raw.hasPrefix("app:") {
                     appState.keepAwake.activate(.whileAppRunning(bundleID: String(raw.dropFirst(4))))
+                } else if raw == "load" || raw == "agents" {
+                    if raw == "load" {
+                        appState.keepAwake.activate(.whileSystemBusy)
+                    } else {
+                        appState.keepAwake.activate(.whileAgentsWorking)
+                    }
                 } else if let value = Double(raw) {
                     appState.keepAwake.activate(KeepAwakePlanner.decode(value))
                 }
@@ -586,7 +592,45 @@ final class TestHooks {
         case let .whileDisplayConnected(uuid): "display:\(uuid)"
         case let .whileAppRunning(bundleID): "app:\(bundleID)"
         case .whileAgentsWorking: "agents"
+        case .whileSystemBusy: "load"
         }
+    }
+
+    @MainActor
+    private static func describeSystemLoad(_ monitor: SystemLoadMonitor) -> [String: Any] {
+        let evaluation = monitor.evaluation
+        let sample = monitor.latestSample
+        func reading(_ value: SystemLoadReading?) -> Any {
+            switch value {
+            case .value(let number): number
+            case .unavailable, .unsupported, .none: NSNull()
+            }
+        }
+        func availability(_ value: SystemLoadReading?) -> String {
+            switch value {
+            case .value: "ok"
+            case .unavailable: "unavailable"
+            case .unsupported: "unsupported"
+            case .none: "none"
+            }
+        }
+        return [
+            "phase": evaluation.phase.rawValue,
+            "shouldHold": evaluation.shouldHold,
+            "qualifiedSignals": evaluation.qualifiedSignals.map(\.rawValue).sorted(),
+            "cooldownRemaining": evaluation.cooldownRemaining.map { max(0, $0) as Any } ?? NSNull(),
+            "readings": [
+                "cpu": reading(sample?.cpu),
+                "gpu": reading(sample?.gpu),
+                "network": reading(sample?.network),
+            ] as [String: Any],
+            "availability": [
+                "cpu": availability(sample?.cpu),
+                "gpu": availability(sample?.gpu),
+                "network": availability(sample?.network),
+                "gpuPartialSupport": sample?.gpuPartialSupport ?? false,
+            ] as [String: Any],
+        ]
     }
 
     // MARK: - Tap 權限探針（B6-1 前置）
@@ -768,6 +812,7 @@ final class TestHooks {
                 "preventsSystemSleep": appState.keepAwake.alsoPreventSystemSleep,
                 "agents": appState.keepAwake.agentActivity.working.map(\.id),
                 "agentEngines": appState.keepAwake.agentActivity.engines,
+                "systemLoad": Self.describeSystemLoad(appState.keepAwake.systemLoad),
             ] as [String: Any],
             "focus": [
                 "scene": appState.focus.session?.sceneName as Any? ?? NSNull(),

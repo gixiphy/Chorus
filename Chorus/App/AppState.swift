@@ -254,14 +254,8 @@ final class AppState {
         focus.events = automationEvents
 
         timeline.mark("automationServer")
-        // 綁定型的三個模式是唯一跨重啟保留的（設定上互斥，螢幕 > App > agent）
-        if let uuid = settings.keepAwakeDisplayUUID {
-            keepAwake.activate(.whileDisplayConnected(uuid: uuid))
-        } else if let bundleID = settings.keepAwakeAppBundleID {
-            keepAwake.activate(.whileAppRunning(bundleID: bundleID))
-        } else if settings.keepAwakeAgentMode {
-            keepAwake.activate(.whileAgentsWorking)
-        }
+        // 綁定型模式跨重啟保留：螢幕 > App > Agent > 負載
+        keepAwake.restoreSavedMode()
 
         timeline.mark("keepAwakeRestore")
         displayManager.start()

@@ -43,6 +43,12 @@ struct DeviceBackupTests {
             keepAwakeDisplayUUID: "ka-disp-\(tag)",
             keepAwakeAppBundleID: "ka-app-\(tag)",
             keepAwakeAgentMode: flag,
+            keepAwakeSystemLoadMode: flag,
+            keepAwakeSystemLoadConfiguration: {
+                var config = SystemLoadConfiguration.default
+                config.cpu.activation = flag ? 70 : 55
+                return config
+            }(),
             keepAwakeProcessDetection: !flag,
             keepAwakeCustomProcessNames: ["proc-\(tag)"],
             mediaKeyCaptureEnabled: flag,
@@ -198,5 +204,49 @@ struct DeviceBackupTests {
             excludedApps: ["c", "a", "b"]
         )
         #expect(backup.excludedApps == ["a", "b", "c"])
+    }
+
+    @Test("跨機匯入不啟用本機負載模式，但門檻可攜")
+    func foreignBackupDoesNotEnableLocalLoadMode() {
+        var local = DeviceBackup(savedAt: .now, deviceName: "local", deviceID: "L")
+        local.keepAwakeSystemLoadMode = false
+        var incoming = DeviceBackup(savedAt: .now, deviceName: "other", deviceID: "R")
+        incoming.keepAwakeSystemLoadMode = true
+        incoming.keepAwakeSystemLoadConfiguration.cpu.activation = 70
+        let merged = incoming.portableMerged(onto: local)
+        #expect(!merged.keepAwakeSystemLoadMode)
+        #expect(merged.keepAwakeSystemLoadConfiguration.cpu.activation == 70)
+    }
+
+    @Test("舊備份缺負載欄位仍可解，設定回預設")
+    func missingLoadFieldsDecodeToDefaults() throws {
+        var backup = sample("A", port: 1, flag: true)
+        let data = try BackupCodec.encode(backup)
+        var object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        object.removeValue(forKey: "keepAwakeSystemLoadMode")
+        object.removeValue(forKey: "keepAwakeSystemLoadConfiguration")
+        let trimmed = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try BackupCodec.decode(DeviceBackup.self, from: trimmed)
+        #expect(!decoded.keepAwakeSystemLoadMode)
+        #expect(decoded.keepAwakeSystemLoadConfiguration == .default)
+    }
+
+    @Test("無效負載設定不讓整份備份失敗")
+    func invalidLoadConfigurationFallsBackWithoutFailingBackup() throws {
+        var backup = sample("A", port: 1, flag: true)
+        backup.keepAwakeSystemLoadConfiguration.cpu.activation = 10
+        backup.keepAwakeSystemLoadConfiguration.cpu.release = 50
+        let data = try BackupCodec.encode(backup)
+        // Corrupt activation after encode by rewriting JSON
+        var object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        var config = object["keepAwakeSystemLoadConfiguration"] as! [String: Any]
+        var cpu = config["cpu"] as! [String: Any]
+        cpu["activation"] = 10
+        cpu["release"] = 50
+        config["cpu"] = cpu
+        object["keepAwakeSystemLoadConfiguration"] = config
+        let corrupted = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try BackupCodec.decode(DeviceBackup.self, from: corrupted)
+        #expect(decoded.keepAwakeSystemLoadConfiguration == .default)
     }
 }

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ChorusCore
 
@@ -8,6 +9,8 @@ struct KeepAwakeTests {
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: .off, startedAt: 100, now: 100,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
+        ,
+            systemBusy: false
         ))
     }
 
@@ -17,10 +20,14 @@ struct KeepAwakeTests {
         #expect(KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 100, now: 100 + 1799,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
+        ,
+            systemBusy: false
         ))
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 100, now: 100 + 1800,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
+        ,
+            systemBusy: false
         ))
     }
 
@@ -29,11 +36,15 @@ struct KeepAwakeTests {
         #expect(KeepAwakePlanner.shouldHoldAssertion(
             mode: .indefinite, startedAt: 0, now: 999_999,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
+        ,
+            systemBusy: false
         ))
         // 沒有 startedAt ＝ 沒真的啟用
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: .indefinite, startedAt: nil, now: 10,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
+        ,
+            systemBusy: false
         ))
     }
 
@@ -43,10 +54,14 @@ struct KeepAwakeTests {
         #expect(KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
             connectedDisplayUUIDs: ["AOC", "builtin"], runningAppBundleIDs: [], agentsWorking: false
+        ,
+            systemBusy: false
         ))
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
             connectedDisplayUUIDs: ["builtin"], runningAppBundleIDs: [], agentsWorking: false
+        ,
+            systemBusy: false
         ))
     }
 
@@ -57,16 +72,22 @@ struct KeepAwakeTests {
             mode: mode, startedAt: 0, now: 50,
             connectedDisplayUUIDs: [],
             runningAppBundleIDs: ["com.apple.FinalCut", "com.apple.finder"], agentsWorking: false
+        ,
+            systemBusy: false
         ))
         // App 關掉就失效，但模式留著——再開時要能自己恢復
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
             connectedDisplayUUIDs: [], runningAppBundleIDs: ["com.apple.finder"], agentsWorking: false
+        ,
+            systemBusy: false
         ))
         // 沒有 startedAt ＝ 沒真的啟用
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: nil, now: 50,
             connectedDisplayUUIDs: [], runningAppBundleIDs: ["com.apple.FinalCut"], agentsWorking: false
+        ,
+            systemBusy: false
         ))
     }
 
@@ -76,16 +97,22 @@ struct KeepAwakeTests {
         #expect(KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: true
+        ,
+            systemBusy: false
         ))
         // agent 收工就放掉 assertion，但模式留著——下一輪再開工要能自己恢復
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
+        ,
+            systemBusy: false
         ))
         // 沒有 startedAt ＝ 沒真的啟用
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: nil, now: 50,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: true
+        ,
+            systemBusy: false
         ))
     }
 
@@ -104,6 +131,7 @@ struct KeepAwakeTests {
         let modes: [KeepAwakeMode] = [
             .off, .indefinite, .duration(seconds: 60),
             .whileDisplayConnected(uuid: "x"), .whileAppRunning(bundleID: "y"),
+            .whileSystemBusy,
         ]
         for mode in modes {
             #expect(
@@ -115,6 +143,27 @@ struct KeepAwakeTests {
                     == KeepAwakeAssertionPlan(preventsDisplaySleep: true, preventsSystemSleep: true)
             )
         }
+    }
+
+    @Test("Load mode holds only with startedAt and systemBusy")
+    func loadBound() {
+        let mode = KeepAwakeMode.whileSystemBusy
+        #expect(KeepAwakePlanner.shouldHoldAssertion(
+            mode: mode, startedAt: 0, now: 50,
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [],
+            agentsWorking: false, systemBusy: true
+        ))
+        #expect(!KeepAwakePlanner.shouldHoldAssertion(
+            mode: mode, startedAt: 0, now: 50,
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [],
+            agentsWorking: false, systemBusy: false
+        ))
+        #expect(!KeepAwakePlanner.shouldHoldAssertion(
+            mode: mode, startedAt: nil, now: 50,
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [],
+            agentsWorking: false, systemBusy: true
+        ))
+        #expect(KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: 10, now: 30) == nil)
     }
 
     @Test("Remaining seconds counts down and floors at zero")
@@ -149,5 +198,14 @@ struct KeepAwakeTests {
         #expect(
             KeepAwakePlanner.decode(KeepAwakePlanner.encode(.whileAgentsWorking)) == .indefinite
         )
+        #expect(KeepAwakePlanner.encode(.whileSystemBusy) == -1)
+        #expect(KeepAwakePlanner.decode(KeepAwakePlanner.encode(.whileSystemBusy)) == .indefinite)
+    }
+
+    @Test("Codable preserves the load mode case")
+    func loadModeCodable() throws {
+        let data = try JSONEncoder().encode(KeepAwakeMode.whileSystemBusy)
+        let decoded = try JSONDecoder().decode(KeepAwakeMode.self, from: data)
+        #expect(decoded == .whileSystemBusy)
     }
 }

@@ -66,6 +66,8 @@ final class KeepAwakeController {
     /// Agent 活動偵測。只有 Agent 模式會叫它 `start()`，
     /// 其餘模式不必為了沒人看的狀態定期掃目錄。
     let agentActivity: AgentActivityMonitor
+    /// 整機負載偵測。只有高負載模式會叫它 `start()`。
+    let systemLoad: SystemLoadMonitor
 
     /// 除了螢幕待機，是否連系統待機一起擋。
     var alsoPreventSystemSleep: Bool {
@@ -107,48 +109,117 @@ final class KeepAwakeController {
     @ObservationIgnored private var systemAssertion: IOPMAssertionID?
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private var wakeObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var sleepObserver: NSObjectProtocol?
     /// 只有綁定 App 模式才掛：其餘模式不必為每次 App 啟動／結束醒來。
     @ObservationIgnored private var appObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var shutDown = false
 
     init(
         settings: SettingsStore,
         displayManager: DisplayManager,
         agentActivity: AgentActivityMonitor = AgentActivityMonitor(),
+        systemLoad: SystemLoadMonitor = SystemLoadMonitor(),
         assertions: any KeepAwakeAsserting = SystemKeepAwakeAssertions(),
         now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.settings = settings
         self.displayManager = displayManager
         self.agentActivity = agentActivity
+        self.systemLoad = systemLoad
         self.assertions = assertions
         self.now = now
         alsoPreventSystemSleep = settings.keepAwakePreventsSystemSleep
         agentProcessDetectionEnabled = settings.keepAwakeProcessDetection
         agentCustomProcessNames = settings.keepAwakeCustomProcessNames
         agentActivity.onWorkingChanged = { [weak self] in self?.reevaluate() }
+        systemLoad.onDecisionChanged = { [weak self] in self?.reevaluate() }
         // `didSet` 在 init 裡不會跑，設定得在這裡自己推一次給 monitor。
         agentActivity.configureProcessDetection(
             enabled: agentProcessDetectionEnabled, customProcessNames: agentCustomProcessNames
         )
     }
 
+    /// 選單明確選用：寫入互斥持久化旗標，再 activate。
+    func selectMode(_ mode: KeepAwakeMode) {
+        settings.keepAwakeDisplayUUID = nil
+        settings.keepAwakeAppBundleID = nil
+        settings.keepAwakeAgentMode = false
+        settings.keepAwakeSystemLoadMode = false
+        switch mode {
+        case let .whileDisplayConnected(uuid):
+            settings.keepAwakeDisplayUUID = uuid
+        case let .whileAppRunning(bundleID):
+            settings.keepAwakeAppBundleID = bundleID
+        case .whileAgentsWorking:
+            settings.keepAwakeAgentMode = true
+        case .whileSystemBusy:
+            settings.keepAwakeSystemLoadMode = true
+        case .off, .duration, .indefinite:
+            break
+        }
+        activate(mode)
+    }
+
+    /// 啟動還原：螢幕 > App > Agent > 負載；正規化殘留 key。
+    func restoreSavedMode() {
+        let display = settings.keepAwakeDisplayUUID
+        let app = settings.keepAwakeAppBundleID
+        let agent = settings.keepAwakeAgentMode
+        let load = settings.keepAwakeSystemLoadMode
+
+        if let display {
+            settings.keepAwakeAppBundleID = nil
+            settings.keepAwakeAgentMode = false
+            settings.keepAwakeSystemLoadMode = false
+            activate(.whileDisplayConnected(uuid: display))
+        } else if let app {
+            settings.keepAwakeAgentMode = false
+            settings.keepAwakeSystemLoadMode = false
+            activate(.whileAppRunning(bundleID: app))
+        } else if agent {
+            settings.keepAwakeSystemLoadMode = false
+            activate(.whileAgentsWorking)
+        } else if load {
+            activate(.whileSystemBusy)
+        }
+    }
+
+    /// 套用負載門檻：清 latch、不切 mode；若正在負載模式則重啟採樣。
+    func applySystemLoadConfiguration(_ value: SystemLoadConfiguration) {
+        let normalized = value.normalized()
+        settings.keepAwakeSystemLoadConfiguration = normalized
+        if case .whileSystemBusy = mode {
+            systemLoad.applyConfiguration(normalized)
+            reevaluate()
+        }
+    }
+
     func activate(_ mode: KeepAwakeMode) {
+        guard !shutDown || mode == .off else { return }
         self.mode = mode
         startedAt = mode == .off ? nil : now()
         updateAppObservers()
         updateWakeObservers()
         updateAgentMonitor()
+        updateSystemLoadMonitor()
         reevaluate()
         // 長亮期間持續核對 assertion；建立失敗或失效後仍須重試。
         tickTask?.cancel()
         tickTask = nil
         if mode != .off {
             let interval: Duration
-            if case .duration = mode { interval = .seconds(1) } else { interval = .seconds(10) }
+            switch mode {
+            case .duration: interval = .seconds(1)
+            case .whileSystemBusy: interval = .seconds(5)
+            default: interval = .seconds(10)
+            }
             tickTask = Task { [weak self] in
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: interval) } catch { return }
                     guard !Task.isCancelled, let self, self.mode != .off else { return }
+                    if case .whileSystemBusy = self.mode {
+                        self.systemLoad.evaluate(now: self.now())
+                    }
                     self.reevaluate()
                 }
             }
@@ -159,10 +230,14 @@ final class KeepAwakeController {
         activate(.off)
     }
 
-    /// 顯示器組合變更 → 重新評估「接著某台螢幕時防睡眠」。
+    /// 顯示器組合變更 → 重新評估「接著某台螢幕時防睡眠」；負載模式重探 GPU。
     func displaysDidChange() {
-        guard case .whileDisplayConnected = mode else { return }
-        reevaluate()
+        if case .whileDisplayConnected = mode {
+            reevaluate()
+        }
+        if case .whileSystemBusy = mode {
+            systemLoad.invalidateGPUCapability()
+        }
     }
 
     /// App 啟動／結束 → 重新評估「這個 App 執行中才防睡眠」。
@@ -172,7 +247,9 @@ final class KeepAwakeController {
     }
 
     /// App 結束前釋放（核心其實也會自動回收，但明確釋放比較乾淨）。
+    /// 使用 runtime `activate(.off)`：不清除已保存偏好。
     func shutdown() {
+        shutDown = true
         deactivate()
     }
 
@@ -190,7 +267,8 @@ final class KeepAwakeController {
             now: currentTime,
             connectedDisplayUUIDs: connected,
             runningAppBundleIDs: running,
-            agentsWorking: agentActivity.isWorking
+            agentsWorking: agentActivity.isWorking,
+            systemBusy: systemLoad.evaluation.shouldHold
         )
         let plan = KeepAwakePlanner.assertionPlan(mode: mode, alsoPreventSystemSleep: alsoPreventSystemSleep)
         if shouldHold {
@@ -225,17 +303,50 @@ final class KeepAwakeController {
 
     private func updateWakeObservers() {
         let center = NSWorkspace.shared.notificationCenter
-        guard mode != .off else {
-            wakeObservers.forEach { center.removeObserver($0) }
-            wakeObservers = []
-            return
+        wakeObservers.forEach { center.removeObserver($0) }
+        wakeObservers = []
+        if let sleepObserver {
+            center.removeObserver(sleepObserver)
+            self.sleepObserver = nil
         }
-        guard wakeObservers.isEmpty else { return }
+        guard mode != .off else { return }
+
+        sleepObserver = center.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.handleWillSleep() }
+        }
         for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
-            wakeObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.reevaluate() }
+            wakeObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let isWake = note.name == NSWorkspace.didWakeNotification
+                MainActor.assumeIsolated {
+                    guard let self, !self.shutDown else { return }
+                    if isWake {
+                        self.handleDidWake()
+                    } else {
+                        self.reevaluate()
+                    }
+                }
             })
         }
+    }
+
+    private func handleWillSleep() {
+        if case .whileSystemBusy = mode {
+            systemLoad.stop()
+            release(&displayAssertion)
+            release(&systemAssertion)
+            isHolding = false
+            activationFailed = false
+        }
+    }
+
+    private func handleDidWake() {
+        guard !shutDown else { return }
+        if case .whileSystemBusy = mode {
+            systemLoad.resetAfterWake()
+        }
+        reevaluate()
     }
 
     /// Agent 模式進出時開／關目錄輪詢。
@@ -244,6 +355,14 @@ final class KeepAwakeController {
             agentActivity.start()
         } else {
             agentActivity.stop()
+        }
+    }
+
+    private func updateSystemLoadMonitor() {
+        if case .whileSystemBusy = mode {
+            systemLoad.start(configuration: settings.keepAwakeSystemLoadConfiguration)
+        } else {
+            systemLoad.stop()
         }
     }
 

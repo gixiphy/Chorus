@@ -20,6 +20,8 @@ public enum KeepAwakeMode: Sendable, Equatable, Codable, Hashable {
     /// 這一檔與其他檔的**防的東西不一樣**：擋的是系統待機而不是螢幕待機。
     /// agent 跑整夜時要的是機器別睡，螢幕暗掉反而正好。見 `assertionPlan`。
     case whileAgentsWorking
+    /// 整機 CPU／GPU／網路持續高負載時才防睡眠——負載消退後自動解除。
+    case whileSystemBusy
 }
 
 /// 持有期間各擋哪一種待機。兩個旗標互相獨立：Agent 模式只擋系統待機，
@@ -42,8 +44,9 @@ public enum KeepAwakePlanner {
     ///   - connectedDisplayUUIDs: 目前在線的顯示器 UUID。
     ///   - runningAppBundleIDs: 目前執行中的 App bundle ID。
     ///   - agentsWorking: 目前是否有 AI agent 在工作（見 `AgentActivityPlanner`）。
+    ///   - systemBusy: 目前系統負載狀態機是否要求持有（見 `SystemLoadActivityPlanner`）。
     ///
-    /// 三個環境參數都不給預設值：漏傳等於「條件永遠不成立」，
+    /// 環境參數都不給預設值：漏傳等於「條件永遠不成立」，
     /// 而長亮失效是使用者最不想默默發生的事。
     public static func shouldHoldAssertion(
         mode: KeepAwakeMode,
@@ -51,7 +54,8 @@ public enum KeepAwakePlanner {
         now: Double,
         connectedDisplayUUIDs: Set<String>,
         runningAppBundleIDs: Set<String>,
-        agentsWorking: Bool
+        agentsWorking: Bool,
+        systemBusy: Bool
     ) -> Bool {
         switch mode {
         case .off:
@@ -70,6 +74,9 @@ public enum KeepAwakePlanner {
         case .whileAgentsWorking:
             guard startedAt != nil else { return false }
             return agentsWorking
+        case .whileSystemBusy:
+            guard startedAt != nil else { return false }
+            return systemBusy
         }
     }
 
@@ -85,7 +92,7 @@ public enum KeepAwakePlanner {
         switch mode {
         case .whileAgentsWorking:
             KeepAwakeAssertionPlan(preventsDisplaySleep: false, preventsSystemSleep: true)
-        case .off, .duration, .indefinite, .whileDisplayConnected, .whileAppRunning:
+        case .off, .duration, .indefinite, .whileDisplayConnected, .whileAppRunning, .whileSystemBusy:
             KeepAwakeAssertionPlan(
                 preventsDisplaySleep: true,
                 preventsSystemSleep: alsoPreventSystemSleep
@@ -105,14 +112,14 @@ public enum KeepAwakePlanner {
     }
 
     /// 遙控 command 的 value 編碼：0 = 關閉、負值 = 無限期、正值 = 秒數。
-    /// 螢幕／App／Agent 綁定模式是本機設定，不跨機遙控
-    /// （對方的螢幕組合、執行中的 App 與 agent 我們管不著）。
+    /// 螢幕／App／Agent／負載綁定模式是本機設定，不跨機遙控
+    /// （對方的螢幕組合、執行中的 App、agent 與負載我們管不著）。
     public static func encode(_ mode: KeepAwakeMode) -> Double {
         switch mode {
         case .off: 0
         case .indefinite: -1
         case let .duration(seconds): seconds
-        case .whileDisplayConnected, .whileAppRunning, .whileAgentsWorking: -1
+        case .whileDisplayConnected, .whileAppRunning, .whileAgentsWorking, .whileSystemBusy: -1
         }
     }
 

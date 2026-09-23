@@ -248,6 +248,7 @@ private struct KeepAwakeRow: View {
                         }
                     }
                     Button("有 agent 在工作時") { activate(.whileAgentsWorking) }
+                    Button("高負載時") { activate(.whileSystemBusy) }
                     if appState.keepAwake.mode != .off {
                         Divider()
                         Button("關閉") { activate(.off) }
@@ -272,22 +273,9 @@ private struct KeepAwakeRow: View {
         return keepAwake.isHolding ? "cup.and.saucer.fill" : "cup.and.saucer"
     }
 
-    /// 切模式時順手把「跨重啟記住的綁定」對齊：三個綁定互斥，
-    /// 選了計時／無限期／關閉就都清掉——否則下次開機會冒出使用者
-    /// 早就換掉的舊綁定。
+    /// 切模式時順手把「跨重啟記住的綁定」對齊：四個綁定互斥。
     private func activate(_ mode: KeepAwakeMode) {
-        if case let .whileDisplayConnected(uuid) = mode {
-            appState.settings.keepAwakeDisplayUUID = uuid
-        } else {
-            appState.settings.keepAwakeDisplayUUID = nil
-        }
-        if case let .whileAppRunning(bundleID) = mode {
-            appState.settings.keepAwakeAppBundleID = bundleID
-        } else {
-            appState.settings.keepAwakeAppBundleID = nil
-        }
-        appState.settings.keepAwakeAgentMode = mode == .whileAgentsWorking
-        appState.keepAwake.activate(mode)
+        appState.keepAwake.selectMode(mode)
     }
 
     private var menuLabel: String {
@@ -298,6 +286,7 @@ private struct KeepAwakeRow: View {
         case .whileDisplayConnected: String(localized: "綁定螢幕")
         case .whileAppRunning: String(localized: "綁定 App")
         case .whileAgentsWorking: String(localized: "Agent")
+        case .whileSystemBusy: String(localized: "高負載")
         }
     }
 
@@ -328,10 +317,14 @@ private struct KeepAwakeRow: View {
             guard keepAwake.isHolding else { return String(localized: "沒有 agent 在工作 — 暫停中") }
             let count = String(keepAwake.agentActivity.working.count)
             let sources = engines.joined(separator: "、")
-            // Agent 模式擋的是系統待機不是螢幕待機，說明得講清楚——
-            // 不然使用者會以為壞了：螢幕照樣會暗。
-            // 「session」不對：第二層的樣本是行程樹，不是 session。
             return String(localized: "\(count) 個 \(sources) 在工作中 — 系統不待機")
+        case .whileSystemBusy:
+            return SystemLoadStatusFormatter.caption(
+                evaluation: keepAwake.systemLoad.evaluation,
+                sample: keepAwake.systemLoad.latestSample,
+                isHolding: keepAwake.isHolding,
+                alsoPreventSystemSleep: keepAwake.alsoPreventSystemSleep
+            )
         }
     }
 }

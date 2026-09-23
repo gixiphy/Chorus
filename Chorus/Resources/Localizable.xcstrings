@@ -17,6 +17,17 @@
         }
       }
     },
+    "%" : {},
+    "%@ %.0f%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ %.0f%%"
+          }
+        }
+      }
+    },
     "%@ (build %@)" : {
       "localizations" : {
         "en" : {
@@ -29,6 +40,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ (build %@)"
+          }
+        }
+      }
+    },
+    "%@ · 螢幕常亮" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · keeping display awake"
+          }
+        }
+      }
+    },
+    "%@ · 螢幕與系統保持喚醒" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · keeping display and system awake"
           }
         }
       }
@@ -146,6 +177,7 @@
         }
       }
     },
+    "%@ 啟用門檻" : {},
     "%@ 已被「%@」使用。" : {
       "localizations" : {
         "en" : {
@@ -238,6 +270,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ 的 %@"
+          }
+        }
+      }
+    },
+    "%@ 維持門檻" : {},
+    "%@ 達門檻 · 確認中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ at threshold · confirming"
           }
         }
       }
@@ -493,6 +536,16 @@
         }
       }
     },
+    "%lld 秒" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld s"
+          }
+        }
+      }
+    },
     "%lld 秒後還原" : {
       "localizations" : {
         "en" : {
@@ -634,6 +687,54 @@
         }
       }
     },
+    "1/3＋2/3 並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/3 + 2/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/3＋2/3 并排"
+          }
+        }
+      }
+    },
+    "1/4＋3/4 並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/4 + 3/4"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1/4＋3/4 并排"
+          }
+        }
+      }
+    },
+    "2/3＋1/3 並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2/3 + 1/3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2/3＋1/3 并排"
+          }
+        }
+      }
+    },
     "24" : {
       "localizations" : {
         "en" : {
@@ -646,6 +747,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "24"
+          }
+        }
+      }
+    },
+    "3/4＋1/4 並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3/4 + 1/4"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3/4＋1/4 并排"
           }
         }
       }
@@ -806,6 +923,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Apple 原生"
+          }
+        }
+      }
+    },
+    "CPU" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CPU"
+          }
+        }
+      }
+    },
+    "CPU／網路監測中 · GPU 不支援" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Monitoring CPU/network · GPU unsupported"
           }
         }
       }
@@ -1004,6 +1141,36 @@
         }
       }
     },
+    "GPU" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPU"
+          }
+        }
+      }
+    },
+    "GPU %.0f%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPU %.0f%%"
+          }
+        }
+      }
+    },
+    "GPU 暫時讀取失敗，將自動重試。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPU read failed temporarily; will retry automatically."
+          }
+        }
+      }
+    },
     "HDR：%@" : {
       "localizations" : {
         "en" : {
@@ -1048,6 +1215,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "IOAVService：无（DDC 不可用或已降级）"
+          }
+        }
+      }
+    },
+    "MiB/s" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MiB/s"
           }
         }
       }
@@ -2370,6 +2547,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "中间三分之二"
+          }
+        }
+      }
+    },
+    "中央主區並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Center Stage"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中央主区并排"
+          }
+        }
+      }
+    },
+    "主區＋雙側窗並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Main + Two Side Windows"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主区＋双侧窗并排"
+          }
+        }
+      }
+    },
+    "主區＋雙側窗並排（鏡像）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Main + Two Side Windows (Mirrored)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主区＋双侧窗并排（镜像）"
           }
         }
       }
@@ -4219,6 +4444,22 @@
         }
       }
     },
+    "右四分之三" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right Three Fourths"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右四分之三"
+          }
+        }
+      }
+    },
     "各 App 音量" : {
       "localizations" : {
         "en" : {
@@ -4476,6 +4717,16 @@
         }
       }
     },
+    "啟用持續時間" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activation duration"
+          }
+        }
+      }
+    },
     "啟用視窗排列" : {
       "localizations" : {
         "en" : {
@@ -4536,6 +4787,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "四分并排"
+          }
+        }
+      }
+    },
+    "四分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fourths"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "四分之一"
+          }
+        }
+      }
+    },
+    "四分之三" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Three Fourths"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "四分之三"
+          }
+        }
+      }
+    },
+    "四欄並排" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Four Columns"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "四栏并排"
           }
         }
       }
@@ -5826,6 +6125,22 @@
         }
       }
     },
+    "左四分之三" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left Three Fourths"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左四分之三"
+          }
+        }
+      }
+    },
     "左／右／上／下半屏" : {
       "extractionState" : "stale"
     },
@@ -5988,6 +6303,22 @@
         }
       }
     },
+    "已展開" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expanded"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已展开"
+          }
+        }
+      }
+    },
     "已建立「%@」" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -6093,6 +6424,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已排除此设备——Chorus 不会在它上面进行任何处理"
+          }
+        }
+      }
+    },
+    "已收合" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapsed"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已收起"
           }
         }
       }
@@ -7107,6 +7454,22 @@
         }
       }
     },
+    "按住 Shift 拖曳視窗時，依視窗所在螢幕在這裡選的版型選區，每台螢幕各自記住；⌃⌥⇧1–4 則直接把目前視窗放進第 1–4 區（由左到右、由上到下）。切換版型不會搬動現有視窗。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "While Shift-dragging a window, zones follow the layout chosen here for the display the window is on; each display remembers its own. ⌃⌥⇧1–4 put the current window straight into zone 1–4 (left to right, top to bottom). Switching layouts doesn't move existing windows."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按住 Shift 拖拽窗口时，按窗口所在显示器在这里选的版型选区，每台显示器各自记住；⌃⌥⇧1–4 则直接把当前窗口放进第 1–4 区（从左到右、从上到下）。切换版型不会移动现有窗口。"
+          }
+        }
+      }
+    },
     "掃描順序：自訂路徑 → PATH → 常見安裝位置。找不到時可在上方填入執行檔完整路徑。" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -7491,6 +7854,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "放弃"
+          }
+        }
+      }
+    },
+    "放進第 1 區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Zone 1"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放进第 1 区"
+          }
+        }
+      }
+    },
+    "放進第 2 區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Zone 2"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放进第 2 区"
+          }
+        }
+      }
+    },
+    "放進第 3 區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Zone 3"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放进第 3 区"
+          }
+        }
+      }
+    },
+    "放進第 4 區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Zone 4"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放进第 4 区"
           }
         }
       }
@@ -7910,6 +8337,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未启用。"
+          }
+        }
+      }
+    },
+    "未啟用高負載模式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "High-load mode is not enabled"
           }
         }
       }
@@ -8513,6 +8950,16 @@
         }
       }
     },
+    "此機 GPU 使用率不可讀；CPU／網路仍可監測。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPU utilization is unreadable on this Mac; CPU and network monitoring still work."
+          }
+        }
+      }
+    },
     "此螢幕沒有相符的模式" : {
       "localizations" : {
         "en" : {
@@ -8605,38 +9052,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每个输出设备一组：左右平衡与均衡。耳机校正（AutoEq）的主场景本来就不经虚拟设备——直接对那副耳机开启。"
-          }
-        }
-      }
-    },
-    "特型拖曳佈局" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Special Drag Layout"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "特型拖拽布局"
-          }
-        }
-      }
-    },
-    "按住 Shift 拖曳視窗時，依視窗所在螢幕在這裡選的版型選區，每台螢幕各自記住；⌃⌥⇧1–4 則直接把目前視窗放進第 1–4 區（由左到右、由上到下）。切換版型不會搬動現有視窗。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "While Shift-dragging a window, zones follow the layout chosen here for the display the window is on; each display remembers its own. ⌃⌥⇧1–4 put the current window straight into zone 1–4 (left to right, top to bottom). Switching layouts doesn't move existing windows."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "按住 Shift 拖拽窗口时，按窗口所在显示器在这里选的版型选区，每台显示器各自记住；⌃⌥⇧1–4 则直接把当前窗口放进第 1–4 区（从左到右、从上到下）。切换版型不会移动现有窗口。"
           }
         }
       }
@@ -8941,6 +9356,16 @@
         }
       }
     },
+    "無可用監測資料" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No usable monitoring data"
+          }
+        }
+      }
+    },
     "無法取得位置（%@），改用下方的手動時間。" : {
       "localizations" : {
         "en" : {
@@ -9197,6 +9622,38 @@
         }
       }
     },
+    "特型分區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Special Zones"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特型分区"
+          }
+        }
+      }
+    },
+    "特型拖曳佈局" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Special Drag Layout"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特型拖拽布局"
+          }
+        }
+      }
+    },
     "狀態" : {
       "localizations" : {
         "en" : {
@@ -9321,6 +9778,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "白天，窗帘拉开"
+          }
+        }
+      }
+    },
+    "監測中，等待持續負載" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Monitoring — waiting for sustained load"
+          }
+        }
+      }
+    },
+    "監測整機負載（非單一 App）。網路含區域網路流量；單核忙碌未必達到整機 CPU 門檻。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Monitors whole-machine load (not a single app). Network includes LAN traffic; a busy single core may not reach the whole-CPU threshold."
+          }
+        }
+      }
+    },
+    "監測資料中斷 · 約 %lld 秒後解除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Monitoring interrupted · releasing in about %lld s"
           }
         }
       }
@@ -9517,6 +10004,22 @@
         }
       }
     },
+    "目前版型只有 %lld 個分區" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The current layout has only %lld zones"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前版型只有 %lld 个分区"
+          }
+        }
+      }
+    },
     "目前環境光 %lld lx" : {
       "localizations" : {
         "en" : {
@@ -9593,6 +10096,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前窗口放主要位置，这台显示器上其余窗口按最近使用的顺序填入。"
+          }
+        }
+      }
+    },
+    "目前讀值" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current readings"
           }
         }
       }
@@ -9674,6 +10187,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "竖屏显示器"
+          }
+        }
+      }
+    },
+    "直立螢幕沒有分區版型" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Portrait displays have no zone layouts"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "竖屏没有分区版型"
           }
         }
       }
@@ -9834,6 +10363,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "立即备份"
+          }
+        }
+      }
+    },
+    "第 1 個四分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First Fourth"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 1 个四分之一"
+          }
+        }
+      }
+    },
+    "第 2 個四分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Second Fourth"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 2 个四分之一"
+          }
+        }
+      }
+    },
+    "第 3 個四分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Third Fourth"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 3 个四分之一"
+          }
+        }
+      }
+    },
+    "第 4 個四分之一" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last Fourth"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 4 个四分之一"
           }
         }
       }
@@ -10410,6 +11003,46 @@
         }
       }
     },
+    "網路" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Network"
+          }
+        }
+      }
+    },
+    "網路 %.2f MiB/s" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Network %.2f MiB/s"
+          }
+        }
+      }
+    },
+    "網路啟用門檻" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Network activation threshold"
+          }
+        }
+      }
+    },
+    "網路維持門檻" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Network sustain threshold"
+          }
+        }
+      }
+    },
     "繼續" : {
       "localizations" : {
         "en" : {
@@ -10633,6 +11266,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自定义…"
+          }
+        }
+      }
+    },
+    "至少選擇一項監測指標" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select at least one signal to monitor"
           }
         }
       }
@@ -11147,6 +11790,16 @@
         }
       }
     },
+    "解除延遲" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Release delay"
+          }
+        }
+      }
+    },
     "計時中" : {
       "localizations" : {
         "en" : {
@@ -11240,6 +11893,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "设置 → AI 引擎：确认 CLI 已安装或指定路径"
+          }
+        }
+      }
+    },
+    "設定無效：請檢查門檻範圍與啟用／維持關係" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid settings: check threshold ranges and activation/release relationships"
           }
         }
       }
@@ -11516,6 +12179,26 @@
         }
       }
     },
+    "負載" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Load"
+          }
+        }
+      }
+    },
+    "負載降低 · 約 %lld 秒後解除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Load dropped · releasing in about %lld s"
+          }
+        }
+      }
+    },
     "貼上校正檔" : {
       "localizations" : {
         "en" : {
@@ -11561,22 +12244,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "起始方案"
-          }
-        }
-      }
-    },
-    "特型分區" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Special Zones"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "特型分区"
           }
         }
       }
@@ -11995,22 +12662,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这台设备未启用 iCloud Drive，备份功能已停用。"
-          }
-        }
-      }
-    },
-    "直立螢幕沒有分區版型" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Portrait displays have no zone layouts"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "竖屏没有分区版型"
           }
         }
       }
@@ -12621,86 +13272,6 @@
         }
       }
     },
-    "放進第 1 區" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Move to Zone 1"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "放进第 1 区"
-          }
-        }
-      }
-    },
-    "放進第 2 區" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Move to Zone 2"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "放进第 2 区"
-          }
-        }
-      }
-    },
-    "放進第 3 區" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Move to Zone 3"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "放进第 3 区"
-          }
-        }
-      }
-    },
-    "放進第 4 區" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Move to Zone 4"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "放进第 4 区"
-          }
-        }
-      }
-    },
-    "目前版型只有 %lld 個分區" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The current layout has only %lld zones"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "当前版型只有 %lld 个分区"
-          }
-        }
-      }
-    },
     "鍵盤選區請用選單「鍵盤選區」：方向鍵移動、Enter 套用、Esc 取消。" : {
       "extractionState" : "stale"
     },
@@ -12995,6 +13566,7 @@
       }
     },
     "開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時／有 agent 在工作時）在選單列。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -13006,6 +13578,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "开关与触发条件（30 分钟／1 小时／无限期／连接某台显示器时／某个 App 运行时／有 agent 在工作时）在菜单栏。"
+          }
+        }
+      }
+    },
+    "開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時／有 agent 在工作時／高負載時）在選單列。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Duration and triggers (30 minutes / 1 hour / indefinite / while a display is connected / while an app is running / while agents are working / under high load) are in the menu bar."
           }
         }
       }
@@ -13648,6 +14230,36 @@
         }
       }
     },
+    "高負載" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "High load"
+          }
+        }
+      }
+    },
+    "高負載時" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "While under high load"
+          }
+        }
+      }
+    },
+    "高負載時自動常亮" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep display awake under high load"
+          }
+        }
+      }
+    },
     "高音增強" : {
       "localizations" : {
         "en" : {
@@ -13753,294 +14365,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "；%lld 项不会自动恢复"
-          }
-        }
-      }
-    },
-    "第 1 個四分之一" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "First Fourth"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "第 1 个四分之一"
-          }
-        }
-      }
-    },
-    "第 2 個四分之一" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Second Fourth"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "第 2 个四分之一"
-          }
-        }
-      }
-    },
-    "第 3 個四分之一" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Third Fourth"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "第 3 个四分之一"
-          }
-        }
-      }
-    },
-    "第 4 個四分之一" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Last Fourth"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "第 4 个四分之一"
-          }
-        }
-      }
-    },
-    "左四分之三" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Left Three Fourths"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "左四分之三"
-          }
-        }
-      }
-    },
-    "右四分之三" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Right Three Fourths"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "右四分之三"
-          }
-        }
-      }
-    },
-    "四分之一" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fourths"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "四分之一"
-          }
-        }
-      }
-    },
-    "四分之三" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Three Fourths"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "四分之三"
-          }
-        }
-      }
-    },
-    "已展開" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Expanded"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已展开"
-          }
-        }
-      }
-    },
-    "已收合" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Collapsed"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已收起"
-          }
-        }
-      }
-    },
-    "中央主區並排" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Center Stage"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "中央主区并排"
-          }
-        }
-      }
-    },
-    "四欄並排" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Four Columns"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "四栏并排"
-          }
-        }
-      }
-    },
-    "2/3＋1/3 並排" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "2/3 + 1/3"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "2/3＋1/3 并排"
-          }
-        }
-      }
-    },
-    "1/3＋2/3 並排" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "1/3 + 2/3"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "1/3＋2/3 并排"
-          }
-        }
-      }
-    },
-    "1/4＋3/4 並排" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "1/4 + 3/4"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "1/4＋3/4 并排"
-          }
-        }
-      }
-    },
-    "3/4＋1/4 並排" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "3/4 + 1/4"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "3/4＋1/4 并排"
-          }
-        }
-      }
-    },
-    "主區＋雙側窗並排" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Main + Two Side Windows"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "主区＋双侧窗并排"
-          }
-        }
-      }
-    },
-    "主區＋雙側窗並排（鏡像）" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Main + Two Side Windows (Mirrored)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "主区＋双侧窗并排（镜像）"
           }
         }
       }

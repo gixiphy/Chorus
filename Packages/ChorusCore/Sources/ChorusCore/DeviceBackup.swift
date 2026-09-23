@@ -97,6 +97,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
     public var keepAwakeDisplayUUID: String?
     public var keepAwakeAppBundleID: String?
     public var keepAwakeAgentMode: Bool
+    public var keepAwakeSystemLoadMode: Bool
+    public var keepAwakeSystemLoadConfiguration: SystemLoadConfiguration
     public var keepAwakeProcessDetection: Bool
     public var keepAwakeCustomProcessNames: [String]
     public var mediaKeyCaptureEnabled: Bool
@@ -145,6 +147,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         keepAwakeDisplayUUID: String? = nil,
         keepAwakeAppBundleID: String? = nil,
         keepAwakeAgentMode: Bool = false,
+        keepAwakeSystemLoadMode: Bool = false,
+        keepAwakeSystemLoadConfiguration: SystemLoadConfiguration = .default,
         keepAwakeProcessDetection: Bool = true,
         keepAwakeCustomProcessNames: [String] = [],
         mediaKeyCaptureEnabled: Bool = false,
@@ -192,6 +196,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         self.keepAwakeDisplayUUID = keepAwakeDisplayUUID
         self.keepAwakeAppBundleID = keepAwakeAppBundleID
         self.keepAwakeAgentMode = keepAwakeAgentMode
+        self.keepAwakeSystemLoadMode = keepAwakeSystemLoadMode
+        self.keepAwakeSystemLoadConfiguration = keepAwakeSystemLoadConfiguration.normalized()
         self.keepAwakeProcessDetection = keepAwakeProcessDetection
         self.keepAwakeCustomProcessNames = keepAwakeCustomProcessNames.sorted()
         self.mediaKeyCaptureEnabled = mediaKeyCaptureEnabled
@@ -250,6 +256,12 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         keepAwakeDisplayUUID = try c.decodeIfPresent(String.self, forKey: .keepAwakeDisplayUUID)
         keepAwakeAppBundleID = try c.decodeIfPresent(String.self, forKey: .keepAwakeAppBundleID)
         keepAwakeAgentMode = try c.decodeIfPresent(Bool.self, forKey: .keepAwakeAgentMode) ?? false
+        keepAwakeSystemLoadMode = try c.decodeIfPresent(Bool.self, forKey: .keepAwakeSystemLoadMode) ?? false
+        if let config = try c.decodeIfPresent(SystemLoadConfiguration.self, forKey: .keepAwakeSystemLoadConfiguration) {
+            keepAwakeSystemLoadConfiguration = config.normalized()
+        } else {
+            keepAwakeSystemLoadConfiguration = .default
+        }
         keepAwakeProcessDetection = try c.decodeIfPresent(Bool.self, forKey: .keepAwakeProcessDetection) ?? true
         keepAwakeCustomProcessNames = try list(.keepAwakeCustomProcessNames)
         mediaKeyCaptureEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyCaptureEnabled) ?? false
@@ -292,8 +304,9 @@ public enum BackupPortability {
         // 裝置 UID 為鍵：同理
         "hiddenAudioDevices", "audioBridgeDisabled", "excludedDevices",
         "softwareVolumeDevices", "outputPriority", "virtualTargetUID",
-        // 綁定的是這台的螢幕／這台裝了什麼 App
-        "keepAwakeDisplayUUID", "keepAwakeAppBundleID",
+        // 綁定的是這台的螢幕／這台裝了什麼 App；負載模式旗標也綁機
+        // （另一台不應因匯入就開始監測）
+        "keepAwakeDisplayUUID", "keepAwakeAppBundleID", "keepAwakeSystemLoadMode",
         // 崩潰紀錄綁機：另一台的那個外掛可能沒問題
         "effectQuarantine",
         // 路徑綁機
@@ -316,6 +329,7 @@ public enum BackupPortability {
         // 螢幕 > App > agent），所以匯入的 `keepAwakeAgentMode = true`
         // 只有在兩者都空的時候才真的把模式打開。
         "keepAwakeAgentMode", "keepAwakeProcessDetection", "keepAwakeCustomProcessNames",
+        "keepAwakeSystemLoadConfiguration",
         "mediaKeyCaptureEnabled",
         "syncBrightnessEnabled", "syncVolumeEnabled",
         "advisorEngineID", "advisorDisabledEngines",
@@ -352,6 +366,7 @@ public extension DeviceBackup {
         result.virtualTargetUID = local.virtualTargetUID
         result.keepAwakeDisplayUUID = local.keepAwakeDisplayUUID
         result.keepAwakeAppBundleID = local.keepAwakeAppBundleID
+        result.keepAwakeSystemLoadMode = local.keepAwakeSystemLoadMode
         result.effectQuarantine = local.effectQuarantine
         result.advisorCustomPaths = local.advisorCustomPaths
         result.audioTapsEnabled = local.audioTapsEnabled

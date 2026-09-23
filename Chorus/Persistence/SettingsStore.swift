@@ -64,6 +64,8 @@ final class SettingsStore {
         static let keepAwakeDisplayUUID = "chorus.keepAwake.displayUUID"
         static let keepAwakeAppBundleID = "chorus.keepAwake.appBundleID"
         static let keepAwakeAgentMode = "chorus.keepAwake.agentMode"
+        static let keepAwakeSystemLoadMode = "chorus.keepAwake.systemLoadMode"
+        static let keepAwakeSystemLoadConfiguration = "chorus.keepAwake.systemLoadConfiguration"
         static let keepAwakeProcessDetection = "chorus.keepAwake.processDetection"
         static let keepAwakeCustomProcessNames = "chorus.keepAwake.customProcessNames"
         static let virtualTargetUID = "chorus.audio.virtualTargetUID"
@@ -438,6 +440,25 @@ final class SettingsStore {
         didSet { defaults.set(keepAwakeAgentMode, forKey: Key.keepAwakeAgentMode) }
     }
 
+    /// 「高負載時自動常亮」是否啟用。與螢幕／App／Agent 綁定互斥，跨重啟保留。
+    var keepAwakeSystemLoadMode: Bool {
+        didSet { defaults.set(keepAwakeSystemLoadMode, forKey: Key.keepAwakeSystemLoadMode) }
+    }
+
+    /// 高負載模式的門檻與時間設定。寫入前正規化；損壞資料回預設。
+    var keepAwakeSystemLoadConfiguration: SystemLoadConfiguration {
+        didSet {
+            let normalized = keepAwakeSystemLoadConfiguration.normalized()
+            if normalized != keepAwakeSystemLoadConfiguration {
+                keepAwakeSystemLoadConfiguration = normalized
+                return
+            }
+            if let data = try? JSONEncoder().encode(normalized) {
+                defaults.set(data, forKey: Key.keepAwakeSystemLoadConfiguration)
+            }
+        }
+    }
+
     /// Agent 模式的第二層偵測（有終端機的行程樹在不在燒 CPU）。**預設開啟**：
     /// 沒有全域 session log 的 agent 只靠這一層，關著的話那些人的機器照睡。
     var keepAwakeProcessDetection: Bool {
@@ -624,6 +645,13 @@ final class SettingsStore {
         keepAwakeDisplayUUID = defaults.string(forKey: Key.keepAwakeDisplayUUID)
         keepAwakeAppBundleID = defaults.string(forKey: Key.keepAwakeAppBundleID)
         keepAwakeAgentMode = defaults.bool(forKey: Key.keepAwakeAgentMode)
+        keepAwakeSystemLoadMode = defaults.bool(forKey: Key.keepAwakeSystemLoadMode)
+        if let data = defaults.data(forKey: Key.keepAwakeSystemLoadConfiguration),
+           let decoded = try? JSONDecoder().decode(SystemLoadConfiguration.self, from: data) {
+            keepAwakeSystemLoadConfiguration = decoded.normalized()
+        } else {
+            keepAwakeSystemLoadConfiguration = .default
+        }
         keepAwakeProcessDetection = defaults.object(forKey: Key.keepAwakeProcessDetection) as? Bool ?? true
         keepAwakeCustomProcessNames = defaults.stringArray(forKey: Key.keepAwakeCustomProcessNames) ?? []
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
