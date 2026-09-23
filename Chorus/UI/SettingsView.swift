@@ -1470,6 +1470,36 @@ private struct DiagnosticsSettingsTab: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Section("異常結束") {
+                    LabeledContent("上次結束") {
+                        switch report.crashes.lastExit {
+                        case .clean: Text("正常")
+                        case .crash: Label("異常結束", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        case .firstLaunch: Text("第一次啟動")
+                        case nil: Text("未知")
+                        }
+                    }
+                    if report.crashes.recent.isEmpty {
+                        Text("沒有紀錄").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(report.crashes.recent, id: \.fileName) { summary in
+                            LabeledContent(Self.kindText(summary.kind)) {
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(summary.occurredAt.formatted(date: .abbreviated, time: .shortened))
+                                    Text(summary.exception ?? summary.topFrames.first ?? "-")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                            }
+                            .font(.caption)
+                        }
+                    }
+                    Text("系統的完整報告在「主控台」App 的「當機報告」；這裡只留摘要與 MetricKit 診斷。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Section("最慢的操作") {
                     if report.operations.isEmpty {
                         Text("還沒有紀錄").foregroundStyle(.secondary)
@@ -1492,11 +1522,24 @@ private struct DiagnosticsSettingsTab: View {
                         Button("在 Finder 顯示紀錄") {
                             NSWorkspace.shared.activateFileViewerSelecting([DiagnosticLog.shared.fileURL])
                         }
+                        Button("匯出診斷包…") {
+                            DiagnosticBundleExporter.presentSavePanel()
+                        }
                         Spacer()
                     }
                 }
             }
             .formStyle(.grouped)
+        }
+    }
+
+    private static func kindText(_ kind: CrashReportSummary.Kind) -> String {
+        switch kind {
+        case .crash, .ips: String(localized: "當機")
+        case .hang: String(localized: "卡住")
+        case .cpuException: String(localized: "CPU 過載")
+        case .diskWrite: String(localized: "磁碟寫入過量")
+        case .uncleanExit: String(localized: "未正常結束")
         }
     }
 }
@@ -1516,6 +1559,7 @@ private struct DiagnosticsReport {
     let longestStall: String
     let pressure: MemoryPressureMonitor.Level
     let operations: [Operation]
+    let crashes: CrashReportCollector.Snapshot
     let plainText: String
 
     var pressureText: String {
@@ -1531,6 +1575,7 @@ private struct DiagnosticsReport {
         let loop = watchdog.snapshot()
         let metrics = OperationMetrics.shared.snapshot()
         let pressure = MemoryPressureMonitor.shared.level
+        let crashes = CrashReportCollector.shared.snapshot()
         let responsive = loop.running && (loop.pendingAge ?? .zero) < watchdog.configuration.thresholds.hang
         let slowest = metrics.operations
             .filter { $0.value.completed > 0 }
@@ -1554,6 +1599,8 @@ private struct DiagnosticsReport {
                 + "longest=\(OperationMetrics.format(loop.lifetime.longestStall)) "
                 + "p95<=\(loop.lifetime.latency.percentile(0.95).map { "\(Int($0.rounded())) ms" } ?? "-")",
             "memoryPressure=\(MemoryPressureMonitor.name(pressure))",
+            "lastExit=\(crashes.lastExit?.rawValue ?? "unknown") crashReports=\(crashes.count)"
+                + (crashes.recent.first.map { " last=\($0.kind.rawValue) \($0.exception ?? "-") build=\($0.appVersion ?? "?")" } ?? ""),
         ]
         lines += operations.map { "\($0.name) max=\($0.longest) n=\($0.count)" }
         if !gauges.isEmpty { lines.append("queues(current/high) " + gauges.joined(separator: " ")) }
@@ -1564,6 +1611,7 @@ private struct DiagnosticsReport {
             longestStall: OperationMetrics.format(loop.lifetime.longestStall),
             pressure: pressure,
             operations: operations,
+            crashes: crashes,
             plainText: lines.joined(separator: "\n")
         )
     }
