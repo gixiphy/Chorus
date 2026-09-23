@@ -382,6 +382,18 @@ final class AutomationHTTPTransport: @unchecked Sendable {
                 "maxMs": stats.latency.maxMillis,
             ] as [String: Any])
         })
+        let crashes = CrashReportCollector.shared.snapshot()
+        let iso = ISO8601DateFormatter()
+        let recentCrashes: [[String: Any]] = crashes.recent.map { summary in
+            [
+                "kind": summary.kind.rawValue,
+                "occurredAt": iso.string(from: summary.occurredAt),
+                "appVersion": summary.appVersion.map { $0 as Any } ?? NSNull(),
+                "exception": summary.exception.map { $0 as Any } ?? NSNull(),
+                "topFrames": summary.topFrames,
+                "file": summary.fileName,
+            ]
+        }
         let payload: [String: Any] = [
             "ok": true,
             "generatedAt": ISO8601DateFormatter().string(from: Date()),
@@ -395,6 +407,8 @@ final class AutomationHTTPTransport: @unchecked Sendable {
                 "p95UpperMs": upper(loop.lifetime.latency),
             ] as [String: Any],
             "memoryPressure": MemoryPressureMonitor.name(MemoryPressureMonitor.shared.level),
+            "lastExit": crashes.lastExit?.rawValue ?? "unknown",
+            "crashReports": ["count": crashes.count, "recent": recentCrashes] as [String: Any],
             "operations": operations,
             "gauges": metrics.gauges.mapValues { ["current": $0.current, "highWater": $0.highWater] },
         ]
