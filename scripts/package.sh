@@ -53,6 +53,18 @@ xcodebuild -project Chorus.xcodeproj -scheme Chorus -configuration Release \
 
 [[ -d dist/Chorus.xcarchive/Products/Applications/Chorus.app ]] || { echo "archive 失敗" >&2; exit 1; }
 
+# 保留 dSYM：archive 每次都會被砍掉、dist/ 又不進版控，之前發出去的版本一份符號都沒留，
+# 使用者送來的 crash 報告完全對不回原始碼。zip 檔名帶版本與 build，發 GitHub Release 時一起附上。
+mkdir -p dist/dsyms
+DSYM_ZIP="dist/dsyms/Chorus-$VERSION-b$NEXT_BUILD.dSYMs.zip"
+if [[ -d dist/Chorus.xcarchive/dSYMs ]]; then
+  rm -f "$DSYM_ZIP"
+  ditto -c -k --keepParent dist/Chorus.xcarchive/dSYMs "$DSYM_ZIP"
+  echo "▸ 已保存 dSYM：$DSYM_ZIP（發 Release 時請一起附上）"
+else
+  echo "⚠︎ archive 裡沒有 dSYMs 目錄，這版無法事後符號化" >&2
+fi
+
 rm -rf dist/Chorus.app
 rm -f dist/Chorus-*.zip(N)   # (N) = 沒有符合的檔案就當空的（zsh 預設會報錯中止）
 

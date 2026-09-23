@@ -141,6 +141,10 @@ def print_summary(data):
         loop = health["mainLoop"]
         print(f"/v1/health：responsive={loop['responsive']} 卡住 {loop['hangCount']} 次、延遲 {loop['lagCount']} 次、"
               f"最長停頓 {loop['longestStallMs']:.0f} ms、P95≤{loop['p95UpperMs']} ms")
+        crash = health.get("crashReports", {})
+        print(f"lastExit={health.get('lastExit', '?')} crashReports={crash.get('count', 0)}")
+        for item in crash.get("recent", [])[:3]:
+            print(f"  {item.get('occurredAt')} {item.get('kind')} build={item.get('appVersion')} {item.get('exception') or ''}")
         slow = sorted(health["operations"].items(), key=lambda item: -item[1]["maxMs"])[:8]
         print("  最慢的操作：" + "；".join(f"{name} {v['maxMs']:.0f} ms（{v['completed']} 次）" for name, v in slow))
         stuck = [name for name, v in health["operations"].items() if v["inFlight"] and (v["oldestInFlightMs"] or 0) > 5000]

@@ -10,12 +10,23 @@ struct MenuBarView: View {
     /// 直接給 ScrollView 一個 maxHeight 會讓它永遠撐到最大，短內容時
     /// 是一大片空白。
     @State private var contentHeight: CGFloat = 0
+    /// 本次啟動偵測到、還沒被使用者按掉的異常結束。選單每次打開重新讀（純記憶體，不碰磁碟）。
+    @State private var crashNotice: CrashReportSummary?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
+
+            if let crashNotice {
+                CrashNoticeRow(summary: crashNotice) {
+                    CrashReportCollector.shared.acknowledge()
+                    self.crashNotice = nil
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+            }
 
             Divider()
                 .padding(.vertical, 8)
@@ -52,6 +63,7 @@ struct MenuBarView: View {
             .padding(.bottom, 12)
         }
         .frame(width: 300)
+        .onAppear { crashNotice = CrashReportCollector.shared.unacknowledged }
     }
 
     /// 捲動區的高度上限。選單列視窗**不會**自己長出捲軸——內容超過螢幕
@@ -326,6 +338,41 @@ private struct KeepAwakeRow: View {
                 alsoPreventSystemSleep: keepAwake.alsoPreventSystemSleep
             )
         }
+    }
+}
+
+/// 「上次執行異常結束」一次性提示。按「匯出…」或「略過」都算確認，之後不再出現；
+/// 下一次 crash 會再來一次。
+private struct CrashNoticeRow: View {
+    let summary: CrashReportSummary
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("上次執行異常結束")
+                    .font(.callout)
+                Text(summary.exception ?? summary.occurredAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button("匯出…") {
+                dismiss()
+                DiagnosticBundleExporter.presentSavePanel()
+            }
+            .controlSize(.small)
+            Button("略過", action: dismiss)
+                .controlSize(.small)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+        }
+        .padding(8)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

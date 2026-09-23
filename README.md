@@ -256,6 +256,16 @@ GitHub Release（上傳 zip）、更新 [Homebrew tap](https://github.com/gixiph
 
 純邏輯集中在 `Packages/ChorusCore`，`cd Packages/ChorusCore && swift test` 不碰硬體就跑得完。
 
+### 異常結束回報
+
+Chorus 不會把任何東西送出這台 Mac。crash / hang 的證據留在 `~/Library/Logs/Chorus/diagnostics/`
+（MetricKit 診斷 + 系統 `.ips` 摘要，最多 20 份），設定 ▸ 診斷 ▸「匯出診斷包…」打成一個 zip 附到 issue。
+`scripts/package.sh` 會把每版的 dSYM 存到 `dist/dsyms/`，收到回報後：
+
+```bash
+python3 scripts/symbolicate-diagnostics.py <診斷包解開的 diagnostics/xxx-crash.json> --dsym dist/dsyms/Chorus-<版本>-b<build>.dSYMs.zip
+```
+
 ## 已知事項
 
 - **區域網路權限**（macOS 15+）：被拒時同步會靜靜失效。若系統設定的清單裡沒有
