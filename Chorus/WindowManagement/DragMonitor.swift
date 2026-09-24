@@ -16,7 +16,7 @@ final class DragMonitor {
     var gapProvider: (() -> Double)?
     var excludedBundleIDs: (() -> Set<String>)?
 
-    private let worker: AXWindowWorker
+    private let worker: any WindowBackend
     private var session = SnapDragSession()
     private var monitors: [Any] = []
     private var dragToken: String?
@@ -28,7 +28,7 @@ final class DragMonitor {
     private let clock = ContinuousClock()
     private let moveThreshold: CGFloat = 4
 
-    init(worker: AXWindowWorker) {
+    init(worker: any WindowBackend) {
         self.worker = worker
     }
 

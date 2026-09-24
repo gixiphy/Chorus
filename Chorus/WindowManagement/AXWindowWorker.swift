@@ -158,46 +158,91 @@ final class AXWindowWorker: @unchecked Sendable {
         guard limit > 0 else { return [] }
         return try sync {
             guard AXIsProcessTrusted() else { throw WorkerError.permissionRequired }
-            let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-            let list = (CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]) ?? []
-            let ownPID = ProcessInfo.processInfo.processIdentifier
             var axWindowsByPID: [pid_t: [(AXUIElement, LayoutRect)]] = [:]
-            var skipped: Set<pid_t> = []
             var result: [WindowRef] = []
 
-            for info in list {
+            for candidate in self.cgCandidates(
+                on: screen,
+                topology: topology,
+                excludingBundleIDs: excludingBundleIDs
+            ) {
                 guard result.count < limit else { break }
-                guard (info[kCGWindowLayer as String] as? Int) == 0,
-                      let pid = info[kCGWindowOwnerPID as String] as? pid_t,
-                      pid != ownPID, !skipped.contains(pid),
-                      let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
-                      let bounds = CGRect(dictionaryRepresentation: boundsDict),
-                      bounds.width >= 120, bounds.height >= 80
-                else { continue }
-                let frame = topology.fromAX(origin: bounds.origin, size: bounds.size)
-                guard topology.screen(containing: frame)?.displayUUID == screen.displayUUID else { continue }
-
-                let running = NSRunningApplication(processIdentifier: pid)
-                if let bundleID = running?.bundleIdentifier, excludingBundleIDs.contains(bundleID) {
-                    skipped.insert(pid)
-                    continue
+                if axWindowsByPID[candidate.pid] == nil {
+                    axWindowsByPID[candidate.pid] = self.standardWindows(pid: candidate.pid, topology: topology)
                 }
-                if axWindowsByPID[pid] == nil {
-                    axWindowsByPID[pid] = self.standardWindows(pid: pid, topology: topology)
-                }
-                guard let match = axWindowsByPID[pid]?.first(where: { Self.sameFrame($0.1, frame) }) else { continue }
-                let token = "\(pid):\(CFHash(match.0))"
+                guard let match = axWindowsByPID[candidate.pid]?.first(where: {
+                    Self.sameFrame($0.1, candidate.frame)
+                }) else { continue }
+                let token = "\(candidate.pid):\(CFHash(match.0))"
                 guard !excludingTokens.contains(token), !result.contains(where: { $0.token == token }) else { continue }
                 self.elements[token] = match.0
                 result.append(WindowRef(
                     token: token,
-                    pid: pid,
-                    bundleID: running?.bundleIdentifier,
-                    appName: running?.localizedName ?? "App"
+                    pid: candidate.pid,
+                    bundleID: candidate.bundleID,
+                    appName: candidate.appName
                 ))
             }
             return result
         }
+    }
+
+    /// 純 CG 的螢幕視窗快照；不需要輔助使用權限，也不讀取 AX。
+    func onScreenWindowSnapshot(
+        on screen: ScreenTopology.ScreenInfo,
+        topology: ScreenTopology,
+        excludingBundleIDs: Set<String>,
+        limit: Int
+    ) -> [WindowSnapshot] {
+        guard limit > 0 else { return [] }
+        return cgCandidates(
+            on: screen,
+            topology: topology,
+            excludingBundleIDs: excludingBundleIDs
+        )
+        .prefix(limit)
+        .map {
+            WindowSnapshot(pid: $0.pid, bundleID: $0.bundleID, appName: $0.appName, frame: $0.frame)
+        }
+    }
+
+    /// `frontToBackWindows` 與預覽共用的 CG 過濾，保留 CGWindowList 的 z-order。
+    private func cgCandidates(
+        on screen: ScreenTopology.ScreenInfo,
+        topology: ScreenTopology,
+        excludingBundleIDs: Set<String>
+    ) -> [(pid: pid_t, bundleID: String?, appName: String, frame: LayoutRect)] {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        let list = (CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]) ?? []
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        var skipped: Set<pid_t> = []
+        var result: [(pid: pid_t, bundleID: String?, appName: String, frame: LayoutRect)] = []
+
+        for info in list {
+            guard (info[kCGWindowLayer as String] as? Int) == 0,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+                  pid != ownPID, !skipped.contains(pid),
+                  let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict),
+                  bounds.width >= 120, bounds.height >= 80
+            else { continue }
+            let frame = topology.fromAX(origin: bounds.origin, size: bounds.size)
+            guard topology.screen(containing: frame)?.displayUUID == screen.displayUUID else { continue }
+
+            let running = NSRunningApplication(processIdentifier: pid)
+            let bundleID = running?.bundleIdentifier
+            if let bundleID, excludingBundleIDs.contains(bundleID) {
+                skipped.insert(pid)
+                continue
+            }
+            result.append((
+                pid: pid,
+                bundleID: bundleID,
+                appName: running?.localizedName ?? "App",
+                frame: frame
+            ))
+        }
+        return result
     }
 
     /// 一個 App 可排列的視窗：標準視窗、未最小化、非全螢幕、位置與大小可設。
@@ -275,6 +320,11 @@ final class AXWindowWorker: @unchecked Sendable {
         } catch {
             return .failed(.unsupported)
         }
+    }
+
+    func reportedMinimumSize(token: String) -> LayoutSize? {
+        // macOS AX standard windows do not expose a documented minimum-size attribute.
+        nil
     }
 
     func forget(token: String) {

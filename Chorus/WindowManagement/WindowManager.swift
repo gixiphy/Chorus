@@ -3,6 +3,19 @@ import ApplicationServices
 import ChorusCore
 import Observation
 
+struct ArrangementPreview: Equatable {
+    struct Slot: Equatable {
+        var frame: LayoutRect
+        var appName: String?
+        var isPrimary: Bool
+    }
+
+    var arrangement: WindowArrangement
+    var displayUUID: String
+    var topologyGeneration: UInt64
+    var slots: [Slot]
+}
+
 /// 視窗排列協調器：選單／快捷鍵（M1）與拖曳吸附（M2）。
 @MainActor
 @Observable
@@ -10,6 +23,7 @@ final class WindowManager {
     enum Outcome: Equatable {
         case applied
         case constrained
+        case partial
         case restored
         case permissionRequired
         case noTarget
@@ -49,27 +63,57 @@ final class WindowManager {
     private(set) var targetDisplayUUID: String?
     /// 選單目標視窗是否有可還原的記錄。
     private(set) var canRestoreTarget = false
+    private(set) var lastReport: ArrangementReport?
+    private(set) var canRestoreGroup = false
+    private(set) var arrangementPreview: ArrangementPreview?
     /// 註冊失敗、目前按了沒反應的快捷鍵。
     private(set) var unavailableShortcuts: Set<WindowCommand> = []
 
     @ObservationIgnored private let settings: SettingsStore
-    @ObservationIgnored private let worker = AXWindowWorker()
+    @ObservationIgnored private let worker: any WindowBackend
+    @ObservationIgnored private let captureTopology: @Sendable (UInt64) -> ScreenTopology
+    @ObservationIgnored private let now: () -> TimeInterval
     @ObservationIgnored private let engine = LayoutEngine()
     @ObservationIgnored private var restore = RestoreStore()
+    @ObservationIgnored private var sizeHints = WindowSizeHints()
     @ObservationIgnored private var captured: AXWindowWorker.WindowRef?
+    @ObservationIgnored private var capturedFrame: LayoutRect?
     @ObservationIgnored private var topologyGeneration: UInt64 = 0
     @ObservationIgnored private var shortcuts: WindowShortcutController?
     @ObservationIgnored private var dragMonitor: DragMonitor?
     @ObservationIgnored private let previewOverlay = PreviewOverlay()
+    @ObservationIgnored private let arrangementPreviewOverlay = ArrangementPreviewOverlay()
     @ObservationIgnored private let zoneSelection = ZoneSelectionController()
     @ObservationIgnored private var retryTask: Task<Void, Never>?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
+    @ObservationIgnored private var screenParametersObserver: NSObjectProtocol?
     @ObservationIgnored private var lastExternalPID: pid_t?
     @ObservationIgnored private var shortcutsSuspended = false
 
-    init(settings: SettingsStore) {
+    static let batchTimeBudget: TimeInterval = 0.8
+    private static let targetGoneReason = "目標視窗已關閉"
+    private static let permissionReason = "permissionRequired"
+
+    init(
+        settings: SettingsStore,
+        worker: any WindowBackend = AXWindowWorker(),
+        captureTopology: @escaping @Sendable (UInt64) -> ScreenTopology = ScreenTopology.capture,
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
         self.settings = settings
+        self.worker = worker
+        self.captureTopology = captureTopology
+        self.now = now
         startFrontmostTracking()
+        screenParametersObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.noteScreenParametersChanged()
+            }
+        }
         zoneSelection.onApply = { [weak self] zoneID in
             self?.applyUltrawide(zoneID: zoneID)
         }
@@ -105,6 +149,8 @@ final class WindowManager {
             retryTask?.cancel()
             retryTask = nil
             captured = nil
+            capturedFrame = nil
+            hideArrangementPreview()
             targetAppName = nil
             return
         }
@@ -130,7 +176,10 @@ final class WindowManager {
     func captureMenuTarget() {
         guard settings.windowArrangementEnabled else { return }
         captured = nil
+        capturedFrame = nil
+        hideArrangementPreview()
         canRestoreTarget = false
+        canRestoreGroup = false
         targetDisplayUUID = nil
         menuApp = currentMenuApp()
         if let menuApp, menuApp.isIgnored {
@@ -151,8 +200,10 @@ final class WindowManager {
             captured = ref
             targetAppName = ref.appName
             canRestoreTarget = restore.entry(for: ref.token) != nil
+            canRestoreGroup = (restore.group(containing: ref.token)?.tokens.count ?? 0) >= 2
             let topology = bumpTopology()
-            targetDisplayUUID = (try? worker.getFrame(token: ref.token, topology: topology))
+            capturedFrame = try? worker.getFrame(token: ref.token, topology: topology)
+            targetDisplayUUID = capturedFrame
                 .flatMap { topology.screen(containing: $0)?.displayUUID }
             statusMessage = nil
         } catch AXWindowWorker.WorkerError.permissionRequired {
@@ -162,9 +213,79 @@ final class WindowManager {
             targetAppName = nil
         } catch {
             captured = nil
+            capturedFrame = nil
             targetAppName = nil
             statusMessage = "沒有可排列的視窗"
         }
+    }
+
+    /// 只用 CG 快照建立排列預覽；不列舉或讀取其他 AX 視窗。
+    func previewArrangement(for command: WindowCommand) -> ArrangementPreview? {
+        guard settings.windowArrangementEnabled,
+              let captured,
+              let capturedFrame
+        else { return nil }
+
+        let topology = bumpTopology()
+        guard let screen = topology.screen(containing: capturedFrame) else { return nil }
+        let requestedLimit = command.arrangement?.slotCount ?? 4
+        let snapshot = worker.onScreenWindowSnapshot(
+            on: screen,
+            topology: topology,
+            excludingBundleIDs: excludedBundleIDs(),
+            limit: requestedLimit
+        )
+        let others = snapshot.filter {
+            !($0.pid == captured.pid && framesMatch($0.frame, capturedFrame))
+        }
+
+        let arrangement: WindowArrangement
+        if let fixed = command.arrangement {
+            arrangement = fixed
+        } else if command == .arrangeAuto {
+            let count = min(4, 1 + others.count)
+            guard let chosen = ArrangementPlanner.choose(
+                minSizes: Array(repeating: nil, count: count),
+                visible: screen.visibleFrame,
+                gap: settings.windowArrangementGap
+            ) else { return nil }
+            arrangement = chosen
+        } else {
+            return nil
+        }
+
+        let frames = arrangement.frames(
+            visible: screen.visibleFrame,
+            gap: settings.windowArrangementGap
+        )
+        let names = [captured.appName] + others.prefix(max(0, frames.count - 1)).map(\.appName)
+        let slots = frames.enumerated().map { index, frame in
+            ArrangementPreview.Slot(
+                frame: frame,
+                appName: names.indices.contains(index) ? names[index] : nil,
+                isPrimary: index == 0
+            )
+        }
+        return ArrangementPreview(
+            arrangement: arrangement,
+            displayUUID: screen.displayUUID,
+            topologyGeneration: topology.generation,
+            slots: slots
+        )
+    }
+
+    func showArrangementPreview(for command: WindowCommand) {
+        arrangementPreview = previewArrangement(for: command)
+        if let arrangementPreview {
+            arrangementPreviewOverlay.show(arrangementPreview)
+        } else {
+            arrangementPreviewOverlay.hide()
+        }
+    }
+
+    func hideArrangementPreview() {
+        arrangementPreview = nil
+        arrangementPreviewOverlay.hide()
     }
 
     /// 選單與快捷鍵的共同入口。
@@ -179,6 +300,10 @@ final class WindowManager {
             moveToAdjacentDisplay(delta: -1, source: source)
         case .restore:
             restoreLast(source: source)
+        case .restoreGroup:
+            restoreGroup(source: source)
+        case .arrangeAuto:
+            arrangeAuto(source: source)
         case .selectZone:
             beginKeyboardZoneSelection(source: source)
         default:
@@ -192,8 +317,108 @@ final class WindowManager {
         }
     }
 
+    /// 依同螢幕視窗數與已知最小尺寸挑選版型；單一視窗直接填滿。
+    func arrangeAuto(source: Source = .menu) {
+        runArrangement(source: source) { topology, screen, current, ref in
+            do {
+                let others = try worker.frontToBackWindows(
+                    on: screen,
+                    topology: topology,
+                    excludingBundleIDs: excludedBundleIDs(),
+                    excludingTokens: [ref.token],
+                    limit: 3
+                )
+                var seen = Set<String>()
+                let windows = ([ref] + others).filter { seen.insert($0.token).inserted }
+
+                guard windows.count > 1 else {
+                    let target = engine.frame(
+                        for: .maximize,
+                        visible: screen.visibleFrame,
+                        gap: settings.windowArrangementGap,
+                        current: current
+                    )
+                    restore.rememberOriginalIfNeeded(
+                        token: ref.token,
+                        original: current,
+                        displayUUID: screen.displayUUID,
+                        topologyGeneration: topology.generation
+                    )
+                    let result = writeFrame(target, ref: ref, topology: topology, before: current)
+                    if let after = result.after {
+                        sizeHints.recordReadBack(token: ref.token, requested: target, actual: after)
+                    }
+                    if case .applied = result.status, let after = result.after {
+                        restore.noteApplied(token: ref.token, after: after)
+                    } else if case .constrained = result.status, let after = result.after {
+                        restore.noteApplied(token: ref.token, after: after)
+                    } else if case .failed(let reason) = result.status, reason == Self.targetGoneReason {
+                        restore.invalidate(token: ref.token)
+                        sizeHints.forget(token: ref.token)
+                        worker.forget(token: ref.token)
+                    }
+                    let report = ArrangementReport(
+                        arrangement: nil,
+                        slotCount: 1,
+                        items: [
+                            ArrangementReport.Item(
+                                token: ref.token,
+                                appName: ref.appName,
+                                target: target,
+                                before: current,
+                                after: result.after,
+                                status: result.status
+                            )
+                        ],
+                        groupID: nil
+                    )
+                    publish(report)
+                    statusMessage = String(localized: "自動排列：填滿。") + report.summaryText
+                    return
+                }
+
+                guard let arrangement = chooseArrangement(target: ref, others: Array(windows.dropFirst()), screen: screen)
+                else { return }
+                arrange(arrangement, source: source)
+                if let report = lastReport {
+                    let title = WindowCommand.allCases.first { $0.arrangement == arrangement }?.title
+                        ?? arrangement.rawValue
+                    statusMessage = String(localized: "自動排列：\(title)。") + report.summaryText
+                }
+            } catch let error as WorkerError {
+                mapError(error)
+            } catch {
+                lastOutcome = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// 預覽與自動排列共用的尺寸感知選擇。
+    private func chooseArrangement(
+        target: WindowRef,
+        others: [WindowRef],
+        screen: ScreenTopology.ScreenInfo
+    ) -> WindowArrangement? {
+        let windows = [target] + others
+        let minimumSizes = windows.map { window -> LayoutSize? in
+            if let known = sizeHints.minimumSize(for: window.token) {
+                return known
+            }
+            if let reported = worker.reportedMinimumSize(token: window.token) {
+                sizeHints.recordReported(token: window.token, minimum: reported)
+                return reported
+            }
+            return nil
+        }
+        return ArrangementPlanner.choose(
+            minSizes: minimumSizes,
+            visible: screen.visibleFrame,
+            gap: settings.windowArrangementGap
+        )
+    }
+
     /// 一次排多個視窗：目標視窗放第一格，同螢幕其餘視窗依由前到後的順序填入。
-    /// 視窗不夠就只排現有的；每個視窗各自記住原位，之後可逐一還原。
+    /// 視窗不夠就只排現有的；逐窗結果會彙整成一份批次報告。
     func arrange(_ arrangement: WindowArrangement, source: Source = .menu) {
         runArrangement(source: source) { topology, screen, current, ref in
             do {
@@ -204,31 +429,144 @@ final class WindowManager {
                     excludingTokens: [ref.token],
                     limit: arrangement.slotCount - 1
                 )
+                var seen = Set<String>()
+                let windows = ([ref] + others).filter { seen.insert($0.token).inserted }
                 let plan = arrangement.plan(
-                    windows: [ref] + others,
+                    windows: windows,
                     visible: screen.visibleFrame,
                     gap: settings.windowArrangementGap
                 )
-                var constrained = false
-                for placement in plan {
-                    let before = placement.window.token == ref.token
-                        ? current
-                        : try worker.getFrame(token: placement.window.token, topology: topology)
-                    let outcome = applyFrame(
-                        placement.frame, ref: placement.window,
-                        topology: topology, screen: screen, before: before
+                let groupID = UUID()
+                restore.beginGroup(
+                    id: groupID,
+                    tokens: plan.map(\.window.token),
+                    displayUUID: screen.displayUUID,
+                    topologyGeneration: topology.generation
+                )
+                let start = now()
+                var items: [ArrangementReport.Item] = []
+
+                for (index, placement) in plan.enumerated() {
+                    guard topology.generation == topologyGeneration else {
+                        items.append(reportItem(for: placement, before: nil, after: nil, status: .skipped(.topologyChanged)))
+                        continue
+                    }
+                    if index > 0, now() - start >= Self.batchTimeBudget {
+                        items.append(reportItem(for: placement, before: nil, after: nil, status: .skipped(.timeBudget)))
+                        continue
+                    }
+
+                    let before: LayoutRect
+                    do {
+                        before = placement.window.token == ref.token
+                            ? current
+                            : try worker.getFrame(token: placement.window.token, topology: topology)
+                    } catch WorkerError.permissionRequired {
+                        lastTrusted = false
+                        for remaining in plan[index...] {
+                            items.append(reportItem(
+                                for: remaining, before: nil, after: nil,
+                                status: .skipped(.permissionRevoked)
+                            ))
+                        }
+                        break
+                    } catch WorkerError.targetGone {
+                        items.append(reportItem(
+                            for: placement, before: nil, after: nil,
+                            status: .failed(reason: Self.targetGoneReason)
+                        ))
+                        restore.invalidate(token: placement.window.token)
+                        sizeHints.forget(token: placement.window.token)
+                        worker.forget(token: placement.window.token)
+                        continue
+                    }
+
+                    restore.rememberOriginalIfNeeded(
+                        token: placement.window.token,
+                        original: before,
+                        displayUUID: screen.displayUUID,
+                        topologyGeneration: topology.generation,
+                        groupID: groupID
                     )
-                    if outcome == .constrained { constrained = true }
+                    let result = writeFrame(
+                        placement.frame,
+                        ref: placement.window,
+                        topology: topology,
+                        before: before
+                    )
+                    if let after = result.after {
+                        sizeHints.recordReadBack(
+                            token: placement.window.token,
+                            requested: placement.frame,
+                            actual: after
+                        )
+                    }
+
+                    if result.status == .failed(reason: Self.permissionReason) {
+                        restore.invalidate(token: placement.window.token)
+                        lastTrusted = false
+                        items.append(reportItem(
+                            for: placement, before: before, after: result.after,
+                            status: .skipped(.permissionRevoked)
+                        ))
+                        for remaining in plan.dropFirst(index + 1) {
+                            items.append(reportItem(
+                                for: remaining, before: nil, after: nil,
+                                status: .skipped(.permissionRevoked)
+                            ))
+                        }
+                        break
+                    }
+
+                    switch result.status {
+                    case .applied, .constrained:
+                        if let after = result.after {
+                            restore.noteApplied(token: placement.window.token, after: after)
+                        }
+                    case .reverted:
+                        restore.invalidate(token: placement.window.token)
+                    case .failed(let reason):
+                        restore.invalidate(token: placement.window.token)
+                        if reason == Self.targetGoneReason {
+                            sizeHints.forget(token: placement.window.token)
+                            worker.forget(token: placement.window.token)
+                        }
+                    case .revertFailed, .skipped:
+                        break
+                    }
+                    items.append(reportItem(
+                        for: placement,
+                        before: before,
+                        after: result.after,
+                        status: result.status
+                    ))
                 }
-                // 主要視窗最後一個被其他視窗蓋過狀態，這裡收一個總結
-                if plan.count < arrangement.slotCount {
-                    lastOutcome = .applied
-                    statusMessage = String(localized: "這台螢幕只有 \(plan.count) 個可排列的視窗，其餘位置留空")
-                } else if constrained {
-                    lastOutcome = .constrained
-                    statusMessage = "此 App 的最小尺寸超過所選區域"
+
+                let retainedTokens = items.compactMap { item -> String? in
+                    switch item.status {
+                    case .applied, .constrained, .revertFailed: return item.token
+                    default: return nil
+                    }
                 }
-                ChorusLog.window.info("多視窗排列 \(arrangement.rawValue)：\(plan.count)/\(arrangement.slotCount) 個視窗")
+                restore.dropGroup(id: groupID)
+                if retainedTokens.count >= 2 {
+                    restore.beginGroup(
+                        id: groupID,
+                        tokens: retainedTokens,
+                        displayUUID: screen.displayUUID,
+                        topologyGeneration: topology.generation
+                    )
+                }
+                let report = ArrangementReport(
+                    arrangement: arrangement,
+                    slotCount: arrangement.slotCount,
+                    items: items,
+                    groupID: retainedTokens.count >= 2 ? groupID : nil
+                )
+                publish(report)
+                ChorusLog.window.info(
+                    "多視窗排列 \(arrangement.rawValue)：\(report.appliedCount)/\(arrangement.slotCount) 個視窗"
+                )
             } catch let error as AXWindowWorker.WorkerError {
                 mapError(error)
             } catch {
@@ -295,23 +633,183 @@ final class WindowManager {
         }
         guard let ref = resolveTarget(source: source) else { return }
         let topology = bumpTopology()
-        guard let entry = restore.consume(token: ref.token) else {
+        guard let entry = restore.entry(for: ref.token) else {
             lastOutcome = .failed("沒有可還原的位置")
             statusMessage = "沒有可還原的位置"
             return
         }
         var frame = entry.original
+        let originalScreenMissing = topology.screen(uuid: entry.displayUUID) == nil
         if let screen = topology.screen(uuid: entry.displayUUID) ?? topology.screen(containing: frame) {
             frame = clamp(frame, to: screen.visibleFrame)
         }
         switch worker.setFrame(token: ref.token, frame: frame, topology: topology) {
-        case .applied, .constrained:
+        case .applied(_, let after), .constrained(_, let after):
+            guard framesMatch(after, frame) else {
+                lastOutcome = .failed("還原後位置不符")
+                statusMessage = "還原後位置不符"
+                return
+            }
+            restore.consume(token: ref.token)
             lastOutcome = .restored
-            statusMessage = "已還原"
-            if ref.token == captured?.token { canRestoreTarget = false }
+            statusMessage = originalScreenMissing
+                ? String(localized: "原螢幕已移除，已放到目前螢幕")
+                : "已還原"
+            canRestoreTarget = false
+            canRestoreGroup = (entry.groupID
+                .flatMap { restore.group(id: $0) }?
+                .tokens.count ?? 0) >= 2
         case .failed(let error):
             mapError(error)
         }
+    }
+
+    /// 還原目標視窗所屬排列群組；每個成員確認讀回成功後才清除記錄。
+    func restoreGroup(source: Source = .menu) {
+        guard settings.windowArrangementEnabled else {
+            lastOutcome = .disabled
+            return
+        }
+        guard let ref = resolveTarget(source: source) else { return }
+        guard let group = restore.group(containing: ref.token) else {
+            lastOutcome = .failed("沒有可還原的群組")
+            statusMessage = "沒有可還原的群組"
+            canRestoreGroup = false
+            return
+        }
+
+        let topology = bumpTopology()
+        let appNames = Dictionary(
+            uniqueKeysWithValues: (lastReport?.items ?? []).map { ($0.token, $0.appName) }
+        )
+        var seen = Set<String>()
+        let tokens = group.tokens.filter { seen.insert($0).inserted }
+        var items: [ArrangementReport.Item] = []
+
+        for token in tokens {
+            guard let entry = restore.entry(for: token) else { continue }
+            let current: LayoutRect
+            do {
+                current = try worker.getFrame(token: token, topology: topology)
+            } catch WorkerError.targetGone {
+                restore.invalidate(token: token)
+                worker.forget(token: token)
+                continue
+            } catch let error as WorkerError {
+                items.append(ArrangementReport.Item(
+                    token: token,
+                    appName: appNames[token] ?? (token == ref.token ? ref.appName : "App"),
+                    target: entry.original,
+                    before: nil,
+                    after: nil,
+                    status: .failed(reason: reportReason(for: error))
+                ))
+                continue
+            } catch {
+                items.append(ArrangementReport.Item(
+                    token: token,
+                    appName: appNames[token] ?? (token == ref.token ? ref.appName : "App"),
+                    target: entry.original,
+                    before: nil,
+                    after: nil,
+                    status: .failed(reason: error.localizedDescription)
+                ))
+                continue
+            }
+
+            let appName = appNames[token] ?? (token == ref.token ? ref.appName : "App")
+            if restore.isUserMoved(token: token, current: current) {
+                restore.invalidate(token: token)
+                items.append(ArrangementReport.Item(
+                    token: token,
+                    appName: appName,
+                    target: entry.original,
+                    before: current,
+                    after: current,
+                    status: .failed(reason: "已被移動，略過")
+                ))
+                continue
+            }
+
+            var target = entry.original
+            if let screen = topology.screen(uuid: entry.displayUUID) ?? topology.screen(containing: current) {
+                target = clamp(target, to: screen.visibleFrame)
+            }
+
+            switch worker.setFrame(token: token, frame: target, topology: topology) {
+            case .applied, .constrained:
+                do {
+                    let after = try worker.getFrame(token: token, topology: topology)
+                    if framesMatch(after, target) {
+                        restore.consume(token: token)
+                        items.append(ArrangementReport.Item(
+                            token: token,
+                            appName: appName,
+                            target: target,
+                            before: current,
+                            after: after,
+                            status: .applied
+                        ))
+                    } else {
+                        items.append(ArrangementReport.Item(
+                            token: token,
+                            appName: appName,
+                            target: target,
+                            before: current,
+                            after: after,
+                            status: .failed(reason: "還原後位置不符")
+                        ))
+                    }
+                } catch WorkerError.targetGone {
+                    restore.invalidate(token: token)
+                    worker.forget(token: token)
+                } catch let error as WorkerError {
+                    items.append(ArrangementReport.Item(
+                        token: token,
+                        appName: appName,
+                        target: target,
+                        before: current,
+                        after: nil,
+                        status: .failed(reason: reportReason(for: error))
+                    ))
+                } catch {
+                    items.append(ArrangementReport.Item(
+                        token: token,
+                        appName: appName,
+                        target: target,
+                        before: current,
+                        after: nil,
+                        status: .failed(reason: error.localizedDescription)
+                    ))
+                }
+            case .failed(let error):
+                items.append(ArrangementReport.Item(
+                    token: token,
+                    appName: appName,
+                    target: target,
+                    before: current,
+                    after: nil,
+                    status: .failed(reason: reportReason(for: error))
+                ))
+            }
+        }
+
+        let report = ArrangementReport(
+            arrangement: nil,
+            slotCount: group.tokens.count,
+            items: items,
+            groupID: group.id
+        )
+        publish(report)
+    }
+
+    func retryLastArrangement() {
+        guard let report = lastReport, !report.retryable.isEmpty else { return }
+        guard let arrangement = report.arrangement else {
+            arrangeAuto(source: .menu)
+            return
+        }
+        arrange(arrangement, source: .menu)
     }
 
     func moveToAdjacentDisplay(delta: Int, source: Source = .menu) {
@@ -417,6 +915,12 @@ final class WindowManager {
         zoneSelection.end(cancelled: true)
     }
 
+    /// 螢幕參數改變時讓進行中的批次偵測到世代已失效。
+    func noteScreenParametersChanged() {
+        topologyGeneration &+= 1
+        hideArrangementPreview()
+    }
+
     // MARK: - Private
 
     private func ensureShortcuts() {
@@ -472,8 +976,11 @@ final class WindowManager {
         app.isIgnored = true
         menuApp = app
         captured = nil
+        capturedFrame = nil
+        hideArrangementPreview()
         targetAppName = nil
         canRestoreTarget = false
+        canRestoreGroup = false
         zoneSelection.end(cancelled: true)
         previewOverlay.hide()
         statusMessage = String(localized: "已忽略「\(app.name)」，不會排列它的視窗")
@@ -619,6 +1126,72 @@ final class WindowManager {
         }
     }
 
+    private func reportItem(
+        for placement: WindowArrangement.Placement<WindowRef>,
+        before: LayoutRect?,
+        after: LayoutRect?,
+        status: ArrangementReport.Status
+    ) -> ArrangementReport.Item {
+        ArrangementReport.Item(
+            token: placement.window.token,
+            appName: placement.window.appName,
+            target: placement.frame,
+            before: before,
+            after: after,
+            status: status
+        )
+    }
+
+    /// 寫入一個視窗；逾時時只嘗試一次回復，不改動任何 manager 呈現狀態。
+    private func writeFrame(
+        _ target: LayoutRect,
+        ref: WindowRef,
+        topology: ScreenTopology,
+        before: LayoutRect
+    ) -> (status: ArrangementReport.Status, after: LayoutRect?) {
+        switch worker.setFrame(token: ref.token, frame: target, topology: topology) {
+        case .applied(_, let after):
+            return (.applied, after)
+        case .constrained(_, let after):
+            return (.constrained, after)
+        case .failed(.timeout):
+            let revertResult = worker.setFrame(token: ref.token, frame: before, topology: topology)
+            let after = try? worker.getFrame(token: ref.token, topology: topology)
+            switch revertResult {
+            case .applied, .constrained:
+                if let after, framesMatch(after, before) {
+                    return (.reverted(reason: ArrangementReport.timeoutReason), after)
+                }
+                return (.revertFailed(reason: ArrangementReport.timeoutReason), after)
+            case .failed:
+                return (.revertFailed(reason: ArrangementReport.timeoutReason), after)
+            }
+        case .failed(let error):
+            return (.failed(reason: reportReason(for: error)), nil)
+        }
+    }
+
+    private func reportReason(for error: WorkerError) -> String {
+        switch error {
+        case .permissionRequired: Self.permissionReason
+        case .targetGone: Self.targetGoneReason
+        case .timeout: ArrangementReport.timeoutReason
+        case .unsupported: "unsupported"
+        case .noTarget: "noTarget"
+        }
+    }
+
+    private func publish(_ report: ArrangementReport) {
+        lastReport = report
+        let primaryToken = report.items.first?.token
+        canRestoreTarget = primaryToken.flatMap { restore.entry(for: $0) } != nil
+        canRestoreGroup = (primaryToken
+            .flatMap { restore.group(containing: $0) }?
+            .tokens.count ?? 0) >= 2
+        lastOutcome = report.outcome
+        statusMessage = report.summaryText
+    }
+
     private func applyFrame(
         _ target: LayoutRect,
         ref: AXWindowWorker.WindowRef,
@@ -641,7 +1214,7 @@ final class WindowManager {
         case .constrained:
             if ref.token == captured?.token { canRestoreTarget = true }
             lastOutcome = .constrained
-            statusMessage = "此 App 的最小尺寸超過所選區域"
+            statusMessage = String(localized: "此 App 的最小尺寸超過所選區域")
             return .constrained
         case .failed(let error):
             mapError(error)
@@ -691,7 +1264,7 @@ final class WindowManager {
 
     private func bumpTopology() -> ScreenTopology {
         topologyGeneration &+= 1
-        return ScreenTopology.capture(generation: topologyGeneration)
+        return captureTopology(topologyGeneration)
     }
 
     private func clamp(_ rect: LayoutRect, to visible: LayoutRect) -> LayoutRect {
@@ -703,26 +1276,34 @@ final class WindowManager {
         return r
     }
 
+    private func framesMatch(_ lhs: LayoutRect, _ rhs: LayoutRect, tolerance: Double = 2) -> Bool {
+        abs(lhs.x - rhs.x) <= tolerance
+            && abs(lhs.y - rhs.y) <= tolerance
+            && abs(lhs.width - rhs.width) <= tolerance
+            && abs(lhs.height - rhs.height) <= tolerance
+    }
+
     private func mapError(_ error: AXWindowWorker.WorkerError) {
         ChorusLog.window.info("排列未完成：\(error)")
         switch error {
         case .permissionRequired:
             lastTrusted = false
             lastOutcome = .permissionRequired
-            statusMessage = "需要輔助使用權限"
+            statusMessage = String(localized: "需要輔助使用權限")
         case .noTarget:
             lastOutcome = .noTarget
-            statusMessage = "沒有可排列的視窗"
+            statusMessage = String(localized: "沒有可排列的視窗")
         case .unsupported:
             lastOutcome = .unsupported
-            statusMessage = "此視窗不支援排列"
+            statusMessage = String(localized: "此視窗不支援排列")
         case .timeout:
-            lastOutcome = .failed("逾時")
-            statusMessage = "操作逾時"
+            lastOutcome = .failed(String(localized: "逾時"))
+            statusMessage = String(localized: "操作逾時")
         case .targetGone:
             lastOutcome = .targetGone
-            statusMessage = "目標視窗已關閉"
+            statusMessage = String(localized: "目標視窗已關閉")
             captured = nil
+            capturedFrame = nil
         }
     }
 }

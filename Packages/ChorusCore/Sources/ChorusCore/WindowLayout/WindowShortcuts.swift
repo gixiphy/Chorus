@@ -27,6 +27,8 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
     case maximize
     case center
     case restore
+    case restoreGroup = "restore-group"
+    case arrangeAuto = "arrange-auto"
     case arrangeLeftRight = "arrange-left-right"
     case arrangeMainLeft = "arrange-main-left"
     case arrangeMainRight = "arrange-main-right"
@@ -69,8 +71,8 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
         case .firstFourth, .secondFourth, .thirdFourth, .lastFourth: return .fourths
         case .leftThreeFourths, .rightThreeFourths: return .threeFourths
         case .nextDisplay, .previousDisplay: return .displays
-        case .maximize, .center, .restore: return .common
-        case .arrangeLeftRight, .arrangeMainLeft, .arrangeMainRight, .arrangeThreeColumns, .arrangeQuarters,
+        case .maximize, .center, .restore, .restoreGroup: return .common
+        case .arrangeAuto, .arrangeLeftRight, .arrangeMainLeft, .arrangeMainRight, .arrangeThreeColumns, .arrangeQuarters,
              .arrangeCenterStage, .arrangeFourColumns, .arrangeWidePrimary, .arrangeWidePrimaryMirrored,
              .arrangeQuarterSide, .arrangeQuarterSideMirrored, .arrangePrimaryStack, .arrangePrimaryStackMirrored:
             return .arrange
@@ -114,9 +116,9 @@ public enum WindowCommand: String, Sendable, Codable, CaseIterable, Hashable {
         case .rightThreeFourths: return .rightThreeFourths
         case .maximize: return .maximize
         case .center: return .centerPreserveSize
-        case .nextDisplay, .previousDisplay, .restore, .selectZone,
+        case .nextDisplay, .previousDisplay, .restore, .restoreGroup, .selectZone,
              .zone1, .zone2, .zone3, .zone4,
-             .arrangeLeftRight, .arrangeMainLeft, .arrangeMainRight, .arrangeThreeColumns, .arrangeQuarters,
+             .arrangeAuto, .arrangeLeftRight, .arrangeMainLeft, .arrangeMainRight, .arrangeThreeColumns, .arrangeQuarters,
              .arrangeCenterStage, .arrangeFourColumns, .arrangeWidePrimary, .arrangeWidePrimaryMirrored,
              .arrangeQuarterSide, .arrangeQuarterSideMirrored, .arrangePrimaryStack, .arrangePrimaryStackMirrored:
             return nil

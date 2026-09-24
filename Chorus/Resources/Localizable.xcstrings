@@ -17,10 +17,31 @@
         }
       }
     },
-    "%" : {},
+    "%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%"
+          }
+        }
+      }
+    },
     "%@ %.0f%%" : {
       "localizations" : {
         "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ %.0f%%"
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ %.0f%%"
@@ -51,6 +72,12 @@
             "state" : "translated",
             "value" : "%@ · keeping display awake"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · 屏幕常亮"
+          }
         }
       }
     },
@@ -60,6 +87,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ · keeping display and system awake"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · 屏幕与系统保持唤醒"
           }
         }
       }
@@ -177,7 +210,22 @@
         }
       }
     },
-    "%@ 啟用門檻" : {},
+    "%@ 啟用門檻" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ activation threshold"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 启用阈值"
+          }
+        }
+      }
+    },
     "%@ 已被「%@」使用。" : {
       "localizations" : {
         "en" : {
@@ -274,13 +322,34 @@
         }
       }
     },
-    "%@ 維持門檻" : {},
+    "%@ 維持門檻" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ hold threshold"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 维持阈值"
+          }
+        }
+      }
+    },
     "%@ 達門檻 · 確認中" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ at threshold · confirming"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 达阈值 · 确认中"
           }
         }
       }
@@ -345,6 +414,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@（跨设备）"
+          }
+        }
+      }
+    },
+    "%@，且無法回復原位" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, and couldn't be moved back"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@，且无法恢复原位"
+          }
+        }
+      }
+    },
+    "%@，已回復原位" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, moved back"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@，已恢复原位"
           }
         }
       }
@@ -542,6 +643,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld s"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 秒"
           }
         }
       }
@@ -934,6 +1041,28 @@
             "state" : "translated",
             "value" : "CPU"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CPU"
+          }
+        }
+      }
+    },
+    "CPU 過載" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CPU overload"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CPU 过载"
+          }
         }
       }
     },
@@ -943,6 +1072,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Monitoring CPU/network · GPU unsupported"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CPU／网络监测中 · GPU 不支持"
           }
         }
       }
@@ -1148,12 +1283,24 @@
             "state" : "translated",
             "value" : "GPU"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPU"
+          }
         }
       }
     },
     "GPU %.0f%%" : {
       "localizations" : {
         "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPU %.0f%%"
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "GPU %.0f%%"
@@ -1167,6 +1314,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "GPU read failed temporarily; will retry automatically."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPU 暂时读取失败，将自动重试。"
           }
         }
       }
@@ -1222,6 +1375,12 @@
     "MiB/s" : {
       "localizations" : {
         "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MiB/s"
+          }
+        },
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "MiB/s"
@@ -2230,6 +2389,22 @@
         }
       }
     },
+    "上次執行異常結束" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last run ended unexpectedly"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上次运行异常结束"
+          }
+        }
+      }
+    },
     "上次的「%@」已於啟動時還原" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2243,6 +2418,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上次的“%@”已于启动时恢复"
+          }
+        }
+      }
+    },
+    "上次結束" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last Exit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上次结束"
           }
         }
       }
@@ -3853,6 +4044,38 @@
         }
       }
     },
+    "匯出…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出…"
+          }
+        }
+      }
+    },
+    "匯出診斷包…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export Diagnostics…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出诊断包…"
+          }
+        }
+      }
+    },
     "半屏" : {
       "localizations" : {
         "en" : {
@@ -3871,6 +4094,22 @@
     },
     "半屏、三分、超寬分區與還原。預設關閉，啟用時需輔助使用權限。" : {
       "extractionState" : "stale"
+    },
+    "卡住" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hang"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "卡住"
+          }
+        }
+      }
     },
     "卡住（超過 2 秒）" : {
       "localizations" : {
@@ -3900,6 +4139,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "原声"
+          }
+        }
+      }
+    },
+    "原螢幕已移除，已放到目前螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original display removed, moved to current display"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原显示器已移除，已放到当前显示器"
           }
         }
       }
@@ -4723,6 +4978,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Activation duration"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用持续时间"
           }
         }
       }
@@ -6208,6 +6469,22 @@
         }
       }
     },
+    "已套用" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Applied"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已应用"
+          }
+        }
+      }
+    },
     "已套用「%@」" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -6396,6 +6673,66 @@
         }
       }
     },
+    "已排列 %lld 個視窗" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Arranged %lld window"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Arranged %lld windows"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已排列 %lld 个窗口"
+          }
+        }
+      }
+    },
+    "已排列 %lld/%lld 個視窗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arranged %lld of %lld windows"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已排列 %lld/%lld 个窗口"
+          }
+        }
+      }
+    },
+    "已排列 %lld/%lld 個視窗，需要輔助使用權限" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arranged %lld of %lld windows, Accessibility permission required"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已排列 %lld/%lld 个窗口，需要辅助功能权限"
+          }
+        }
+      }
+    },
     "已排除" : {
       "localizations" : {
         "en" : {
@@ -6568,6 +6905,22 @@
         }
       }
     },
+    "已被移動，略過" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moved by user, skipped"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已被移动，跳过"
+          }
+        }
+      }
+    },
     "已連線" : {
       "localizations" : {
         "en" : {
@@ -6580,6 +6933,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已连接"
+          }
+        }
+      }
+    },
+    "已還原 %lld 個視窗" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Restored %lld window"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Restored %lld windows"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已恢复 %lld 个窗口"
           }
         }
       }
@@ -7487,6 +7868,22 @@
         }
       }
     },
+    "排列未完成" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arrangement incomplete"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "排列未完成"
+          }
+        }
+      }
+    },
     "排列目前視窗" : {
       "localizations" : {
         "en" : {
@@ -7776,6 +8173,22 @@
         }
       }
     },
+    "操作逾時" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Operation timed out"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "操作超时"
+          }
+        }
+      }
+    },
     "支援：%@" : {
       "localizations" : {
         "en" : {
@@ -7982,6 +8395,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "整数 MCCS 代码，例如 17 或 0x11"
+          }
+        }
+      }
+    },
+    "整組還原未完成：%lld 個視窗失敗" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Group restore incomplete: %lld window failed"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Group restore incomplete: %lld windows failed"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整组恢复未完成：%lld 个窗口失败"
           }
         }
       }
@@ -8213,6 +8654,22 @@
         }
       }
     },
+    "最小尺寸超過區域" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Minimum size exceeds area"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最小尺寸超出区域"
+          }
+        }
+      }
+    },
     "最慢的操作" : {
       "localizations" : {
         "en" : {
@@ -8348,6 +8805,12 @@
             "state" : "translated",
             "value" : "High-load mode is not enabled"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未启用高负载模式"
+          }
         }
       }
     },
@@ -8415,6 +8878,22 @@
         }
       }
     },
+    "未正常結束" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Did not exit normally"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未正常结束"
+          }
+        }
+      }
+    },
     "未登入" : {
       "localizations" : {
         "en" : {
@@ -8443,6 +8922,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未登录 · 终端执行 %@"
+          }
+        }
+      }
+    },
+    "未知" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unknown"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未知"
           }
         }
       }
@@ -8917,6 +9412,22 @@
         }
       }
     },
+    "此 App 的最小尺寸超過所選區域" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This app's minimum size exceeds the selected area"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 App 的最小尺寸超出所选区域"
+          }
+        }
+      }
+    },
     "此 CLI 的 headless 讀圖流程尚未打通，接入層完成後開放選用" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -8956,6 +9467,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "GPU utilization is unreadable on this Mac; CPU and network monitoring still work."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此设备 GPU 使用率不可读；CPU／网络仍可监测。"
           }
         }
       }
@@ -9020,6 +9537,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此设备的音频完全走原生路径：不应用 EQ、平衡、效果链与软件音量。既有设置会保留，取消排除即恢复。"
+          }
+        }
+      }
+    },
+    "此視窗不支援排列" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This window can't be arranged"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此窗口不支持排列"
           }
         }
       }
@@ -9216,6 +9749,54 @@
         }
       }
     },
+    "沒有紀錄" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No records"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有记录"
+          }
+        }
+      }
+    },
+    "沒有視窗被移動：排列未完成" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No windows moved: arrangement incomplete"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有窗口被移动：排列未完成"
+          }
+        }
+      }
+    },
+    "沒有視窗被移動：需要輔助使用權限" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No windows moved: Accessibility permission required"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有窗口被移动：需要辅助功能权限"
+          }
+        }
+      }
+    },
     "注意事項（%lld）" : {
       "localizations" : {
         "en" : {
@@ -9362,6 +9943,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No usable monitoring data"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无可用监测数据"
           }
         }
       }
@@ -9718,6 +10305,22 @@
         }
       }
     },
+    "略過" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skipped"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳过"
+          }
+        }
+      }
+    },
     "畫面轉黑（螢幕仍通電——這台不支援 DDC 電源，也不能移出配置）。%@" : {
       "localizations" : {
         "en" : {
@@ -9730,6 +10333,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "画面变黑（屏幕仍通电——这台不支持 DDC 电源，也不能移出配置）。%@"
+          }
+        }
+      }
+    },
+    "異常結束" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abnormal exit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "异常结束"
+          }
+        }
+      }
+    },
+    "當機" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Crash"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "崩溃"
           }
         }
       }
@@ -9789,6 +10424,12 @@
             "state" : "translated",
             "value" : "Monitoring — waiting for sustained load"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "监测中，等待持续负载"
+          }
         }
       }
     },
@@ -9799,6 +10440,12 @@
             "state" : "translated",
             "value" : "Monitors whole-machine load (not a single app). Network includes LAN traffic; a busy single core may not reach the whole-CPU threshold."
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "监测整机负载（非单个 App）。网络含局域网流量；单核繁忙未必达到整机 CPU 阈值。"
+          }
         }
       }
     },
@@ -9808,6 +10455,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Monitoring interrupted · releasing in about %lld s"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "监测数据中断 · 约 %lld 秒后解除"
           }
         }
       }
@@ -10107,6 +10760,12 @@
             "state" : "translated",
             "value" : "Current readings"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前读数"
+          }
         }
       }
     },
@@ -10122,6 +10781,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前发送到"
+          }
+        }
+      }
+    },
+    "目標視窗已關閉" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Target window closed"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目标窗口已关闭"
           }
         }
       }
@@ -10267,6 +10942,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在确认权限——播放任何声音即可完成检查（权限被拒不会有错误信息，只能靠声音判断）。"
+          }
+        }
+      }
+    },
+    "磁碟寫入過量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excessive disk writes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁盘写入过量"
           }
         }
       }
@@ -10427,6 +11118,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "第 4 个四分之一"
+          }
+        }
+      }
+    },
+    "第一次啟動" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First launch"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "首次启动"
           }
         }
       }
@@ -10683,6 +11390,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "系统排列"
+          }
+        }
+      }
+    },
+    "系統的完整報告在「主控台」App 的「當機報告」；這裡只留摘要與 MetricKit 診斷。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full system reports are in Crash Reports in the Console app; only summaries and MetricKit diagnostics are kept here."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统的完整报告在“控制台”App 的“崩溃报告”中；这里只保留摘要与 MetricKit 诊断。"
           }
         }
       }
@@ -11010,6 +11733,12 @@
             "state" : "translated",
             "value" : "Network"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "网络"
+          }
         }
       }
     },
@@ -11019,6 +11748,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Network %.2f MiB/s"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "网络 %.2f MiB/s"
           }
         }
       }
@@ -11030,6 +11765,12 @@
             "state" : "translated",
             "value" : "Network activation threshold"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "网络启用阈值"
+          }
         }
       }
     },
@@ -11039,6 +11780,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Network sustain threshold"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "网络维持阈值"
           }
         }
       }
@@ -11203,6 +11950,54 @@
         }
       }
     },
+    "自動排列" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto Arrange"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动排列"
+          }
+        }
+      }
+    },
+    "自動排列：%@。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto arrange: %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动排列：%@。"
+          }
+        }
+      }
+    },
+    "自動排列：填滿。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto arrange: fill."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动排列：填满。"
+          }
+        }
+      }
+    },
     "自動（跟著使用中的螢幕）" : {
       "localizations" : {
         "en" : {
@@ -11276,6 +12071,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Select at least one signal to monitor"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "至少选择一项监测指标"
           }
         }
       }
@@ -11501,6 +12302,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "屏幕和系统都不会睡眠"
+          }
+        }
+      }
+    },
+    "螢幕配置已改變" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display arrangement changed"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示器配置已更改"
           }
         }
       }
@@ -11797,6 +12614,12 @@
             "state" : "translated",
             "value" : "Release delay"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "解除延迟"
+          }
         }
       }
     },
@@ -11903,6 +12726,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Invalid settings: check threshold ranges and activation/release relationships"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置无效：请检查阈值范围与启用／维持关系"
           }
         }
       }
@@ -12186,6 +13015,12 @@
             "state" : "translated",
             "value" : "Load"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "负载"
+          }
         }
       }
     },
@@ -12195,6 +13030,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Load dropped · releasing in about %lld s"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "负载降低 · 约 %lld 秒后解除"
           }
         }
       }
@@ -12261,6 +13102,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "超宽：%@"
+          }
+        }
+      }
+    },
+    "超過批次時間限制" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exceeded batch time limit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "超过批处理时间限制"
           }
         }
       }
@@ -12618,6 +13475,22 @@
         }
       }
     },
+    "這個視窗不在任何一組排列裡" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This window isn't in any arrangement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此窗口不在任何一组排列中"
+          }
+        }
+      }
+    },
     "這個視窗還沒有排列過，沒有可還原的位置" : {
       "localizations" : {
         "en" : {
@@ -12667,6 +13540,7 @@
       }
     },
     "這台螢幕只有 %lld 個可排列的視窗，其餘位置留空" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "variations" : {
@@ -12883,6 +13757,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "恢复上次应用"
+          }
+        }
+      }
+    },
+    "還原整組" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore Group"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复整组"
           }
         }
       }
@@ -13589,6 +14479,12 @@
             "state" : "translated",
             "value" : "Duration and triggers (30 minutes / 1 hour / indefinite / while a display is connected / while an app is running / while agents are working / under high load) are in the menu bar."
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开关与触发条件（30 分钟／1 小时／无限期／连接某台显示器时／某个 App 运行时／有 agent 在工作时／高负载时）在菜单栏中。"
+          }
         }
       }
     },
@@ -13878,6 +14774,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要一次管理员密码；会重启音频服务（声音短暂中断）。"
+          }
+        }
+      }
+    },
+    "需要輔助使用權限" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accessibility permission required"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要辅助功能权限"
           }
         }
       }
@@ -14237,6 +15149,12 @@
             "state" : "translated",
             "value" : "High load"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高负载"
+          }
         }
       }
     },
@@ -14247,6 +15165,12 @@
             "state" : "translated",
             "value" : "While under high load"
           }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高负载时"
+          }
         }
       }
     },
@@ -14256,6 +15180,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Keep display awake under high load"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高负载时自动常亮"
           }
         }
       }
@@ -14336,6 +15266,78 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "（DP→HDMI 转换芯片：此路径不透传标准 DDC，请改接 DP／USB-C）"
+          }
+        }
+      }
+    },
+    "，%lld 個受最小尺寸限制" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : ", %lld limited by minimum size"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "，%lld 个受最小尺寸限制"
+          }
+        }
+      }
+    },
+    "，其餘 %lld 個位置留空" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : ", the remaining %lld slot left empty"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : ", the remaining %lld slots left empty"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "，其余 %lld 个位置留空"
+          }
+        }
+      }
+    },
+    "，另有 %lld 個位置留空" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : ", plus %lld empty slot"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : ", plus %lld empty slots"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "，另有 %lld 个位置留空"
           }
         }
       }

@@ -8,12 +8,34 @@ struct WindowShortcutsTests {
 
     @Test("25 個單視窗排列動作（含 1/4、3/4）都有對應指令，ID 不重複")
     func commandCatalog() {
-        let arrangement = WindowCommand.allCases.filter { $0.group != .advanced && $0.group != .arrange }
+        let arrangement = WindowCommand.allCases.filter {
+            $0.group != .advanced && $0.group != .arrange && $0 != .restoreGroup
+        }
         #expect(arrangement.count == 25)
         #expect(Set(WindowCommand.allCases.map(\.rawValue)).count == WindowCommand.allCases.count)
         #expect(WindowCommand.centerTwoThirds.rawValue == "center-two-thirds")
         #expect(WindowCommand.centerTwoThirds.layoutAction == .centerTwoThirds)
         #expect(WindowCommand.restore.layoutAction == nil)
+    }
+
+    @Test("restore-group 屬於常用、預設不綁鍵、無對應動作")
+    func restoreGroupCommand() {
+        #expect(WindowCommand.restoreGroup.rawValue == "restore-group")
+        #expect(WindowCommand.restoreGroup.group == .common)
+        #expect(WindowCommand.restoreGroup.layoutAction == nil)
+        #expect(WindowCommand.restoreGroup.arrangement == nil)
+        #expect(WindowCommand.restoreGroup.order == WindowCommand.restore.order + 1)
+        #expect(ShortcutBindings()[.restoreGroup] == nil)
+    }
+
+    @Test("arrange-auto 是排列群組第一項，沒有固定版型或預設快捷鍵")
+    func autoCommand() {
+        #expect(WindowCommand.arrangeAuto.rawValue == "arrange-auto")
+        #expect(WindowCommand.arrangeAuto.group == .arrange)
+        #expect(WindowCommand.arrangeAuto.layoutAction == nil)
+        #expect(WindowCommand.arrangeAuto.arrangement == nil)
+        #expect(WindowCommand.commands(in: .arrange).first == .arrangeAuto)
+        #expect(ShortcutBindings()[.arrangeAuto] == nil)
     }
 
     @Test("升級補綁：只補新指令的預設鍵；自己綁過的、預設鍵被佔用的不動")

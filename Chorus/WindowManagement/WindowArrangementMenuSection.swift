@@ -5,22 +5,29 @@ import SwiftUI
 struct WindowArrangementMenuSection: View {
     @Environment(AppState.self) private var appState
     @State private var isExpanded: Bool
+    @State private var hoverTask: Task<Void, Never>?
 
     init(startExpanded: Bool = false) {
         _isExpanded = State(initialValue: startExpanded)
     }
 
     /// 所有排列操作共用四欄格線，未滿一列時仍保留相同欄寬。
+    /// 幾何格子：半屏→角落→三分→兩／三分→四分→四分之三。
     private static let singleWindowCommands: [WindowCommand] = [
         .leftHalf, .rightHalf, .topHalf, .bottomHalf,
         .topLeft, .topRight, .bottomLeft, .bottomRight,
         .leftThird, .centerThird, .rightThird, .center,
-        .leftTwoThirds, .centerTwoThirds, .rightTwoThirds, .restore,
+        .leftTwoThirds, .centerTwoThirds, .rightTwoThirds,
         .firstFourth, .secondFourth, .thirdFourth, .lastFourth,
         .leftThreeFourths, .rightThreeFourths,
     ]
+    /// 常用動作：填滿／自動／還原／還原整組（獨立一列，在目標下方）。
+    private static let quickActions: [WindowCommand] = [
+        .maximize, .arrangeAuto, .restore, .restoreGroup,
+    ]
+    /// 固定多視窗版型（不含自動排列）。
     private static let arrangeRow: [WindowCommand] =
-        [.maximize] + WindowCommand.commands(in: .arrange)
+        WindowCommand.commands(in: .arrange).filter { $0 != .arrangeAuto }
     private static let glyphSize = CGSize(width: 30, height: 21)
 
     private var manager: WindowManager { appState.windowManager }
@@ -41,6 +48,8 @@ struct WindowArrangementMenuSection: View {
 
                     let screens = ScreenTopology.capture(generation: 0).screens
 
+                    commandGrid(Self.quickActions, screenCount: screens.count)
+
                     sectionHeader("移動與調整大小")
                     commandGrid(Self.singleWindowCommands, screenCount: screens.count)
 
@@ -51,7 +60,26 @@ struct WindowArrangementMenuSection: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let message = manager.statusMessage, manager.targetAppName != nil {
+                    if let report = manager.lastReport, manager.targetAppName != nil {
+                        Text(report.summaryText)
+                            .font(.caption2)
+                            .foregroundStyle(report.isComplete ? Color.secondary : Color.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(Array(report.issueLines.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        if !report.retryable.isEmpty {
+                            Button(String(localized: "重試")) {
+                                manager.retryLastArrangement()
+                            }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                            .font(.caption)
+                        }
+                    } else if let message = manager.statusMessage, manager.targetAppName != nil {
                         Text(message)
                             .font(.caption2)
                             .foregroundStyle(.orange)
@@ -93,6 +121,11 @@ struct WindowArrangementMenuSection: View {
                     .font(.callout)
             }
             .onAppear { manager.captureMenuTarget() }
+            .onDisappear {
+                hoverTask?.cancel()
+                hoverTask = nil
+                manager.hideArrangementPreview()
+            }
         }
     }
 
@@ -124,9 +157,24 @@ struct WindowArrangementMenuSection: View {
         return iconTile(
             title: command.title, hint: chord ?? "", disabledReason: reason
         ) {
+            manager.hideArrangementPreview()
             manager.perform(command)
         } label: {
             WindowCommandGlyph(command: command, size: Self.glyphSize)
+        }
+        .onHover { isInside in
+            guard command.arrangement != nil || command == .arrangeAuto else { return }
+            hoverTask?.cancel()
+            hoverTask = nil
+            if isInside {
+                hoverTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(150))
+                    guard !Task.isCancelled else { return }
+                    manager.showArrangementPreview(for: command)
+                }
+            } else {
+                manager.hideArrangementPreview()
+            }
         }
     }
 
@@ -166,6 +214,8 @@ struct WindowArrangementMenuSection: View {
             return screenCount > 1 ? nil : String(localized: "只有一台螢幕，無法移到其他螢幕")
         case .restore:
             return manager.canRestoreTarget ? nil : String(localized: "這個視窗還沒有排列過，沒有可還原的位置")
+        case .restoreGroup:
+            return manager.canRestoreGroup ? nil : String(localized: "這個視窗不在任何一組排列裡")
         default:
             return nil
         }

@@ -29,6 +29,8 @@ extension WindowCommand {
         case .maximize: return String(localized: "填滿")
         case .center: return String(localized: "置中")
         case .restore: return String(localized: "還原")
+        case .restoreGroup: return String(localized: "還原整組")
+        case .arrangeAuto: return String(localized: "自動排列")
         case .selectZone: return String(localized: "鍵盤選區")
         case .zone1: return String(localized: "放進第 1 區")
         case .zone2: return String(localized: "放進第 2 區")
@@ -112,6 +114,8 @@ extension WindowCommand {
         case .nextDisplay: return "arrow.right.to.line"
         case .previousDisplay: return "arrow.left.to.line"
         case .restore: return "arrow.uturn.backward"
+        case .restoreGroup: return "arrow.uturn.backward.square"
+        case .arrangeAuto: return "wand.and.stars"
         case .selectZone: return "keyboard"
         case .zone1: return "1.square"
         case .zone2: return "2.square"
@@ -158,7 +162,8 @@ struct WindowLayoutGlyph: View {
 
     var body: some View {
         let inset = max(2, size.height * 0.16)
-        let spacing = blocks.count > 1 ? max(0.75, size.height * 0.05) : 0
+        // 多窗格縮圖左右／上下要看得出縫，否則「左右分開」看起來像糊成一塊。
+        let spacing = blocks.count > 1 ? max(2.5, size.height * 0.14) : 0
         Group {
             if blocks.isEmpty {
                 Image(systemName: symbolName)
