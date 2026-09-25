@@ -52,6 +52,8 @@ final class AutoBrightnessController {
 
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private weak var displayManager: DisplayManager?
+    /// 逐螢幕差異值變更時回報給遠端（配置圖要讀得回來才有正確的還原值）。
+    @ObservationIgnored weak var coordinator: ControlCoordinator?
     @ObservationIgnored private let sensor: AmbientLightSensorClient
     @ObservationIgnored private let location: LocationProvider
     @ObservationIgnored private let localPeerID: String
@@ -233,8 +235,14 @@ final class AutoBrightnessController {
 
     /// 單一顯示器差異值（配置圖／設定視窗）。
     func setDisplayOffset(_ offset: Double, for uuid: String) {
-        settings.ambientDisplayOffsets[uuid] = min(max(offset, -0.5), 0.5)
+        let clamped = min(max(offset, -0.5), 0.5)
+        settings.ambientDisplayOffsets[uuid] = clamped
         reapplyTargets()
+        // 遠端的配置圖要能把這個值讀回去——差異值的權威在這台機器，
+        // 控制端只保留最後已知值，沒有回報它就永遠停在 0。
+        coordinator?.reportEndpointValue(
+            kind: .display, deviceID: uuid, capability: .brightnessOffset, value: clamped
+        )
     }
 
     /// 近 24h 本機環境光統計（光環境顧問 context 用）；無感器或無樣本為 nil。

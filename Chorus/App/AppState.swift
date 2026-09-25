@@ -101,6 +101,7 @@ final class AppState {
             displayManager: displayManager,
             audioManager: audioManager
         )
+        coordinator.pairedPeers = pairedPeers
         timeline.mark("coordinator")
         let sensor = AmbientLightSensorClient(fakeALS: instance.fakeALS, disabled: instance.disableALS)
         location = LocationProvider(settings: settings)
@@ -125,7 +126,7 @@ final class AppState {
 
         timeline.mark("advisor")
         // 能力（含 "als"）要在 sessionManager.start() 之前設定，Bonjour TXT 與 hello 才帶得到
-        var capabilities = ["display", "audio", "displayModes.v1"]
+        var capabilities = ["display", "audio", "displayModes.v1", ControlCoordinator.deviceDirectoryCapability]
         if sensor.isAvailable { capabilities.append("als") }
         // HDR 寫入未驗證前不宣告 displayHDR.v1；狀態仍可在本機 UI 顯示
         sessionManager.localCapabilities = capabilities
@@ -157,6 +158,7 @@ final class AppState {
         displayConfiguration.attach(displayManager: displayManager)
         AppStateRegistry.keepAwake = keepAwake
         coordinator.attachAutoController(autoBrightness)
+        autoBrightness.coordinator = coordinator
         coordinator.attachKeepAwake(keepAwake)
 
         timeline.mark("wiring")

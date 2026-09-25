@@ -1,11 +1,12 @@
+import ChorusCore
 import SwiftUI
 import UniformTypeIdentifiers
 
 /// 裝置配置視窗，分成三個區塊：
 /// 配置圖（各裝置的亮度差異值控制）｜照片（把節點拖到實際位置）｜建議（光環境分析）。
 /// 照片與建議可隱藏，配置圖恆在。
-/// 差異值語意：疊加在環境基準亮度之上（本機顯示器改 ambientDisplayOffsets、
-/// peer 節點送 setDeviceOffset 給對方）。
+/// 差異值語意：疊加在環境基準亮度之上。本機顯示器改 `ambientDisplayOffsets`；
+/// 遠端節點對**單一螢幕**送 `brightnessOffset` 端點指令，值由所屬 Mac 保存並回報。
 struct DeviceDiagramView: View {
     @Environment(AppState.self) private var appState
     @State private var showingImporter = false
@@ -400,14 +401,24 @@ struct DeviceDiagramView: View {
         var result: [DiagramNode] = appState.displayManager.displays.map { display in
             .localDisplay(uuid: display.uuid, name: display.name, isBuiltin: display.isBuiltin)
         }
-        result += appState.pairedPeers.peers.map { peer in
-            .peer(
+        for peer in appState.pairedPeers.peers {
+            let connected = appState.sessionManager.connectionStates[peer.peerID] == .connected
+            let endpoints = appState.coordinator.remoteDevices
+                .endpoints(of: peer.peerID, kind: .display)
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            // 舊的整機座標在能確定「只有一台螢幕」時才搬過去（見 DiagramStore）
+            appState.diagram.migrateLegacyPeerPosition(
                 peerID: peer.peerID,
-                name: peer.deviceName,
-                kind: peer.deviceKind,
-                capabilities: peer.capabilities ?? [],
-                connected: appState.sessionManager.connectionStates[peer.peerID] == .connected
+                displayUUIDs: endpoints.map(\.deviceID)
             )
+            for endpoint in endpoints {
+                result.append(.remoteDisplay(
+                    id: RemoteEndpointID(peerID: peer.peerID, kind: .display, deviceID: endpoint.deviceID),
+                    name: endpoint.discriminator.map { "\(endpoint.name)（\($0)）" } ?? endpoint.name,
+                    peerName: peer.deviceName,
+                    connected: connected
+                ))
+            }
         }
         return result
     }
@@ -540,33 +551,31 @@ private struct PhotoThumbnailView: View {
 }
 
 /// 配置圖上的一個節點。
+///
+/// 遠端那一半是**逐螢幕**而不是整台 Mac：同一台 Mac 的兩台螢幕可以放在
+/// 照片的不同位置、各自設定差異值。整機節點在多螢幕情境下沒有意義。
 enum DiagramNode {
     case localDisplay(uuid: String, name: String, isBuiltin: Bool)
-    case peer(peerID: String, name: String, kind: String?, capabilities: [String], connected: Bool)
+    case remoteDisplay(id: RemoteEndpointID, name: String, peerName: String, connected: Bool)
 
     var key: String {
         switch self {
         case let .localDisplay(uuid, _, _): "display:\(uuid)"
-        case let .peer(peerID, _, _, _, _): "peer:\(peerID)"
+        case let .remoteDisplay(id, _, _, _): DiagramStore.nodeKey(id)
         }
     }
 
     var name: String {
         switch self {
         case let .localDisplay(_, name, _): name
-        case let .peer(_, name, _, _, _): name
+        case let .remoteDisplay(_, name, _, _): name
         }
     }
 
     var icon: String {
         switch self {
         case let .localDisplay(_, _, isBuiltin): isBuiltin ? "laptopcomputer" : "display"
-        case let .peer(_, _, kind, _, _):
-            switch kind {
-            case "iphone": "iphone"
-            case "ipad": "ipad"
-            default: "desktopcomputer"
-            }
+        case .remoteDisplay: "display"
         }
     }
 }
@@ -581,10 +590,19 @@ private struct PhotoMarkerView: View {
             Image(systemName: node.icon)
                 .imageScale(.small)
                 .foregroundStyle(.secondary)
-            Text(node.name)
-                .font(.caption2)
-                .fontWeight(.medium)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(node.name)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                // 所屬 Mac：同型號的螢幕接在不同機器上時，只有名稱分不出來
+                if case let .remoteDisplay(_, _, peerName, _) = node {
+                    Text(peerName)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
             Text(offsetText)
                 .font(.caption2)
                 .monospacedDigit()
@@ -600,8 +618,15 @@ private struct PhotoMarkerView: View {
     }
 
     private var offsetText: String {
-        guard case let .localDisplay(uuid, _, _) = node else { return "" }
-        return String(format: "%+.0f%%", (appState.settings.ambientDisplayOffsets[uuid] ?? 0) * 100)
+        switch node {
+        case let .localDisplay(uuid, _, _):
+            return String(format: "%+.0f%%", (appState.settings.ambientDisplayOffsets[uuid] ?? 0) * 100)
+        case let .remoteDisplay(id, _, _, _):
+            let offset = appState.coordinator.remoteDevices.displayValue(id, .brightnessOffset)
+                ?? appState.settings.remoteDisplayOffsets[id.storageKey]
+            guard let offset else { return "—" }
+            return String(format: "%+.0f%%", offset * 100)
+        }
     }
 }
 
@@ -628,14 +653,14 @@ private struct DiagramNodeView: View {
                     label: offsetText(appState.settings.ambientDisplayOffsets[uuid] ?? 0),
                     enabled: true
                 )
-            case let .peer(peerID, name, kind, capabilities, connected):
+            case let .remoteDisplay(id, name, peerName, connected):
                 header(
-                    icon: peerIcon(kind),
+                    icon: "display",
                     name: name,
-                    badges: peerBadges(capabilities),
+                    badges: [peerName],
                     statusColor: connected ? .green : Color.secondary.opacity(0.4)
                 )
-                PeerOffsetSlider(peerID: peerID, connected: connected)
+                RemoteDisplayOffsetSlider(id: id, connected: connected)
             }
         }
         .padding(10)
@@ -695,59 +720,56 @@ private struct DiagramNodeView: View {
         return badges
     }
 
-    private func peerBadges(_ capabilities: [String]) -> [String] {
-        capabilities.compactMap { capability in
-            switch capability {
-            case "als": String(localized: "光感")
-            case "display": String(localized: "螢幕")
-            case "audio": String(localized: "音訊")
-            default: nil
-            }
-        }
-    }
-
-    private func peerIcon(_ kind: String?) -> String {
-        switch kind {
-        case "iphone": "iphone"
-        case "ipad": "ipad"
-        default: "desktopcomputer"
-        }
-    }
-
     private func offsetText(_ offset: Double) -> String {
         String(format: "%+.0f%%", offset * 100)
     }
 }
 
-/// Peer 的整機差異值滑桿：送 setDeviceOffset 給對方。
-/// 已知限制：對方目前的差異值不會回讀（同 PeerRemoteControls），滑桿從 0 起。
-private struct PeerOffsetSlider: View {
+/// 遠端**單一螢幕**的亮度差異值滑桿。
+///
+/// 與舊的整機版本有兩個關鍵差別：
+/// 1. 值會回讀。差異值的權威在所屬 Mac，它在目錄與逐端點回報裡送過來——
+///    有回讀，光環境分析套用完才有正確的原值可以還原。
+/// 2. 讀不到值時停用並顯示「—」，不從 0 起跳：0 是一個**有意義的差異值**，
+///    拿它當「不知道」的預設會讓使用者一碰就把對方的設定清成 0。
+private struct RemoteDisplayOffsetSlider: View {
     @Environment(AppState.self) private var appState
-    let peerID: String
+    let id: RemoteEndpointID
     let connected: Bool
 
-    @State private var offset = 0.0
+    private var offset: Double? {
+        appState.coordinator.remoteDevices.displayValue(id, .brightnessOffset)
+    }
+
+    /// 離線時顯示最後已知值（灰階、不可操作），這樣管理介面仍看得出設定。
+    private var lastKnown: Double? {
+        appState.settings.remoteDisplayOffsets[id.storageKey]
+    }
 
     var body: some View {
+        let shown = offset ?? lastKnown
         HStack(spacing: 5) {
             Slider(
                 value: Binding(
-                    get: { offset },
-                    set: { value in
-                        offset = value
-                        appState.coordinator.sendDeviceOffset(to: peerID, offset: value)
-                    }
+                    get: { shown ?? 0 },
+                    set: { appState.coordinator.sendEndpointCommand(id, capability: .brightnessOffset, value: $0) }
                 ),
                 in: -0.5...0.5
             )
             .controlSize(.mini)
-            .disabled(!connected)
-            Text(String(format: "%+.0f%%", offset * 100))
+            .disabled(!connected || offset == nil)
+            Text(shown.map { String(format: "%+.0f%%", $0 * 100) } ?? "—")
                 .font(.caption2)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
                 .frame(width: 38, alignment: .trailing)
         }
-        .help(connected ? "調整對方的整機亮度差異值" : "離線時無法調整")
+        .help(helpText)
+    }
+
+    private var helpText: String {
+        if !connected { return String(localized: "離線時無法調整（顯示的是最後已知值）") }
+        if offset == nil { return String(localized: "正在取得這台螢幕的現值…") }
+        return String(localized: "調整這台遠端螢幕的亮度差異值")
     }
 }

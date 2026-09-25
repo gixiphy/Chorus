@@ -21,6 +21,27 @@ public enum SyncMessage: Codable, Sendable {
     case stateQuery(StateQuery)
     /// 現值回報：**純資訊**，收到者只更新顯示，永不套用到硬體、也不進 LWW。
     case stateReport(StateReport)
+
+    // MARK: - 逐裝置遠端控制（需雙方 hello 宣告 `devices` 能力）
+    //
+    // 為什麼不擴充上面那幾則：`stateUpdate`／`stateReport` 的語意是**整機**
+    // （「這台 Mac 的亮度」＝第一台顯示器），而且 stateReport 是逐 key 合併的
+    // ——把「有哪些裝置」塞進去的話，拔掉的裝置會永遠殘留。目錄需要完整替換。
+    //
+    // 協定版本不動（仍是 1）：舊版 peer 解不開這幾個 case 會逐則丟棄整包訊息、
+    // 不斷線；版本一旦調高，我們送出的**所有**訊息都會被舊版當成不支援而忽略。
+    // 實際上雙方在 hello 宣告 `devices` 之前根本不會送這幾則。
+
+    /// 「把你的端點清單給我」。
+    case deviceDirectoryQuery(DeviceDirectoryQuery)
+    /// 端點完整快照（**整份替換**，不合併）。
+    case deviceDirectory(DeviceDirectory)
+    /// 單一端點的現值變化（純資訊，不套用到硬體、不進 LWW）。
+    case endpointState(EndpointStateUpdate)
+    /// 對單一端點下指令。
+    case endpointCommand(EndpointCommand)
+    /// 指令結果（對應 `EndpointCommand.id`）。
+    case endpointCommandResult(EndpointCommandResult)
 }
 
 /// 「你現在的亮度／音量是多少？」——遙控滑桿要顯示對方的實際值，

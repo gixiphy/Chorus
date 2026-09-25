@@ -113,6 +113,101 @@ final class AudioDeviceManager {
     /// 三個「誠實說明」共用的文案：排除是最強的否決，排在其他理由前面。
     static let excludedReason = String(localized: "已排除此裝置——Chorus 不在它上面做任何處理")
 
+    // MARK: - 音量模式（自動／DDC／原生／數位）
+
+    /// 這個裝置目前哪幾條音量路徑走得通。
+    ///
+    /// `hasDigitalPath` 要 manager 才答得出來：數位衰減是虛擬輸出 driver 做的，
+    /// 所以只有「driver 正在轉送到這個裝置」時那條路才存在。
+    func volumeAvailability(for device: AudioDeviceModel) -> VolumeModePolicy.Availability {
+        var availability = device.volumeAvailability
+        availability.hasDigitalPath = virtualDriver?.status == .active
+            && virtualDriver?.targetUID == device.uid
+        return availability
+    }
+
+    /// 使用者為這個裝置選的音量模式（預設 `.auto`）。
+    func volumeMode(for device: AudioDeviceModel) -> VolumeMode {
+        settings.volumeMode(for: device.uid)
+    }
+
+    /// 改變音量模式。
+    ///
+    /// **不重裝驅動、不重啟音訊服務**：模式切換只是走 driver 既有的設定通道。
+    /// 切換前先把已確認的現值記下來，切完照著寫一次——否則從數位衰減切到
+    /// DDC 的瞬間，數位那一層放開了、硬體卻還停在上一個值，會爆出一下沒有
+    /// 衰減過的音量。
+    func setVolumeMode(_ mode: VolumeMode, for device: AudioDeviceModel) {
+        guard settings.volumeMode(for: device.uid) != mode else { return }
+        let previous = effectiveVolumeMode(for: device)
+        settings.setVolumeMode(mode, for: device.uid)
+        let resolved = effectiveVolumeMode(for: device)
+        log.notice("音量模式 \(device.name) \(device.uid)：偏好 \(mode.rawValue) → 生效 \(resolved.rawValue)")
+        guard resolved != previous else { return }
+        // 目前音量以虛擬裝置的滑桿為準（使用者看到、也是音量鍵動的那一條）
+        let level = virtualDevice?.volume ?? device.volume
+        // **順序決定會不會爆音**：兩個動作之間一定要有一層衰減在作用。
+        // 往數位模式：先讓 driver 接手衰減，硬體維持原值（兩層疊加只會更小聲）。
+        // 往硬體模式：先把值寫進硬體，再放開 driver 的衰減——反過來的話，
+        // driver 已經放行、螢幕卻還停在上一個模式留下的值，會爆出一下沒有
+        // 衰減過的音量。
+        //
+        // 硬體那一側刻意**不歸零也不拉到最大**：切模式不是把音量塞到極端值的
+        // 理由。代價是兩個模式的百分比不等於同樣的聽感音量，這是文件講明接受的。
+        if resolved == .digital {
+            updateVirtualMirrorMode()
+        } else {
+            applyVolumeForCurrentMode(level, target: device)
+            updateVirtualMirrorMode()
+        }
+    }
+
+    /// 偏好 ＋ 可用性 → 生效模式與降級原因。UI 的「目前生效模式」讀這個。
+    func volumeModeResolution(for device: AudioDeviceModel) -> VolumeModePolicy.Resolution {
+        VolumeModePolicy.resolve(
+            preference: volumeMode(for: device),
+            availability: volumeAvailability(for: device)
+        )
+    }
+
+    func effectiveVolumeMode(for device: AudioDeviceModel) -> EffectiveVolumeMode {
+        volumeModeResolution(for: device).effective
+    }
+
+    /// 這個模式現在為什麼不能選（可以選時回 nil）。選單用來停用選項並說明原因。
+    func volumeModeUnavailability(
+        _ mode: VolumeMode,
+        for device: AudioDeviceModel
+    ) -> VolumeModeUnavailability? {
+        VolumeModePolicy.unavailability(of: mode, given: volumeAvailability(for: device))
+    }
+
+    /// 目前轉送目標的生效模式（沒有轉送目標時 nil）。
+    var forwardVolumeModeResolution: VolumeModePolicy.Resolution? {
+        virtualForwardTarget.map { volumeModeResolution(for: $0) }
+    }
+
+    /// 依生效模式把音量寫到該走的地方。
+    ///
+    /// 與 `writeVolume` 的差別：那個是「寫這個裝置的音量」，會依裝置能力自己
+    /// 挑路；這個是「讓使用者選的模式生效」，數位模式時刻意**不碰硬體**，
+    /// 值留在虛擬裝置上由 driver 衰減。
+    private func applyVolumeForCurrentMode(_ value: Double, target: AudioDeviceModel) {
+        switch effectiveVolumeMode(for: target) {
+        case .ddc:
+            guard let displayID = target.bridgedDisplayID else { return }
+            writeDDCVolume(value, to: target, displayID: displayID)
+        case .native:
+            guard target.canSetVolume else { return }
+            target.volume = value
+            recentLocalSets[target.uid] = (value, ContinuousClock.now)
+            worker.setVolume(target.id, to: value)
+        case .digital:
+            // driver 自己會依 applyVolume=1 衰減；這裡不寫任何硬體。
+            break
+        }
+    }
+
     // MARK: - 軟體音量（三後端矩陣第三條，B6-4）
 
     /// 這個裝置有沒有資格用軟體音量：**前兩條後端都走不通**才輪到它
@@ -267,13 +362,124 @@ final class AudioDeviceManager {
         writeMute(muted, to: device)
     }
 
+    // MARK: - 逐裝置遠端控制的端點介面
+
+    func hasDevice(uid: String) -> Bool {
+        devices.contains { $0.uid == uid }
+    }
+
+    /// 遙控指定音訊端點的音量。回傳**硬體確認後**的值；裝置不在或音量不可控
+    /// 時回 nil——呼叫端據此回報 unavailable／unsupported，不退回控制別台裝置。
+    ///
+    /// 虛擬輸出的轉送目標特別處理：數位模式下音量住在虛擬裝置上，寫實體裝置
+    /// 不會有任何效果（它根本沒有音量可寫）。
+    func applyEndpointVolume(_ value: Double, toUID uid: String) -> Double? {
+        guard let device = devices.first(where: { $0.uid == uid }) else { return nil }
+        let clamped = min(max(value, 0), 1)
+        if isForwardTarget(device), effectiveVolumeMode(for: device) == .digital {
+            guard let virtualDevice else { return nil }
+            log.notice("音量（端點命令）\(device.name) 經虛擬裝置 = \(clamped.diag2)")
+            writeVolume(clamped, to: virtualDevice)
+            return clamped
+        }
+        guard device.isVolumeControllable else { return nil }
+        log.notice("音量（端點命令）\(device.name) \(uid) = \(clamped.diag2)")
+        writeVolume(clamped, to: device)
+        return device.volume
+    }
+
+    /// 遙控指定音訊端點的靜音。回傳確認後的狀態；不可靜音時回 nil。
+    func applyEndpointMute(_ muted: Bool, toUID uid: String) -> Bool? {
+        guard let device = devices.first(where: { $0.uid == uid }) else { return nil }
+        if isForwardTarget(device), effectiveVolumeMode(for: device) == .digital {
+            guard let virtualDevice else { return nil }
+            writeMute(muted, to: virtualDevice)
+            return muted
+        }
+        guard device.hasMute || device.bridgedDisplayID != nil || device.softwareVolumeActive else {
+            return nil
+        }
+        log.notice("靜音（端點命令）\(device.name) \(uid) = \(muted)")
+        writeMute(muted, to: device)
+        return device.muted
+    }
+
+    /// 送給其他 Mac 的音訊端點清單。
+    ///
+    /// 虛擬輸出裝置本身**不列**：使用者心裡的輸出目的地是它轉送到的那台螢幕。
+    /// 列出來會讓遠端看到兩個指向同一個輸出的項目，選錯那個就沒有反應。
+    /// 轉送目標則照常列出，數位模式時由 `applyEndpointVolume` 幫忙轉接。
+    func directoryAudioInputs() -> [LocalDeviceDirectory.AudioInput] {
+        devices.compactMap { device in
+            guard device.uid != VirtualAudioDriverController.deviceUID else { return nil }
+            let forwarded = isForwardTarget(device)
+            return LocalDeviceDirectory.AudioInput(
+                uid: device.uid,
+                name: device.name,
+                // 轉送目標即使自己沒有音量，數位衰減那條路也是通的
+                canControlVolume: device.isVolumeControllable || forwarded,
+                canMute: device.hasMute || device.bridgedDisplayID != nil
+                    || device.softwareVolumeActive || forwarded,
+                volume: forwarded ? (virtualDevice?.volume ?? device.volume) : device.volume,
+                muted: forwarded ? (virtualDevice?.muted ?? device.muted) : device.muted,
+                linkedDisplayUUID: linkedDisplayUUID(for: device),
+                isDefaultOutput: device.isDefault || (forwarded && virtualDevice?.isDefault == true)
+            )
+        }
+    }
+
+    /// 這個音訊裝置屬於哪台螢幕。已橋接的用橋接結果（那是 DDC 確認過的），
+    /// 否則退回名稱比對；兩者都對不上就不猜——寧可歸到「設備」，
+    /// 也不要在「螢幕」分類下掛一個其實不屬於任何螢幕的裝置。
+    func linkedDisplayUUID(for device: AudioDeviceModel) -> String? {
+        if let displayID = device.bridgedDisplayID {
+            return displayManager?.displays.first { $0.id == displayID }?.uuid
+        }
+        guard isScreenAudioDevice(device) else { return nil }
+        return displayManager?.displays.first { display in
+            display.name.localizedCaseInsensitiveContains(device.name)
+                || device.name.localizedCaseInsensitiveContains(display.name)
+        }?.uuid
+    }
+
+    /// 本機音訊輸出的分組（設備／螢幕）。虛擬裝置跟著它的轉送目標歸類。
+    func group(for device: AudioDeviceModel) -> DeviceControlGroup {
+        let classified = device.uid == VirtualAudioDriverController.deviceUID
+            ? virtualForwardTarget : device
+        guard let classified else { return .device }
+        return ControlGrouping.group(isScreenAudioEndpoint: linkedDisplayUUID(for: classified) != nil)
+    }
+
     private func writeVolume(_ clamped: Double, to device: AudioDeviceModel) {
         device.volume = clamped
         recentLocalSets[device.uid] = (clamped, ContinuousClock.now)
         settings.setLastVolume(clamped, for: device.uid)
+
+        // 轉送目標的路徑由**使用者選的音量模式**決定（自動時才照能力挑）。
+        // 其他裝置沒有模式可言——它們不是 driver 的下游，照舊依能力挑路。
+        if isForwardTarget(device) {
+            let mode = effectiveVolumeMode(for: device)
+            log.info("音量寫入 \(device.name) \(device.uid) = \(clamped.diag2)（模式 \(mode.rawValue)）")
+            reportVolumeEndpoint(device: device, capability: .volume, value: clamped)
+            switch mode {
+            case .native:
+                guard device.canSetVolume else { return }
+                worker.setVolume(device.id, to: clamped)
+            case .ddc:
+                guard let displayID = device.bridgedDisplayID else { return }
+                writeDDCVolume(clamped, to: device, displayID: displayID)
+            case .digital:
+                // 衰減在 driver 裡（applyVolume=1）。這裡寫硬體的話，同一次
+                // 滑桿操作會被套用兩次。
+                break
+            }
+            return
+        }
+
         let path = device.canSetVolume ? "硬體"
             : device.softwareVolumeActive ? "軟體" : device.bridgedDisplayID != nil ? "DDC" : "無"
         log.info("音量寫入 \(device.name) \(device.uid) = \(clamped.diag2)（\(path)）")
+        reportVolumeEndpoint(device: device, capability: .volume, value: clamped)
 
         if device.canSetVolume {
             worker.setVolume(device.id, to: clamped)
@@ -283,15 +489,44 @@ final class AudioDeviceManager {
         } else if device.softwareVolumeActive {
             pushDeviceProcessing(device)
         } else if let displayID = device.bridgedDisplayID {
-            // 螢幕可能處於 DDC 靜音（0x8D）而我們不知道——調音量＝想聽到聲音，
-            // 比照 macOS 語意一併送解除靜音（DDC 層的重複值去重讓它幾乎免費）
-            if !device.muted {
-                displayManager?.ddc.write(displayID, vcp: DDCController.VCP.mute, value: DDCController.MuteValue.unmuted)
-            }
-            let range = Double(Swift.max(device.bridgeVolumeMax, 1))
-            displayManager?.ddc.write(displayID, vcp: DDCController.VCP.volume, value: UInt16((clamped * range).rounded()))
-            scheduleBridgeVerify(device: device, displayID: displayID, expected: clamped)
+            writeDDCVolume(clamped, to: device, displayID: displayID)
         }
+    }
+
+    /// 把音量／靜音變化回報成端點事件。
+    ///
+    /// 虛擬裝置**不是**目錄裡的端點（`directoryAudioInputs` 刻意不列它），
+    /// 所以它的變化要記在轉送目標那一筆上。少了這層轉接，數位模式下
+    /// `mirrorVirtualVolume` 提早返回、實體裝置那條 writeVolume 根本不會跑，
+    /// 遠端的滑桿就會一直停在最後一次裝置清單變動時的值。
+    private func reportVolumeEndpoint(
+        device: AudioDeviceModel,
+        capability: RemoteEndpointCapability,
+        value: Double
+    ) {
+        let uid = device.uid == VirtualAudioDriverController.deviceUID
+            ? virtualForwardTarget?.uid
+            : device.uid
+        guard let uid else { return }
+        coordinator?.reportEndpointValue(
+            kind: .audioOutput, deviceID: uid, capability: capability, value: value
+        )
+    }
+
+    /// 這個裝置是虛擬輸出 driver 目前的轉送目標嗎。
+    private func isForwardTarget(_ device: AudioDeviceModel) -> Bool {
+        virtualDevice != nil && virtualDriver?.targetUID == device.uid
+    }
+
+    private func writeDDCVolume(_ clamped: Double, to device: AudioDeviceModel, displayID: CGDirectDisplayID) {
+        // 螢幕可能處於 DDC 靜音（0x8D）而我們不知道——調音量＝想聽到聲音，
+        // 比照 macOS 語意一併送解除靜音（DDC 層的重複值去重讓它幾乎免費）
+        if !device.muted {
+            displayManager?.ddc.write(displayID, vcp: DDCController.VCP.mute, value: DDCController.MuteValue.unmuted)
+        }
+        let range = Double(Swift.max(device.bridgeVolumeMax, 1))
+        displayManager?.ddc.write(displayID, vcp: DDCController.VCP.volume, value: UInt16((clamped * range).rounded()))
+        scheduleBridgeVerify(device: device, displayID: displayID, expected: clamped)
     }
 
     /// 寫後驗證：拖曳結束 1.5 秒後回讀 VCP 0x62，分辨「橋接正常」與
@@ -318,6 +553,12 @@ final class AudioDeviceManager {
     private func writeMute(_ muted: Bool, to device: AudioDeviceModel) {
         device.muted = muted
         log.info("靜音寫入 \(device.name) \(device.uid) = \(muted)")
+        reportVolumeEndpoint(device: device, capability: .mute, value: muted ? 1 : 0)
+        // 手動數位模式下靜音也留在 driver 那一層：走硬體的話，使用者選的
+        // 「不要碰螢幕硬體」就破功了（而且螢幕的靜音狀態會與滑桿脫鉤）。
+        if isForwardTarget(device), effectiveVolumeMode(for: device) == .digital {
+            return
+        }
         if device.hasMute {
             worker.setMute(device.id, muted: muted)
             if device.uid == VirtualAudioDriverController.deviceUID {
@@ -425,6 +666,8 @@ final class AudioDeviceManager {
             restoreVolumes(forArrived: arrived)
             applyOutputPriority()
             updateVirtualTarget(reattaching: arrived)
+            // 裝置清單變了 → 其他 Mac 的遠端分類要跟著變（去抖在 coordinator）
+            coordinator?.scheduleDirectoryPublish()
         }
     }
 
@@ -647,6 +890,9 @@ final class AudioDeviceManager {
         writeMute(muted, to: target)
     }
 
+    /// 手動數位模式必須停用硬體鏡射——否則使用者明明選了「數位衰減」，
+    /// 同一次滑桿操作還是會去改螢幕的硬體音量（而且兩層疊加）。
+
     /// 鏡射目標：driver 設定的轉送裝置，且音量有地方可寫（三態判準見
     /// `AudioDeviceModel.forwardVolumeMode`）——**DDC 橋接或裝置自己的
     /// 原生音量都算**。有地方可寫時 driver applyVolume=0、不做整體衰減
@@ -658,7 +904,7 @@ final class AudioDeviceManager {
         guard let uid = virtualDriver?.targetUID,
               let target = devices.first(where: { $0.uid == uid })
         else { return nil }
-        return (target.canSetVolume || target.bridgedDisplayID != nil) ? target : nil
+        return VolumeModePolicy.mirrorsToHardware(for: effectiveVolumeMode(for: target)) ? target : nil
     }
 
     // MARK: - 轉送目標：跟著使用中的螢幕走
@@ -768,7 +1014,10 @@ final class AudioDeviceManager {
         guard let virtualDriver,
               devices.contains(where: { $0.uid == VirtualAudioDriverController.deviceUID })
         else { return }
-        let mirrors = mirrorTarget().map { $0.forwardVolumeMode != .digital } ?? false
+        let effective = virtualForwardTarget.map { effectiveVolumeMode(for: $0) }
+        // 沒有轉送目標時退回鏡射＝不衰減：驅動不該在「不知道送去哪裡」的
+        // 狀態下自己壓低音量。
+        let mirrors = effective.map(VolumeModePolicy.mirrorsToHardware(for:)) ?? true
         virtualDriver.setMirrorMode(mirrors)
     }
 

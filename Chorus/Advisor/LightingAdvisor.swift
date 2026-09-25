@@ -239,15 +239,23 @@ final class LightingAdvisor {
                 currentOffset: settings.ambientDisplayOffsets[display.uuid] ?? 0
             ))
         }
+        // 遠端是**逐螢幕**，不是整台 Mac：分析要建議的是「那台朝窗的螢幕
+        // 調暗一點」，而不是「客廳那台 Mac 調暗一點」——後者在接兩台螢幕時
+        // 根本無從套用。
         for peer in pairedPeers.peers {
-            let key = "peer:\(peer.peerID)"
-            infos.append(.init(
-                id: key,
-                name: peer.deviceName,
-                backend: "remote",
-                normalizedPosition: diagram.position(for: key).map { [Double($0.x), Double($0.y)] },
-                currentOffset: 0
-            ))
+            for endpoint in coordinator?.remoteDevices.endpoints(of: peer.peerID, kind: .display) ?? [] {
+                let id = RemoteEndpointID(peerID: peer.peerID, kind: .display, deviceID: endpoint.deviceID)
+                let key = DiagramStore.nodeKey(id)
+                infos.append(.init(
+                    id: key,
+                    name: "\(endpoint.name)（\(peer.deviceName)）",
+                    backend: "remote",
+                    normalizedPosition: diagram.position(for: key).map { [Double($0.x), Double($0.y)] },
+                    // 回讀得到的現值才填；讀不到時填 0 會讓模型以為「沒有偏移」
+                    currentOffset: endpoint.value(.brightnessOffset)
+                        ?? settings.remoteDisplayOffsets[id.storageKey] ?? 0
+                ))
+            }
         }
         return AdviceContext(
             displays: infos,
@@ -276,6 +284,7 @@ final class LightingAdvisor {
     ) {
         var snapshot = ApplySnapshot(
             displayOffsets: [:],
+            remoteOffsets: [:] as [String: Double],
             minBrightness: settings.ambientCurve.minBrightness,
             maxLux: settings.ambientCurve.maxLux
         )
@@ -283,9 +292,16 @@ final class LightingAdvisor {
             if let uuid = localDisplayUUID(from: suggestion.displayID) {
                 snapshot.displayOffsets[uuid] = settings.ambientDisplayOffsets[uuid] ?? 0
                 autoBrightness?.setDisplayOffset(suggestion.offset, for: uuid)
-            } else if let peerID = peerID(from: suggestion.displayID) {
-                // peer 的舊值讀不到（已知限制），還原時跳過
-                coordinator?.sendDeviceOffset(to: peerID, offset: suggestion.offset)
+            } else if let id = remoteEndpointID(from: suggestion.displayID) {
+                // 遠端差異值現在讀得回來 → 還原值是真的，不再是「已知限制」。
+                // 讀不到現值就整筆跳過：沒有原值的套用是還原不了的單向操作。
+                guard let current = coordinator?.remoteDevices.displayValue(id, .brightnessOffset) else {
+                    ChorusLog.app.notice("光環境套用跳過 \(id.storageKey)：尚未取得現值")
+                    continue
+                }
+                snapshot.remoteOffsets = (snapshot.remoteOffsets ?? [:])
+                    .merging([id.storageKey: current]) { _, new in new }
+                coordinator?.sendEndpointCommand(id, capability: .brightnessOffset, value: suggestion.offset)
             }
         }
         var curveChanged = false
@@ -303,12 +319,23 @@ final class LightingAdvisor {
 
     var canUndo: Bool { defaults.data(forKey: Self.snapshotKey) != nil }
 
-    /// 還原上次套用（單層）：本機 offset 與曲線；peer offset 無舊值可還原。
+    /// 還原上次套用（單層）：本機與遠端的逐螢幕差異值，以及曲線。
+    ///
+    /// 遠端那一半靠的是套用時記下的**回讀值**。裝置已離線或已移除時跳過並
+    /// 記錄原因——硬送一個指令給不存在的端點，只會換回一則 unavailable。
     func undoLastApply() {
         guard let data = defaults.data(forKey: Self.snapshotKey),
               let snapshot = try? JSONDecoder().decode(ApplySnapshot.self, from: data) else { return }
         for (uuid, offset) in snapshot.displayOffsets {
             autoBrightness?.setDisplayOffset(offset, for: uuid)
+        }
+        for (key, offset) in snapshot.remoteOffsets ?? [:] {
+            guard let id = RemoteEndpointID(storageKey: key) else { continue }
+            guard coordinator?.remoteDevices.endpoint(id) != nil else {
+                ChorusLog.app.notice("光環境還原跳過 \(key)：裝置已離線或已移除")
+                continue
+            }
+            coordinator?.sendEndpointCommand(id, capability: .brightnessOffset, value: offset)
         }
         settings.ambientCurve.minBrightness = snapshot.minBrightness
         settings.ambientCurve.maxLux = snapshot.maxLux
@@ -326,12 +353,19 @@ final class LightingAdvisor {
         id.hasPrefix("display:") ? String(id.dropFirst("display:".count)) : nil
     }
 
-    private func peerID(from id: String) -> String? {
-        id.hasPrefix("peer:") ? String(id.dropFirst("peer:".count)) : nil
+    private func remoteEndpointID(from id: String) -> RemoteEndpointID? {
+        guard id.hasPrefix("remote:") else { return nil }
+        return RemoteEndpointID(storageKey: String(id.dropFirst("remote:".count)))
     }
 
     private struct ApplySnapshot: Codable {
         var displayOffsets: [String: Double]
+        /// 遠端逐螢幕差異值的原值（`RemoteEndpointID.storageKey` → 值）。
+        ///
+        /// **Optional 不是隨手寫的**：合成的 `Decodable` 不會套用屬性預設值，
+        /// 少一個鍵就整筆解不開。寫成有預設值的非 Optional 的話，升級前存下的
+        /// 快照會全部解碼失敗——使用者在升級後第一次套用建議時發現不能還原。
+        var remoteOffsets: [String: Double]?
         var minBrightness: Double
         var maxLux: Double
     }

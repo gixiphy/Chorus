@@ -1197,6 +1197,7 @@
       }
     },
     "DDC 硬體鏡射（不損音質）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1208,6 +1209,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "DDC 硬件镜像（不损音质）"
+          }
+        }
+      }
+    },
+    "DDC 硬體音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DDC Hardware Volume"
           }
         }
       }
@@ -1935,6 +1946,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "、"
+          }
+        }
+      }
+    },
+    "。模式為手動指定，可在設定 → 音訊變更" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : ". Mode set manually; change it in Settings → Audio"
           }
         }
       }
@@ -2822,6 +2843,16 @@
         }
       }
     },
+    "亮度" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brightness"
+          }
+        }
+      }
+    },
     "亮度 %lld%%" : {
       "localizations" : {
         "en" : {
@@ -3419,6 +3450,7 @@
       }
     },
     "光感" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3992,6 +4024,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加设备…"
+          }
+        }
+      }
+    },
+    "勾選要在選單列遙控的螢幕與音訊輸出。離線的裝置不會出現在選單列，但設定會保留。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select the displays and audio outputs to control from the menu bar. Offline devices won't appear in the menu bar, but their settings are kept."
           }
         }
       }
@@ -5644,6 +5686,16 @@
         }
       }
     },
+    "套用失敗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Failed to apply"
+          }
+        }
+      }
+    },
     "套用後讀回不符，已中止" : {
       "localizations" : {
         "en" : {
@@ -7010,6 +7062,7 @@
       }
     },
     "已配對的 Mac" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -7591,6 +7644,16 @@
         }
       }
     },
+    "找不到對應的 DDC 螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No matching DDC display found"
+          }
+        }
+      }
+    },
     "找不到符合「%@」的裝置" : {
       "localizations" : {
         "en" : {
@@ -7636,6 +7699,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "找不到输出设备"
+          }
+        }
+      }
+    },
+    "找不到轉送目標——沒有可設定的音量路徑" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forwarding target not found - no volume path to set"
           }
         }
       }
@@ -7815,6 +7888,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "指定的输出设备不在，暂时使用系统默认"
+          }
+        }
+      }
+    },
+    "指定的音量模式暫時無法使用（%@）——先以%@運作，恢復後會自動接回" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The selected volume mode is temporarily unavailable (%@) - using %@ for now; it will switch back automatically when available"
           }
         }
       }
@@ -8427,7 +8510,18 @@
         }
       }
     },
+    "數位衰減" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Digital Attenuation"
+          }
+        }
+      }
+    },
     "數位衰減（軟體音量）" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9299,6 +9393,26 @@
         }
       }
     },
+    "正在取得裝置清單…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Getting device list…"
+          }
+        }
+      }
+    },
+    "正在取得這台螢幕的現值…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Getting this display's current values…"
+          }
+        }
+      }
+    },
     "正在套用「%@」…" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -9493,6 +9607,16 @@
         }
       }
     },
+    "此裝置沒有原生音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device has no native volume"
+          }
+        }
+      }
+    },
     "此裝置沒有軟體音量，且未橋接到可用的 DDC 螢幕（螢幕需支援 DDC/CI 音量）" : {
       "localizations" : {
         "en" : {
@@ -9585,6 +9709,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每个输出设备一组：左右平衡与均衡。耳机校正（AutoEq）的主场景本来就不经虚拟设备——直接对那副耳机开启。"
+          }
+        }
+      }
+    },
+    "每個輸出裝置分別記住選擇；目前設定的是「%@」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Each output device remembers its own choice; currently setting \"%@\""
           }
         }
       }
@@ -9733,6 +9867,26 @@
         }
       }
     },
+    "沒有回應" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No response"
+          }
+        }
+      }
+    },
+    "沒有對應的 DDC 螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No matching DDC display"
+          }
+        }
+      }
+    },
     "沒有效果。掛上的外掛以 in-process 執行——不穩的外掛可能連帶影響 Chorus；崩潰過的會被自動隔離、不再自動載入。" : {
       "localizations" : {
         "en" : {
@@ -9745,6 +9899,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有效果。挂上的插件以 in-process 运行——不稳定的插件可能连带影响 Chorus；崩溃过的会被自动隔离、不再自动载入。"
+          }
+        }
+      }
+    },
+    "沒有數位衰減路徑" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No digital attenuation path"
           }
         }
       }
@@ -10625,6 +10789,16 @@
         }
       }
     },
+    "目前沒有經過 Chorus 的數位衰減路徑" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No digital attenuation path through Chorus right now"
+          }
+        }
+      }
+    },
     "目前沒有進行中的模式試用" : {
       "localizations" : {
         "en" : {
@@ -10657,6 +10831,16 @@
         }
       }
     },
+    "目前無法使用：" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Currently unavailable:"
+          }
+        }
+      }
+    },
     "目前版型只有 %lld 個分區" : {
       "localizations" : {
         "en" : {
@@ -10685,6 +10869,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前环境光 %lld lx"
+          }
+        }
+      }
+    },
+    "目前生效" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Active"
           }
         }
       }
@@ -12210,6 +12404,16 @@
         }
       }
     },
+    "螢幕不回應 DDC 音量指令" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display doesn't respond to DDC volume commands"
+          }
+        }
+      }
+    },
     "螢幕不會待機" : {
       "localizations" : {
         "en" : {
@@ -12442,6 +12646,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "设备优先顺序"
+          }
+        }
+      }
+    },
+    "裝置原生音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Device Native Volume"
           }
         }
       }
@@ -12704,6 +12918,16 @@
         }
       }
     },
+    "設備" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Devices"
+          }
+        }
+      }
+    },
     "設定 → AI 引擎：確認 CLI 已安裝或指定路徑" : {
       "localizations" : {
         "en" : {
@@ -12849,6 +13073,7 @@
       }
     },
     "調整對方的整機亮度差異值" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -12860,6 +13085,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "调整对方整机亮度的偏移值"
+          }
+        }
+      }
+    },
+    "調整這台遠端螢幕的亮度差異值" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adjust the brightness offset for this remote display"
           }
         }
       }
@@ -12977,6 +13212,7 @@
       }
     },
     "讀取中…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -13475,6 +13711,26 @@
         }
       }
     },
+    "這個裝置不支援這項控制" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device doesn't support this control"
+          }
+        }
+      }
+    },
+    "這個裝置已經不在了" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device is no longer available"
+          }
+        }
+      }
+    },
     "這個視窗不在任何一組排列裡" : {
       "localizations" : {
         "en" : {
@@ -13564,6 +13820,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这台显示器只有 %lld 个可排列的窗口，其余位置留空"
+          }
+        }
+      }
+    },
+    "這台裝置的 Chorus 版本還不支援逐裝置遙控——更新後才會列出它的螢幕與音訊輸出。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device's version of Chorus doesn't support per-device control yet - update it to list its displays and audio outputs."
           }
         }
       }
@@ -13692,6 +13958,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "运行中"
+          }
+        }
+      }
+    },
+    "遠端" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remote"
           }
         }
       }
@@ -14698,7 +14974,18 @@
         }
       }
     },
+    "離線中——連線後才會列出裝置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Offline - devices will be listed once connected"
+          }
+        }
+      }
+    },
     "離線時無法調整" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -14710,6 +14997,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "离线时无法调整"
+          }
+        }
+      }
+    },
+    "離線時無法調整（顯示的是最後已知值）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can't adjust while offline (showing last known value)"
           }
         }
       }
@@ -14858,6 +15155,16 @@
         }
       }
     },
+    "音量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volume"
+          }
+        }
+      }
+    },
     "音量 %lld%%" : {
       "localizations" : {
         "en" : {
@@ -14950,6 +15257,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认"
+          }
+        }
+      }
+    },
+    "預設輸出" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default Output"
           }
         }
       }
@@ -15266,6 +15583,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "（DP→HDMI 转换芯片：此路径不透传标准 DDC，请改接 DP／USB-C）"
+          }
+        }
+      }
+    },
+    "（指定的模式暫時無法使用）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(selected mode temporarily unavailable)"
           }
         }
       }

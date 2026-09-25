@@ -18,12 +18,31 @@ final class ControlCoordinator {
     @ObservationIgnored private var pendingReports: [ControlKey: Double] = [:]
     @ObservationIgnored private var reportTask: Task<Void, Never>?
 
-    @ObservationIgnored private let settings: SettingsStore
-    @ObservationIgnored private weak var sessionManager: SyncSessionManager?
-    @ObservationIgnored private weak var displayManager: DisplayManager?
-    @ObservationIgnored private weak var audioManager: AudioDeviceManager?
-    @ObservationIgnored private weak var autoController: AutoBrightnessController?
+    @ObservationIgnored let settings: SettingsStore
+    @ObservationIgnored weak var sessionManager: SyncSessionManager?
+    @ObservationIgnored weak var displayManager: DisplayManager?
+    @ObservationIgnored weak var audioManager: AudioDeviceManager?
+    @ObservationIgnored weak var autoController: AutoBrightnessController?
     @ObservationIgnored private weak var keepAwake: KeepAwakeController?
+    /// 逐裝置遠端控制的名稱查詢與能力把關（見 `supportsDeviceDirectory`）。
+    @ObservationIgnored weak var pairedPeers: PairedPeersStore?
+
+    // MARK: - 逐裝置遠端控制（實作在 ControlCoordinator+Devices）
+
+    /// 各已連線 Mac 回報的端點目錄。主選單、同步設定與配置圖共用這一份。
+    let remoteDevices = RemoteDeviceStore()
+    /// 本機端點目錄的內容。內容真的變了才推版本。
+    @ObservationIgnored var localEndpoints: [RemoteEndpoint] = []
+    /// 目錄版本，單調遞增。跨 session 也不重來——重來的話，重連後第一份
+    /// 目錄會與上一次連線的版本號撞在一起。
+    @ObservationIgnored var directoryVersion: UInt64 = 0
+    /// peerID → 這條連線的目錄 session 識別。
+    @ObservationIgnored var directorySessions: [String: UUID] = [:]
+    @ObservationIgnored var directoryPublishTask: Task<Void, Never>?
+    /// 上一次被丟棄的逐端點回報，用來讓診斷紀錄不重複（見 `logDroppedReport`）。
+    @ObservationIgnored var lastDroppedReportKey: String?
+    /// 本機 peerID（目錄要帶上它，接收端才知道這些端點屬於誰）。
+    @ObservationIgnored let localPeerID: String
     /// 逐 App 音量遙控的收件人（B6-6）。
     @ObservationIgnored weak var tapEngine: TapEngine?
     /// 自動化事件流（SSE／CLI listen）。本機任何來源的變更都往這裡發一份。
@@ -37,6 +56,7 @@ final class ControlCoordinator {
         audioManager: AudioDeviceManager
     ) {
         engine = SyncEngineCore(localPeerID: localPeerID)
+        self.localPeerID = localPeerID
         self.settings = settings
         self.sessionManager = sessionManager
         self.displayManager = displayManager
@@ -50,6 +70,7 @@ final class ControlCoordinator {
         }
         sessionManager.sessionClosedHandler = { [weak self] peerID in
             self?.autoController?.peerDisconnected(peerID)
+            self?.deviceDirectorySessionClosed(peerID)
         }
         displayManager.coordinator = self
         audioManager.coordinator = self
@@ -115,6 +136,9 @@ final class ControlCoordinator {
 
     private func handleEnvelope(peerID: String, _ envelope: Envelope) {
         let now = Self.wallNowMicros()
+        // 逐裝置目錄那一組先攔：它們與下面的整機同步是兩套語意，
+        // 混在同一個 switch 裡只會讓「哪些會進 LWW」越來越難看出來。
+        if handleDeviceMessage(peerID: peerID, envelope.msg) { return }
         switch envelope.msg {
         case let .stateUpdate(update):
             recordPeerKnown(peerID: peerID, key: update.key, value: update.value)
@@ -139,6 +163,9 @@ final class ControlCoordinator {
             }
         case .hello, .ping, .pong:
             break
+        case .deviceDirectoryQuery, .deviceDirectory, .endpointState,
+             .endpointCommand, .endpointCommandResult:
+            break // 上面的 handleDeviceMessage 已經處理完並回傳了
         }
     }
 
@@ -157,6 +184,7 @@ final class ControlCoordinator {
         // 現值回報：對方的遙控滑桿要畫在正確的位置。fullState 幫不上忙——
         // 它只含「本次啟動後改過的 key」，而且會被 LWW 當成狀態套進硬體。
         sessionManager?.send(Envelope(msg: .stateReport(currentStateReport())), to: peerID)
+        deviceDirectorySessionEstablished(peerID)
         peerConnectedHandler?(peerID)
     }
 
@@ -226,10 +254,9 @@ final class ControlCoordinator {
         sessionManager?.broadcast(Envelope(msg: .stateReport(StateReport(entries: entries))))
     }
 
-    /// 配置圖：調整某個 peer 的整機亮度差異值。
-    func sendDeviceOffset(to peerID: String, offset: Double) {
-        sessionManager?.send(Envelope(msg: .setDeviceOffset(DeviceOffsetCommand(offset: offset))), to: peerID)
-    }
+    // 送出端的 `setDeviceOffset`（整機亮度差異值）已經移除：配置圖改成逐螢幕
+    // 節點之後沒有「整台 Mac 的差異值」這個東西可以調。**收訊那一側刻意保留**
+    // ——跑舊版的 peer 仍會對我們送這則訊息，收不下來等於它的配置圖壞掉。
 
     /// 遙控指令：套用到本機，並以自己為 origin 廣播結果（其他 peer 跟著收斂）。
     /// 語意層亮度另走命令路徑：auto 受管顯示器要學差異值而非被同步抑制吞掉，

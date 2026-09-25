@@ -1,11 +1,18 @@
+import ChorusCore
 import CoreGraphics
 import Foundation
 import Observation
 
 /// 照射設備配置圖的本地 UI 狀態：節點座標與背景照片。
-/// 座標為 0–1 正規化（相對畫布），視窗縮放後佈局不變；
-/// key 格式 "display:<uuid>"（本機顯示器）／"peer:<peerID>"（已配對裝置）。
-/// 純本地狀態，不參與同步。
+/// 座標為 0–1 正規化（相對畫布），視窗縮放後佈局不變；純本地狀態，不參與同步。
+///
+/// key 格式：
+/// - `display:<uuid>`——本機顯示器。
+/// - `remote:<peerID>|display|<uuid>`——遠端的**單一螢幕**（`RemoteEndpointID.storageKey`）。
+/// - `peer:<peerID>`——舊格式，整台 Mac 一個節點。只保留給遷移用。
+///
+/// 從整機節點改成逐螢幕節點的理由：一台 Mac 接兩台螢幕時，「整台 Mac 在房間
+/// 的哪個位置」這個問題沒有答案——兩台螢幕可能一台朝窗、一台背光。
 @MainActor
 @Observable
 final class DiagramStore {
@@ -48,6 +55,37 @@ final class DiagramStore {
 
     func position(for key: String) -> CGPoint? {
         positions[key]
+    }
+
+    /// 遠端螢幕節點的鍵。`nonisolated`：`DiagramNode.key` 是個純計算，
+    /// 不該為了組一個字串把節點型別綁到 MainActor 上。
+    nonisolated static func nodeKey(_ id: RemoteEndpointID) -> String {
+        "remote:" + id.storageKey
+    }
+
+    /// 舊格式的整機節點鍵。
+    nonisolated static func legacyPeerKey(_ peerID: String) -> String {
+        "peer:" + peerID
+    }
+
+    /// 舊的整機座標 → 逐螢幕座標。
+    ///
+    /// **只有那台 Mac 回報唯一一台螢幕時才遷移**。有多台時保留舊記錄（管理用）
+    /// 但各螢幕從預設位置開始：把兩三台螢幕全部疊到同一個點，比讓使用者重新
+    /// 擺一次更糟——疊在一起的節點連拖都拖不開。
+    ///
+    /// 舊的整機**差異值**刻意不一併複製成每台螢幕的差異值：那個值是疊加在
+    /// 整機上的，複製 N 份就會重複疊加 N 次。
+    func migrateLegacyPeerPosition(peerID: String, displayUUIDs: [String]) {
+        let legacy = Self.legacyPeerKey(peerID)
+        guard let point = positions[legacy], displayUUIDs.count == 1 else { return }
+        let key = Self.nodeKey(
+            RemoteEndpointID(peerID: peerID, kind: .display, deviceID: displayUUIDs[0])
+        )
+        guard positions[key] == nil else { return }
+        positions[key] = point
+        positions.removeValue(forKey: legacy)
+        persistPositions()
     }
 
     /// 拖拉結束後保存座標（夾在 0–1）。
