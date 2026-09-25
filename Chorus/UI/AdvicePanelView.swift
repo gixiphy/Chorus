@@ -141,7 +141,7 @@ struct AdvicePanelView: View {
                     appState.advisor.undoLastApply()
                 }
                 .controlSize(.small)
-                .help("還原本機 offset 與曲線參數；遠端裝置的差異值無法還原")
+                .help("還原本機與遠端螢幕的差異值，以及曲線參數。遠端螢幕若已離線或移除則跳過")
             }
             Spacer()
             Button(String(localized: "close", defaultValue: "關閉")) { onClose() }
