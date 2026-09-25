@@ -169,8 +169,8 @@ final class CrashReportCollector: NSObject, MXMetricManagerSubscriber, @unchecke
             log.error("MetricKit \(kind.rawValue) 診斷解析失敗（\(data.count) bytes）")
             return
         }
-        let raw = try? JSONSerialization.jsonObject(with: data)
-        store(summary: summary, diagnostic: raw)
+        // **原始 bytes 直接往下傳，不 parse 再 re-serialize**：見 `store` 的註解。
+        store(summary: summary, diagnosticJSON: data)
         let text = "MetricKit \(kind.rawValue) 診斷：\(summary.exception ?? "?") build \(summary.appVersion ?? "?")"
         if kind == .crash { log.error(text) } else { log.notice(text) }
     }
@@ -207,7 +207,24 @@ final class CrashReportCollector: NSObject, MXMetricManagerSubscriber, @unchecke
         return formatter
     }()
 
-    private func store(summary: CrashReportSummary, sourcePath: String? = nil, diagnostic: Any? = nil) {
+    /// 把一筆診斷寫成 envelope 檔。
+    ///
+    /// `diagnosticJSON` 是 MetricKit 給的**原始 JSON bytes**，刻意不 parse 成
+    /// Foundation 物件再重新序列化——那條路會在真的出事時再炸一次。
+    ///
+    /// 實際發生過（2026-09-26，build 121）：`_NSJSONWriter dataWithRootObject:`
+    /// 在 `com.hermes.Chorus.crash-reports` 這條 queue 上撞到堆疊保護頁
+    /// （SIGBUS／KERN_PROTECTION_FAILURE）。堆疊只有 47 格、不是遞迴太深；
+    /// 爆掉的是 `.sortedKeys` 走的 `CFSortIndexes` → `__CFSimpleMergeSort`
+    /// 在單一格裡要的暫存空間。背景 DispatchQueue 的執行緒堆疊是 512 KB，
+    /// 不是主執行緒的 8 MB，所以這裡撐不住而主執行緒上看不出問題。
+    /// 後果是「處理 crash 的過程中自己 crash」，形成迴圈：
+    /// crash → MetricKit 回報 → 寫檔時 crash → 再回報。
+    ///
+    /// 改成把 summary 正常序列化（鍵少又固定），再以位元組接上原始的
+    /// diagnostic——那一大包完全不進 Foundation 的寫入器。輸出仍是合法 JSON、
+    /// 鍵名不變，讀取端（`summaryObject` 那條）照舊。
+    private func store(summary: CrashReportSummary, sourcePath: String? = nil, diagnosticJSON: Data? = nil) {
         var summary = summary
         summary.fileName = Self.fileName(kind: summary.kind, at: summary.occurredAt)
         guard let summaryData = try? JSONEncoder.diagnostics.encode(summary),
@@ -215,10 +232,17 @@ final class CrashReportCollector: NSObject, MXMetricManagerSubscriber, @unchecke
         else { return }
         var envelope: [String: Any] = ["summary": summaryObject]
         if let sourcePath { envelope["sourcePath"] = sourcePath }
-        if let diagnostic { envelope["diagnostic"] = diagnostic }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = try JSONSerialization.data(withJSONObject: envelope, options: [.prettyPrinted, .sortedKeys])
+            var data = try JSONSerialization.data(withJSONObject: envelope, options: [.prettyPrinted, .sortedKeys])
+            if let diagnosticJSON, let close = data.lastIndex(of: UInt8(ascii: "}")) {
+                // {...\n} → {...,\n  "diagnostic": <原始 bytes>\n}
+                var spliced = data[..<close]
+                spliced.append(contentsOf: ",\n  \"diagnostic\" : ".utf8)
+                spliced.append(diagnosticJSON)
+                spliced.append(contentsOf: "\n}".utf8)
+                data = Data(spliced)
+            }
             try data.write(to: directory.appendingPathComponent(summary.fileName), options: .atomic)
         } catch {
             log.error("診斷寫檔失敗：\(error.localizedDescription)")

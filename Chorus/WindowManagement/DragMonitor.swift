@@ -61,6 +61,20 @@ final class DragMonitor {
         onPreview?(nil, nil)
     }
 
+    /// 這個螢幕座標是不是落在我們自己的視窗上。
+    ///
+    /// 只用 AppKit 的資訊（主執行緒上就答得出來），不碰 AX——會死鎖的正是 AX。
+    /// `NSEvent.mouseLocation` 與 `NSWindow.frame` 都是左下原點的螢幕座標，
+    /// 可以直接比。
+    private func isOverOwnWindow(_ point: CGPoint) -> Bool {
+        // modal（開啟／儲存面板、alert）期間一律不追蹤：這時的點擊不可能是
+        // 在拖別的 App 的視窗，而合成點擊的座標也未必有意義。
+        if NSApp.modalWindow != nil { return true }
+        return NSApp.windows.contains { window in
+            window.isVisible && window.frame.contains(point)
+        }
+    }
+
     private func handle(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
@@ -86,6 +100,20 @@ final class DragMonitor {
     private func mouseDown() {
         resetDrag()
         let point = NSEvent.mouseLocation
+        // 點在自己的視窗上就不要追蹤——**而且一定要在進 AX queue 之前擋掉**。
+        //
+        // `AXUIElementCopyElementAtPosition` 會回頭問「擁有這個點的行程」；那個
+        // 行程是我們自己時，它需要主執行緒回答，但主執行緒正卡在 `queue.sync`
+        // 等 AX queue。libdispatch 偵測到這個循環就直接 trap（EXC_BREAKPOINT），
+        // 不是逾時、沒有 error，就是閃退。
+        //
+        // `AXWindowWorker.checkManageable` 的自我 pid 檢查救不了：它在那個查詢
+        // **之後**才跑，而查詢本身就已經死了。
+        //
+        // 實際踩到的路徑：開啟／儲存面板（匯入照片、匯出診斷包）是 NSRemoteView
+        // 承載的，點下去時 ViewBridge 會對宿主視窗補一個合成點擊
+        // （`_sendWindowFakeClick`），本機 monitor 收到就進這裡。
+        guard !isOverOwnWindow(point) else { return }
         mouseDownPoint = point
         do {
             let excluded = excludedBundleIDs?() ?? []

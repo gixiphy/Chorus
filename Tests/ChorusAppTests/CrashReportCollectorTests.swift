@@ -77,6 +77,35 @@ struct CrashReportCollectorTests {
         #expect((diagnostic["diagnosticMetaData"] as? [String: Any])?["appBuildVersion"] as? String == "116")
     }
 
+    /// 這個測試防的是「處理 crash 的過程中自己 crash」。
+    ///
+    /// MetricKit 的整包 diagnostic 以前會被 parse 成 Foundation 物件再重新
+    /// 序列化，而那一步在 crash-reports 那條 queue 上撞過堆疊保護頁
+    /// （512 KB，不是主執行緒的 8 MB）。現在原始 bytes 原樣接進 envelope，
+    /// 完全不進 Foundation 的寫入器——這裡就釘住「原樣」這件事。
+    @Test("MetricKit 的原始 bytes 原樣寫進 envelope，不重新序列化")
+    func storesDiagnosticBytesVerbatim() throws {
+        let fixture = try makeFixture()
+        // 鍵刻意不照字母序，且值裡有空白：有重新序列化就會被 .sortedKeys
+        // 重排、空白也會被正規化，位元組比對就對不上了。
+        let text = #"""
+        {"diagnosticMetaData":{"signal":5,"appBuildVersion":"121"},"callStackTree":{"callStacks":[{"callStackRootFrames":[{"binaryName":"Chorus","subFrames":[{"binaryName":"Chorus"}]}]}]},"zzz":"a  b"}
+        """#
+        let json = Data(text.utf8)
+
+        fixture.collector.storeDiagnostic(json, kind: .crash, at: Date(timeIntervalSince1970: 1_800_000_200))
+        let unacknowledged = try #require(fixture.collector.unacknowledged)
+
+        let written = try Data(contentsOf: fixture.diagnostics.appendingPathComponent(unacknowledged.fileName))
+        #expect(written.range(of: json) != nil)
+
+        // 仍是合法 JSON、鍵名沒變——讀取端不必改
+        let envelope = try #require(try JSONSerialization.jsonObject(with: written) as? [String: Any])
+        #expect(envelope["summary"] != nil)
+        let diagnostic = try #require(envelope["diagnostic"] as? [String: Any])
+        #expect((diagnostic["diagnosticMetaData"] as? [String: Any])?["appBuildVersion"] as? String == "121")
+    }
+
     @Test("超過 keep 份就刪最舊")
     func prunes() throws {
         let fixture = try makeFixture(keep: 3)
