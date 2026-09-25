@@ -321,6 +321,7 @@ struct DeviceDiagramView: View {
                     Button("上次分析結果") { appState.advisor.showLatestHistory() }
                         .controlSize(.small)
                 }
+                AdviceRestoreMenu()
                 if let message = appState.advisor.lastErrorMessage {
                     Text(message)
                         .font(.caption)

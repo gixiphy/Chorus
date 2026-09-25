@@ -136,13 +136,7 @@ struct AdvicePanelView: View {
 
     private var footer: some View {
         HStack {
-            if appState.advisor.canUndo {
-                Button("還原到套用建議前") {
-                    appState.advisor.undoLastApply()
-                }
-                .controlSize(.small)
-                .help("把套用過建議的每台螢幕差異值與曲線參數，還原到第一次套用建議之前的配置。遠端螢幕若已離線或移除則跳過")
-            }
+            AdviceRestoreMenu()
             Spacer()
             Button(String(localized: "close", defaultValue: "關閉")) { onClose() }
                 .controlSize(.small)

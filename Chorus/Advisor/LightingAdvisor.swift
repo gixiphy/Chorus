@@ -14,8 +14,51 @@ struct AdviceResult: Identifiable {
     let fromHistory: Bool
 }
 
+/// 套用光環境建議**之前**的原始配置，逐螢幕記錄、跨多次套用累積。
+///
+/// 每個 `record…` 都只在該項目還沒記過時寫入——保留第一次套用前的原值。
+/// 除了 `displayOffsets`（舊版快照一定有）其餘欄位都是 Optional：合成的
+/// `Decodable` 不會套用屬性預設值，少一個鍵就整筆解不開；舊版存下的快照
+/// （曲線兩欄必填、沒有 remoteOffsets）照樣解得開。
+struct AdviceBaseline: Codable, Equatable {
+    /// 本機：display UUID → 原差異值。
+    var displayOffsets: [String: Double] = [:]
+    /// 遠端：`RemoteEndpointID.storageKey` → 原差異值。
+    var remoteOffsets: [String: Double]?
+    var minBrightness: Double?
+    var maxLux: Double?
+
+    mutating func recordLocal(_ uuid: String, original: Double) {
+        if displayOffsets[uuid] == nil { displayOffsets[uuid] = original }
+    }
+
+    mutating func recordRemote(_ storageKey: String, original: Double) {
+        var remote = remoteOffsets ?? [:]
+        if remote[storageKey] == nil { remote[storageKey] = original }
+        remoteOffsets = remote
+    }
+
+    mutating func recordMinBrightness(_ original: Double) {
+        if minBrightness == nil { minBrightness = original }
+    }
+
+    mutating func recordMaxLux(_ original: Double) {
+        if maxLux == nil { maxLux = original }
+    }
+
+    /// 以配置圖節點鍵表示（`display:<UUID>`／`remote:<storageKey>`），排序固定。
+    var displayIDs: [String] {
+        displayOffsets.keys.map { "display:" + $0 }.sorted()
+            + (remoteOffsets ?? [:]).keys.map { "remote:" + $0 }.sorted()
+    }
+
+    var hasCurve: Bool { minBrightness != nil || maxLux != nil }
+
+    var isEmpty: Bool { displayIDs.isEmpty && !hasCurve }
+}
+
 /// 光環境顧問協調者：產縮圖暫存檔、組 AdviceContext、呼叫引擎、
-/// sanitize、歷史 5 筆、套用／單層還原（設計文件 §2、§4）。
+/// sanitize、歷史 5 筆、套用／逐螢幕還原到套用前（設計文件 §2、§4）。
 @MainActor
 @Observable
 final class LightingAdvisor {
@@ -25,6 +68,17 @@ final class LightingAdvisor {
     private(set) var lastErrorAssist: AdviceError.Assist?
     /// 設定後 UI 開建議 sheet；關閉時清 nil。
     var result: AdviceResult?
+    /// 套用建議之前的原始配置；沒套用過（或已全部還原）時為 nil。
+    /// 存成 stored property 而不是每次讀 UserDefaults，UI 才追蹤得到變化。
+    private(set) var baseline: AdviceBaseline? {
+        didSet {
+            if let baseline, let data = try? JSONEncoder().encode(baseline) {
+                defaults.set(data, forKey: Self.snapshotKey)
+            } else {
+                defaults.removeObject(forKey: Self.snapshotKey)
+            }
+        }
+    }
 
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private weak var displayManager: DisplayManager?
@@ -69,6 +123,8 @@ final class LightingAdvisor {
             directory = directory.appendingPathComponent("instance-\(name)", isDirectory: true)
         }
         historyURL = directory.appendingPathComponent("advisor-history.json")
+        baseline = defaults.data(forKey: Self.snapshotKey)
+            .flatMap { try? JSONDecoder().decode(AdviceBaseline.self, from: $0) }
         extraPhotosDirectory = directory.appendingPathComponent("advisor-extra-photos", isDirectory: true)
         loadExtraPhotos()
         loadExtraPhotoLabels()
@@ -277,87 +333,108 @@ final class LightingAdvisor {
     /// 套用勾選項：offset 走既有路徑（本機直接設、peer 送 command）、
     /// 曲線參數進 SettingsStore。
     ///
-    /// 快照記的是**套用建議之前**的原始配置，逐螢幕累積：連續套用多次時，
-    /// 已經記過的螢幕與曲線保留第一次的原值，只補記這次新碰到的螢幕。
-    /// 否則第二次套用會把第一次的建議值當成「原值」，還原只退到一半。
+    /// 套用前把**套用建議之前**的原始配置記進 `baseline`，逐螢幕累積：連續
+    /// 套用多次時，已記過的螢幕與曲線參數保留第一次的原值，只補記這次新碰到
+    /// 的項目。否則第二次套用會把第一次的建議值當成「原值」，還原只退到一半。
     func apply(
         _ advice: LightingAdvice,
         selectedOffsetIDs: Set<String>,
         applyMaxLux: Bool,
         applyMinBrightness: Bool
     ) {
-        var snapshot = loadSnapshot() ?? ApplySnapshot(
-            displayOffsets: [:],
-            remoteOffsets: [:] as [String: Double],
-            minBrightness: settings.ambientCurve.minBrightness,
-            maxLux: settings.ambientCurve.maxLux
-        )
+        var next = baseline ?? AdviceBaseline()
         for suggestion in advice.offsets where selectedOffsetIDs.contains(suggestion.displayID) {
             if let uuid = localDisplayUUID(from: suggestion.displayID) {
-                if snapshot.displayOffsets[uuid] == nil {
-                    snapshot.displayOffsets[uuid] = settings.ambientDisplayOffsets[uuid] ?? 0
-                }
+                next.recordLocal(uuid, original: settings.ambientDisplayOffsets[uuid] ?? 0)
                 autoBrightness?.setDisplayOffset(suggestion.offset, for: uuid)
             } else if let id = remoteEndpointID(from: suggestion.displayID) {
-                // 遠端差異值現在讀得回來 → 還原值是真的，不再是「已知限制」。
                 // 讀不到現值就整筆跳過：沒有原值的套用是還原不了的單向操作。
                 guard let current = coordinator?.remoteDevices.displayValue(id, .brightnessOffset) else {
                     ChorusLog.app.notice("光環境套用跳過 \(id.storageKey)：尚未取得現值")
                     continue
                 }
-                snapshot.remoteOffsets = (snapshot.remoteOffsets ?? [:])
-                    .merging([id.storageKey: current]) { original, _ in original }
+                next.recordRemote(id.storageKey, original: current)
                 coordinator?.sendEndpointCommand(id, capability: .brightnessOffset, value: suggestion.offset)
             }
         }
         var curveChanged = false
         if applyMaxLux, let maxLux = advice.maxLux {
+            next.recordMaxLux(settings.ambientCurve.maxLux)
             settings.ambientCurve.maxLux = maxLux
             curveChanged = true
         }
         if applyMinBrightness, let minBrightness = advice.minBrightness {
+            next.recordMinBrightness(settings.ambientCurve.minBrightness)
             settings.ambientCurve.minBrightness = minBrightness
             curveChanged = true
         }
         if curveChanged { autoBrightness?.reapplyTargets() }
-        saveSnapshot(snapshot)
+        baseline = next.isEmpty ? nil : next
     }
 
-    var canUndo: Bool { defaults.data(forKey: Self.snapshotKey) != nil }
+    var canUndo: Bool { baseline != nil }
 
-    /// 還原到套用建議之前：本機與遠端的逐螢幕差異值，以及曲線，
-    /// 一律回到第一次套用前記下的原值。
+    /// 還原到套用建議之前：每台套用過的螢幕與曲線參數，一律回到第一次套用前
+    /// 記下的原值。
     ///
-    /// 遠端那一半靠的是套用時記下的**回讀值**。裝置已離線或已移除時跳過並
-    /// 記錄原因——硬送一個指令給不存在的端點，只會換回一則 unavailable。
-    func undoLastApply() {
-        guard let snapshot = loadSnapshot() else { return }
-        for (uuid, offset) in snapshot.displayOffsets {
-            autoBrightness?.setDisplayOffset(offset, for: uuid)
+    /// 遠端螢幕已離線或已移除時跳過，但**原值保留**在 baseline 裡——等它
+    /// 重新連上還能再還原；硬送指令給不存在的端點只會換回一則 unavailable。
+    func restoreBaseline() {
+        guard var next = baseline else { return }
+        for id in next.displayIDs {
+            restoreDisplay(id, in: &next)
         }
-        for (key, offset) in snapshot.remoteOffsets ?? [:] {
-            guard let id = RemoteEndpointID(storageKey: key) else { continue }
+        restoreCurve(in: &next)
+        baseline = next.isEmpty ? nil : next
+    }
+
+    /// 只還原單一螢幕（`display:<UUID>` 或 `remote:<storageKey>`）。
+    func restoreDisplay(_ displayID: String) {
+        guard var next = baseline else { return }
+        restoreDisplay(displayID, in: &next)
+        baseline = next.isEmpty ? nil : next
+    }
+
+    /// 只還原自動亮度曲線（最暗亮度與全亮環境光）。
+    func restoreCurve() {
+        guard var next = baseline else { return }
+        restoreCurve(in: &next)
+        baseline = next.isEmpty ? nil : next
+    }
+
+    /// baseline 裡某台螢幕的顯示名稱。已離線或已移除的螢幕不在目前的
+    /// context 裡，改用通用說法，不把 UUID 秀給使用者。
+    func baselineDisplayName(_ displayID: String) -> String {
+        buildContext().displays.first { $0.id == displayID }?.name
+            ?? String(localized: "已離線或移除的螢幕")
+    }
+
+    private func restoreDisplay(_ displayID: String, in next: inout AdviceBaseline) {
+        if let uuid = localDisplayUUID(from: displayID), let original = next.displayOffsets[uuid] {
+            autoBrightness?.setDisplayOffset(original, for: uuid)
+            next.displayOffsets.removeValue(forKey: uuid)
+        } else if let id = remoteEndpointID(from: displayID),
+                  let original = next.remoteOffsets?[id.storageKey] {
             guard coordinator?.remoteDevices.endpoint(id) != nil else {
-                ChorusLog.app.notice("光環境還原跳過 \(key)：裝置已離線或已移除")
-                continue
+                ChorusLog.app.notice("光環境還原跳過 \(id.storageKey)：裝置已離線或已移除，原值保留")
+                return
             }
-            coordinator?.sendEndpointCommand(id, capability: .brightnessOffset, value: offset)
+            coordinator?.sendEndpointCommand(id, capability: .brightnessOffset, value: original)
+            next.remoteOffsets?.removeValue(forKey: id.storageKey)
         }
-        settings.ambientCurve.minBrightness = snapshot.minBrightness
-        settings.ambientCurve.maxLux = snapshot.maxLux
+    }
+
+    private func restoreCurve(in next: inout AdviceBaseline) {
+        guard next.hasCurve else { return }
+        if let minBrightness = next.minBrightness {
+            settings.ambientCurve.minBrightness = minBrightness
+        }
+        if let maxLux = next.maxLux {
+            settings.ambientCurve.maxLux = maxLux
+        }
+        next.minBrightness = nil
+        next.maxLux = nil
         autoBrightness?.reapplyTargets()
-        defaults.removeObject(forKey: Self.snapshotKey)
-    }
-
-    private func loadSnapshot() -> ApplySnapshot? {
-        guard let data = defaults.data(forKey: Self.snapshotKey) else { return nil }
-        return try? JSONDecoder().decode(ApplySnapshot.self, from: data)
-    }
-
-    private func saveSnapshot(_ snapshot: ApplySnapshot) {
-        if let data = try? JSONEncoder().encode(snapshot) {
-            defaults.set(data, forKey: Self.snapshotKey)
-        }
     }
 
     private func localDisplayUUID(from id: String) -> String? {
@@ -367,18 +444,6 @@ final class LightingAdvisor {
     private func remoteEndpointID(from id: String) -> RemoteEndpointID? {
         guard id.hasPrefix("remote:") else { return nil }
         return RemoteEndpointID(storageKey: String(id.dropFirst("remote:".count)))
-    }
-
-    private struct ApplySnapshot: Codable {
-        var displayOffsets: [String: Double]
-        /// 遠端逐螢幕差異值的原值（`RemoteEndpointID.storageKey` → 值）。
-        ///
-        /// **Optional 不是隨手寫的**：合成的 `Decodable` 不會套用屬性預設值，
-        /// 少一個鍵就整筆解不開。寫成有預設值的非 Optional 的話，升級前存下的
-        /// 快照會全部解碼失敗——使用者在升級後第一次套用建議時發現不能還原。
-        var remoteOffsets: [String: Double]?
-        var minBrightness: Double
-        var maxLux: Double
     }
 
     // MARK: - 歷史（最近 5 筆，照片重拍前不必重花呼叫）

@@ -3596,6 +3596,16 @@
         }
       }
     },
+    "全部還原" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore All"
+          }
+        }
+      }
+    },
     "全部重翻" : {
       "localizations" : {
         "en" : {
@@ -7142,6 +7152,16 @@
         }
       }
     },
+    "已離線或移除的螢幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Offline or removed display"
+          }
+        }
+      }
+    },
     "已靜音" : {
       "localizations" : {
         "en" : {
@@ -7746,11 +7766,22 @@
       }
     },
     "把套用過建議的每台螢幕差異值與曲線參數，還原到第一次套用建議之前的配置。遠端螢幕若已離線或移除則跳過" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Restores each display that had advice applied, plus the curve parameters, to how they were before advice was first applied. Remote displays that are offline or removed are skipped"
+          }
+        }
+      }
+    },
+    "把套用過建議的螢幕差異值與曲線參數，還原到第一次套用建議之前的配置。展開選單可只還原單一螢幕。遠端螢幕離線時跳過並保留原值，連上後可再還原" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restores display offsets and curve parameters changed by advice to their settings from before advice was first applied. Expand the menu to restore a single display. Offline remote displays are skipped, and their original values are kept so you can restore them once they reconnect"
           }
         }
       }
@@ -12102,6 +12133,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自动亮度"
+          }
+        }
+      }
+    },
+    "自動亮度曲線" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto-Brightness Curve"
           }
         }
       }

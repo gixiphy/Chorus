@@ -527,7 +527,10 @@ final class TestHooks {
         case "applyAdvice":
             appState.advisor.debugApplyAll()
         case "undoAdvice":
-            appState.advisor.undoLastApply()
+            appState.advisor.restoreBaseline()
+        case "restoreAdviceDisplay":
+            // value = 節點鍵（display:<UUID>／remote:<storageKey>）
+            if let id = info["value"] { appState.advisor.restoreDisplay(id) }
         default:
             break
         }
@@ -799,6 +802,10 @@ final class TestHooks {
                 "hasResult": appState.advisor.result != nil,
                 "resultOffsets": appState.advisor.result?.advice.offsets.count ?? 0,
                 "canUndo": appState.advisor.canUndo,
+                "baselineDisplays": appState.advisor.baseline?.displayIDs ?? [],
+                "baselineHasCurve": appState.advisor.baseline?.hasCurve ?? false,
+                "curveMinBrightness": appState.settings.ambientCurve.minBrightness,
+                "curveMaxLux": appState.settings.ambientCurve.maxLux,
                 "historyCount": appState.advisor.history.count,
                 "lastError": appState.advisor.lastErrorMessage.map { $0 as Any } ?? NSNull(),
                 "activeEngine": appState.advisor.registry.activeEngine.map { $0.id as Any } ?? NSNull(),
