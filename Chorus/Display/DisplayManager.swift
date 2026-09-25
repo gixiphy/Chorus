@@ -386,6 +386,8 @@ final class DisplayManager {
         displays = models
         reapplySoftwareDimming()
         audioManager?.refreshBridges()
+        // 螢幕清單變了 → 其他 Mac 的遠端分類要跟著變（去抖在 coordinator）
+        coordinator?.scheduleDirectoryPublish()
         // 防睡眠看的是「實體接著哪些螢幕」——被 Chorus 關掉的螢幕線還在，算連接中。
         keepAwake?.displaysDidChange()
         automationEvents?.publish(kind: "displays", payload: ["names": models.map(\.name)])
@@ -531,6 +533,9 @@ final class DisplayManager {
             }
         }
         _ = gamma.setFactor(output.softwareFactor, for: model.id)
+        coordinator?.reportEndpointValue(
+            kind: .display, deviceID: model.uuid, capability: .brightness, value: model.brightness
+        )
     }
 
     /// refresh 後重新套用軟體調光。
@@ -657,6 +662,11 @@ final class DisplayManager {
             if let write = localWrites[model.uuid], abs(actual - write.target) <= reconcilePolicy.epsilon {
                 localWrites.removeValue(forKey: model.uuid)
             }
+            // 外部改動（亮度鍵、其他 App）也要讓遠端的滑桿跟上——這條路徑
+            // 不經過 apply()，少了這一行就只有「我們自己寫的值」會回報出去。
+            coordinator?.reportEndpointValue(
+                kind: .display, deviceID: model.uuid, capability: .brightness, value: actual
+            )
             if broadcast {
                 coordinator?.localBrightnessChanged(actual)
             }

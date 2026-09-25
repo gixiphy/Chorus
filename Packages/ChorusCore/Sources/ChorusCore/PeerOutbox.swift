@@ -31,6 +31,25 @@ public struct PeerOutbox: Sendable {
         case ambient(originID: String)
         case update(originID: String, key: ControlKey)
         case report
+        /// 端點目錄：**整份替換**，佇列裡只留最新一份。
+        case directory
+        /// 逐端點現值：同一個 (類型, 裝置, 能力) 只留最新一筆。
+        case endpoint(kind: String, deviceID: String, capability: String)
+
+        /// 目錄與其他 slot 之間是**雙向**的順序屏障。
+        ///
+        /// 兩個方向都會丟掉一次變化，成因對稱：
+        /// - 回報併到新目錄前面 → 接收端先拿到一筆對照舊版本無效的回報
+        ///   （丟掉），再被整份替換，那次變化就沒了。
+        /// - 目錄併到舊回報前面 → 接收端先套用新目錄，後面那筆回報的版本
+        ///   已經過期，一樣被丟掉。
+        ///
+        /// 所以只要**任一邊**是目錄就停止回溯。代價是偶爾少併一次，
+        /// 換到的是「送出的順序就是接收端看到的順序」。
+        var isDirectory: Bool {
+            if case .directory = self { return true }
+            return false
+        }
     }
 
     private struct Item {
@@ -84,7 +103,17 @@ public struct PeerOutbox: Sendable {
         case let .ambientReport(report): .ambient(originID: report.originID)
         case let .stateUpdate(update): .update(originID: update.originID, key: update.key)
         case .stateReport: .report
-        case .hello, .command, .fullState, .setDeviceOffset, .stateQuery: nil
+        case .deviceDirectory: .directory
+        case let .endpointState(update):
+            .endpoint(
+                kind: update.kind.rawValue,
+                deviceID: update.deviceID,
+                capability: update.capability.rawValue
+            )
+        // 指令、結果與目錄查詢都不可取代：每一則都有 id，合併掉就是丟了
+        // 一次操作或一次回覆。
+        case .hello, .command, .fullState, .setDeviceOffset, .stateQuery,
+             .deviceDirectoryQuery, .endpointCommand, .endpointCommandResult: nil
         }
     }
 
@@ -93,6 +122,7 @@ public struct PeerOutbox: Sendable {
         for index in items.indices.reversed() {
             guard let existing = items[index].slot else { return nil }
             if existing == slot { return index }
+            if existing.isDirectory || slot.isDirectory { return nil }
         }
         return nil
     }

@@ -1120,16 +1120,7 @@ private struct AudioSettingsTab: View {
                 Text("找不到轉送目標——聲音會沒有").foregroundStyle(.orange)
             }
         }
-        LabeledContent("音量模式") {
-            switch appState.virtualDriver.mirrorMode {
-            case true?:
-                Text("DDC 硬體鏡射（不損音質）").foregroundStyle(.green)
-            case false?:
-                Text("數位衰減（軟體音量）").foregroundStyle(.secondary)
-            case nil:
-                Text("讀取中…").foregroundStyle(.secondary)
-            }
-        }
+        volumeModeRows
         if appState.virtualDriver.updateAvailable {
             HStack {
                 Button(busy ? "更新中…" : "更新驅動…") { install() }
@@ -1151,6 +1142,86 @@ private struct AudioSettingsTab: View {
         Text("把音量鍵／Touch Bar 交給它：設為預設輸出。自動模式下轉送目標會跟著使用中的螢幕走，螢幕關掉或拔掉就退回內建輸出——不會靜靜沒有聲音。選單列會把它與轉送目標併成一列。")
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    /// 音量模式：**使用者選擇**與**目前生效**分兩行。
+    ///
+    /// 分開講是必要的：手動選的模式可能因為螢幕不理 DDC 之類的理由暫時
+    /// 失效，這時偏好還在、生效的是別條路。擠成一行就只能二選一地說謊。
+    @ViewBuilder
+    private var volumeModeRows: some View {
+        if let target = appState.audioManager.virtualForwardTarget {
+            Picker("音量模式", selection: Binding(
+                get: { appState.audioManager.volumeMode(for: target) },
+                set: { appState.audioManager.setVolumeMode($0, for: target) }
+            )) {
+                ForEach(VolumeMode.allCases, id: \.self) { mode in
+                    Text(volumeModeLabel(mode))
+                        .tag(mode)
+                }
+            }
+            // 不支援的選項停用並說明原因，而不是讓使用者選了沒反應
+            .pickerStyle(.menu)
+            .help("每個輸出裝置分別記住選擇；目前設定的是「\(target.name)」")
+            if let reason = unavailableModesCaption(for: target) {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            LabeledContent("目前生效") {
+                let resolution = appState.audioManager.volumeModeResolution(for: target)
+                if resolution.isDegraded {
+                    Text(effectiveModeLabel(resolution.effective) + String(localized: "（指定的模式暫時無法使用）"))
+                        .foregroundStyle(.orange)
+                } else {
+                    Text(effectiveModeLabel(resolution.effective))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } else {
+            LabeledContent("音量模式") {
+                Text("找不到轉送目標——沒有可設定的音量路徑").foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func volumeModeLabel(_ mode: VolumeMode) -> String {
+        switch mode {
+        case .auto: String(localized: "自動")
+        case .ddc: String(localized: "DDC 硬體音量")
+        case .native: String(localized: "裝置原生音量")
+        case .digital: String(localized: "數位衰減")
+        }
+    }
+
+    private func effectiveModeLabel(_ mode: EffectiveVolumeMode) -> String {
+        switch mode {
+        case .ddc: String(localized: "DDC 硬體音量")
+        case .native: String(localized: "裝置原生音量")
+        case .digital: String(localized: "數位衰減")
+        }
+    }
+
+    /// SwiftUI 的 Picker 沒辦法逐項停用，所以不可用的選項以說明列出——
+    /// 選了也會立刻降級並在上面那行講出來，不會靜靜沒有效果。
+    private func unavailableModesCaption(for target: AudioDeviceModel) -> String? {
+        let unavailable = VolumeMode.allCases.compactMap { mode -> String? in
+            guard let reason = appState.audioManager.volumeModeUnavailability(mode, for: target) else {
+                return nil
+            }
+            return "\(volumeModeLabel(mode))（\(unavailabilityLabel(reason))）"
+        }
+        guard !unavailable.isEmpty else { return nil }
+        return String(localized: "目前無法使用：") + unavailable.joined(separator: "、")
+    }
+
+    private func unavailabilityLabel(_ reason: VolumeModeUnavailability) -> String {
+        switch reason {
+        case .noDDCDisplay: String(localized: "沒有對應的 DDC 螢幕")
+        case .ddcUnresponsive: String(localized: "螢幕不回應 DDC 音量指令")
+        case .noNativeVolume: String(localized: "此裝置沒有原生音量")
+        case .noDigitalPath: String(localized: "沒有數位衰減路徑")
+        }
     }
 
     /// driver 現在實際轉送到哪台（自動模式下會隨螢幕變動）。
@@ -1212,28 +1283,8 @@ private struct SyncSettingsTab: View {
                 Toggle("同步亮度", isOn: $settings.syncBrightnessEnabled)
                 Toggle("同步音量", isOn: $settings.syncVolumeEnabled)
             }
-            Section("已配對的裝置") {
-                if appState.pairedPeers.peers.isEmpty {
-                    Text("尚未配對任何裝置")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(appState.pairedPeers.peers) { peer in
-                    HStack {
-                        Text(peer.deviceName)
-                        Spacer()
-                        Text(peer.pairedAt, style: .date)
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
-                        Button(role: .destructive) {
-                            appState.pairedPeers.remove(peerID: peer.peerID)
-                            appState.sessionManager.restartAdvertiser()
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
+            // 配對新增、離線狀態、解除配對與逐裝置遙控開關都在這裡（見該檔註解）
+            RemoteDevicesSection()
             Section("自動化介面") {
                 Toggle("啟用 localhost 控制介面", isOn: Binding(
                     get: { appState.settings.automationServerEnabled },

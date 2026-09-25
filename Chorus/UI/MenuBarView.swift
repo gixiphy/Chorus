@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.openWindow) private var openWindow
     /// 暫時展開被隱藏的音訊裝置（右鍵可取消隱藏）；關閉選單不保留。
     @State private var showHiddenDevices = false
 
@@ -38,8 +39,6 @@ struct MenuBarView: View {
                     audioSection
                     AlertVolumeRow()
                     AppVolumeSection()
-                    Divider()
-                    PeersSection()
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 2)
@@ -86,6 +85,15 @@ struct MenuBarView: View {
                     .padding(.vertical, 2)
                     .background(.quaternary, in: Capsule())
             }
+            // 配置圖入口從已配對清單移上來：那份清單移到同步設定之後，
+            // 配置圖沒有別的地方可以進去。
+            Button {
+                openWindow(id: "diagram")
+            } label: {
+                Image(systemName: "rectangle.3.group")
+            }
+            .buttonStyle(.plain)
+            .help("裝置配置圖")
             SettingsLink {
                 Image(systemName: "gearshape")
             }
@@ -93,18 +101,26 @@ struct MenuBarView: View {
         }
     }
 
+    /// 亮度：設備（內建）／螢幕（外接）／遠端。順序固定，空分類不留標題。
     @ViewBuilder
     private var displaySection: some View {
-        if appState.displayManager.displays.isEmpty {
+        if appState.displayManager.displays.isEmpty, !hasRemote(kind: .display, capability: .brightness) {
             Text("找不到可控制的顯示器")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(appState.displayManager.displays) { display in
-                    DisplaySliderRow(model: display, manager: appState.displayManager)
+            ForEach(DeviceControlGroup.displayOrder.filter { $0 != .remote }, id: \.self) { group in
+                let displays = localDisplays(in: group)
+                if !displays.isEmpty {
+                    groupHeader(group)
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(displays) { display in
+                            DisplaySliderRow(model: display, manager: appState.displayManager)
+                        }
+                    }
                 }
             }
+            RemoteControlsSection(kind: .display, capability: .brightness)
         }
 
         AutoBrightnessRow()
@@ -128,17 +144,24 @@ struct MenuBarView: View {
         Text("音訊輸出")
             .font(.caption)
             .foregroundStyle(.secondary)
-        if appState.audioManager.devices.isEmpty {
+        if appState.audioManager.devices.isEmpty, !hasRemote(kind: .audioOutput, capability: .volume) {
             Text("找不到輸出裝置")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(listedAudioDevices) { device in
-                    VolumeSliderRow(device: device, manager: appState.audioManager)
-                        .opacity(appState.audioManager.isHidden(device) ? 0.55 : 1)
+            ForEach(DeviceControlGroup.displayOrder.filter { $0 != .remote }, id: \.self) { group in
+                let devices = listedAudioDevices.filter { appState.audioManager.group(for: $0) == group }
+                if !devices.isEmpty {
+                    groupHeader(group)
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(devices) { device in
+                            VolumeSliderRow(device: device, manager: appState.audioManager)
+                                .opacity(appState.audioManager.isHidden(device) ? 0.55 : 1)
+                        }
+                    }
                 }
             }
+            RemoteControlsSection(kind: .audioOutput, capability: .volume)
             if hiddenCount > 0 {
                 Button {
                     showHiddenDevices.toggle()
@@ -153,6 +176,51 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
                 .help("展開後在裝置上按右鍵可取消隱藏")
             }
+        }
+    }
+
+    /// 分類標題。空分類不保留標題——呼叫端先過濾掉沒有內容的分類再進來。
+    @ViewBuilder
+    private func groupHeader(_ group: DeviceControlGroup) -> some View {
+        Text(groupTitle(group))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private func groupTitle(_ group: DeviceControlGroup) -> String {
+        switch group {
+        case .device: String(localized: "設備")
+        case .screen: String(localized: "螢幕")
+        case .remote: String(localized: "遠端")
+        }
+    }
+
+    private func localDisplays(in group: DeviceControlGroup) -> [DisplayModel] {
+        appState.displayManager.displays.filter {
+            ControlGrouping.group(isBuiltinDisplay: $0.isBuiltin) == group
+        }
+    }
+
+    /// 有沒有任何**已啟用且已連線**的遠端端點。沒有本機裝置時靠它決定要不要
+    /// 說「找不到…」——只剩遠端項目時說「找不到」是錯的，畫面上明明有滑桿。
+    private func hasRemote(
+        kind: RemoteEndpointKind,
+        capability: RemoteEndpointCapability
+    ) -> Bool {
+        let enabled = capability == .brightness
+            ? appState.settings.remoteBrightnessEnabled
+            : appState.settings.remoteVolumeEnabled
+        return appState.pairedPeers.peers.contains { peer in
+            appState.sessionManager.connectionStates[peer.peerID] == .connected
+                && appState.coordinator.remoteDevices
+                    .endpoints(of: peer.peerID, kind: kind)
+                    .contains { endpoint in
+                        endpoint.supports(capability) && enabled.contains(
+                            RemoteEndpointID(
+                                peerID: peer.peerID, kind: kind, deviceID: endpoint.deviceID
+                            ).storageKey
+                        )
+                    }
         }
     }
 

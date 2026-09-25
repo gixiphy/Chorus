@@ -1,3 +1,4 @@
+import ChorusCore
 import SwiftUI
 
 struct VolumeSliderRow: View {
@@ -94,6 +95,14 @@ struct VolumeSliderRow: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 24)
+            } else if let target = forwardTarget, let notice = degradedNotice(for: target) {
+                // 手動模式在運作中失效：**偏好保留**、暫時由自動模式接手。
+                // 不講的話，使用者只會看到「我選的模式好像沒有生效」。
+                Text(notice)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 24)
             } else if let target = forwardTarget, target.bridgeUnresponsive {
                 Text("螢幕未回應 DDC 音量指令——已改用數位衰減")
                     .font(.caption2)
@@ -178,20 +187,44 @@ struct VolumeSliderRow: View {
         manager.displayName(for: device)
     }
 
-    private var nameHelp: String {
-        guard let target = forwardTarget else { return device.name }
-        switch target.forwardVolumeMode {
-        case .ddc:
-            return String(localized: "由 Chorus 轉送到「\(target.name)」：音量直接寫進螢幕硬體（DDC，不損音質）")
-        case .native:
-            return String(localized: "由 Chorus 轉送到「\(target.name)」：音量鏡射到該裝置自己的音量（不損音質）")
-        case .digital:
-            return String(localized: "由 Chorus 轉送到「\(target.name)」：音量以數位衰減調整")
+    /// 使用者選的模式現在不能用時的說明（沒降級時 nil）。
+    private func degradedNotice(for target: AudioDeviceModel) -> String? {
+        let resolution = manager.volumeModeResolution(for: target)
+        guard let reason = resolution.reason else { return nil }
+        let cause: String = switch reason {
+        case .noDDCDisplay: String(localized: "找不到對應的 DDC 螢幕")
+        case .ddcUnresponsive: String(localized: "螢幕不回應 DDC 音量指令")
+        case .noNativeVolume: String(localized: "此裝置沒有原生音量")
+        case .noDigitalPath: String(localized: "目前沒有經過 Chorus 的數位衰減路徑")
         }
+        let fallback: String = switch resolution.effective {
+        case .ddc: String(localized: "DDC 硬體音量")
+        case .native: String(localized: "裝置原生音量")
+        case .digital: String(localized: "數位衰減")
+        }
+        return String(localized: "指定的音量模式暫時無法使用（\(cause)）——先以\(fallback)運作，恢復後會自動接回")
     }
 
+    private var nameHelp: String {
+        guard let target = forwardTarget else { return device.name }
+        let base: String = switch manager.effectiveVolumeMode(for: target) {
+        case .ddc:
+            String(localized: "由 Chorus 轉送到「\(target.name)」：音量直接寫進螢幕硬體（DDC，不損音質）")
+        case .native:
+            String(localized: "由 Chorus 轉送到「\(target.name)」：音量鏡射到該裝置自己的音量（不損音質）")
+        case .digital:
+            String(localized: "由 Chorus 轉送到「\(target.name)」：音量以數位衰減調整")
+        }
+        // 講清楚「現在是自動挑的」還是「你選的」——同一個徽章下這兩件事
+        // 的可預期性差很多（自動會自己換，手動不會）。
+        guard manager.volumeMode(for: target) != .auto else { return base }
+        return base + String(localized: "。模式為手動指定，可在設定 → 音訊變更")
+    }
+
+    /// 徽章講的是**目前實際生效的路徑**，不是 driver 的鏡射布林值——
+    /// 那個分辨不出 DDC 與裝置原生音量，兩者都只是「有鏡射」。
     private func badgeText(for target: AudioDeviceModel) -> String {
-        switch target.forwardVolumeMode {
+        switch manager.effectiveVolumeMode(for: target) {
         case .ddc: "DDC"
         case .native: String(localized: "鏡射")
         case .digital: String(localized: "數位音量")

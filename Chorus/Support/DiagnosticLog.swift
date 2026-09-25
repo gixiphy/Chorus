@@ -266,6 +266,8 @@ extension ChorusLog {
     static let focus = ChorusLog(category: "focus")
     /// 場景套用與還原逐條的結果。
     static let automation = ChorusLog(category: "automation")
+    /// 逐裝置遠端控制：目錄發佈、逐端點回報、指令與結果。
+    static let devices = ChorusLog(category: "devices")
 }
 
 extension Double {

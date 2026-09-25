@@ -60,16 +60,21 @@ final class AudioDeviceModel: Identifiable {
         canSetVolume || bridgedDisplayID != nil || softwareVolumeActive
     }
 
-    /// 這個裝置作為轉送目標時，音量走哪條路——**唯一判準**，UI 徽章
-    /// （VolumeSliderRow）與 driver 鏡射模式（AudioDeviceManager.
-    /// updateVirtualMirrorMode）都從這裡讀，不各自再判一次：
-    /// DDC 橋接且回應正常 → 硬體鏡射；裝置自己有原生音量 → 音量鏡射；
-    /// 都沒有 → driver 端數位衰減。
-    enum ForwardVolumeMode { case ddc, native, digital }
-    var forwardVolumeMode: ForwardVolumeMode {
-        if bridgedDisplayID != nil, !bridgeUnresponsive { return .ddc }
-        if canSetVolume { return .native }
-        return .digital
+    /// 這個裝置作為轉送目標時，哪幾條音量路徑走得通。
+    ///
+    /// 只講「能不能」，不講「要用哪個」——決定權在 `VolumeModePolicy`
+    /// （偏好 ＋ 可用性 → 生效模式），使用者可以手動指定。以前這裡直接回
+    /// 一個自動選好的模式，結果是「使用者選了數位衰減」這件事沒有地方放。
+    ///
+    /// `hasDigitalPath` 這裡不填：那要看虛擬輸出 driver 現在有沒有轉送到
+    /// 這個裝置，是 manager 層才知道的事。
+    var volumeAvailability: VolumeModePolicy.Availability {
+        VolumeModePolicy.Availability(
+            hasDDCBridge: bridgedDisplayID != nil,
+            ddcResponsive: !bridgeUnresponsive,
+            hasNativeVolume: canSetVolume,
+            hasDigitalPath: false
+        )
     }
 
     /// 選單列圖示中央畫的裝置種類（沿用系統聲音選單的圖示語彙）。

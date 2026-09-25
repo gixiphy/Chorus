@@ -85,6 +85,11 @@ final class SettingsStore {
         static let windowArrangementTemplatesByDisplay = "chorus.windowArrangement.templatesByDisplay"
         static let windowArrangementShortcuts = "chorus.windowArrangement.shortcuts"
         static let windowArrangementShortcutsBuild = "chorus.windowArrangement.shortcutsBuild"
+        static let volumeModes = "chorus.audio.volumeModes"
+        static let remoteBrightnessEnabled = "chorus.remote.brightnessEnabled"
+        static let remoteVolumeEnabled = "chorus.remote.volumeEnabled"
+        static let remoteEndpointNames = "chorus.remote.endpointNames"
+        static let remoteDisplayOffsets = "chorus.remote.displayOffsets"
     }
 
     /// 跨機同步亮度（雙向：不廣播自己的變更、也不套用收到的）。
@@ -260,6 +265,64 @@ final class SettingsStore {
                 windowArrangementTemplatesByDisplay,
                 forKey: Key.windowArrangementTemplatesByDisplay
             )
+        }
+    }
+
+    /// 逐轉送目標的音量模式偏好（device UID → `VolumeMode.rawValue`）。
+    /// 缺席＝`.auto`；升級的使用者因此一律維持既有自動行為。
+    ///
+    /// 以**目標裝置**為鍵而不是全域一個：同一台 Mac 接了會 DDC 的螢幕與
+    /// 一副 AirPods，「這台螢幕我要走 DDC」跟耳機沒有關係。切換轉送目標時
+    /// 載入該目標的偏好。
+    private var volumeModes: [String: String] {
+        didSet { defaults.set(volumeModes, forKey: Key.volumeModes) }
+    }
+
+    func volumeMode(for uid: String) -> VolumeMode {
+        volumeModes[uid].flatMap(VolumeMode.init(rawValue:)) ?? .auto
+    }
+
+    /// `.auto` 不寫進去——預設值不需要佔一筆記錄，清掉也讓「從沒選過」與
+    /// 「選回自動」在備份裡長得一樣。
+    func setVolumeMode(_ mode: VolumeMode, for uid: String) {
+        if mode == .auto {
+            volumeModes.removeValue(forKey: uid)
+        } else {
+            volumeModes[uid] = mode.rawValue
+        }
+    }
+
+    /// 已啟用遠端亮度控制的端點（`RemoteEndpointID.storageKey`）。
+    ///
+    /// **預設不啟用**：首次發現的裝置留在同步設定的清單裡，使用者勾了才會
+    /// 進入操作介面。既有配對升級時也不依整機能力猜測要開哪些端點——
+    /// 猜錯的代價是使用者的選單列突然多出一排不認得的滑桿。
+    var remoteBrightnessEnabled: Set<String> {
+        didSet { defaults.set(Array(remoteBrightnessEnabled), forKey: Key.remoteBrightnessEnabled) }
+    }
+
+    /// 已啟用遠端音量控制的端點。與亮度**分別記錄**：這是控制端的顯示偏好，
+    /// 「我要遙控那台的螢幕亮度」不代表也要遙控它的喇叭。
+    var remoteVolumeEnabled: Set<String> {
+        didSet { defaults.set(Array(remoteVolumeEnabled), forKey: Key.remoteVolumeEnabled) }
+    }
+
+    /// 遠端端點最後已知的顯示名稱（storageKey → 名稱）。
+    /// 離線的端點在同步設定裡仍要看得出是哪一台，不能只剩一串 UUID。
+    var remoteEndpointNames: [String: String] {
+        didSet { defaults.set(remoteEndpointNames, forKey: Key.remoteEndpointNames) }
+    }
+
+    /// 遠端螢幕的亮度差異值快取（storageKey → −0.5…+0.5）。
+    ///
+    /// **權威在所屬 Mac**（它保存並回報）；這份只是控制端的最後已知值，
+    /// 給管理介面與光環境分析的還原用。離線時顯示得出來，但不會拿它去寫硬體。
+    var remoteDisplayOffsets: [String: Double] {
+        didSet {
+            persistDebounced(Key.remoteDisplayOffsets) { [weak self] in
+                guard let self else { return }
+                defaults.set(remoteDisplayOffsets, forKey: Key.remoteDisplayOffsets)
+            }
         }
     }
 
@@ -657,6 +720,11 @@ final class SettingsStore {
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)
+        volumeModes = defaults.dictionary(forKey: Key.volumeModes) as? [String: String] ?? [:]
+        remoteBrightnessEnabled = Set(defaults.stringArray(forKey: Key.remoteBrightnessEnabled) ?? [])
+        remoteVolumeEnabled = Set(defaults.stringArray(forKey: Key.remoteVolumeEnabled) ?? [])
+        remoteEndpointNames = defaults.dictionary(forKey: Key.remoteEndpointNames) as? [String: String] ?? [:]
+        remoteDisplayOffsets = defaults.dictionary(forKey: Key.remoteDisplayOffsets) as? [String: Double] ?? [:]
         cloudBackupEnabled = defaults.bool(forKey: Key.cloudBackup)
         focusLastDuration = defaults.object(forKey: Key.focusLastDuration) as? Double ?? 1_500
         focusPendingPeerRestores = (defaults.data(forKey: Key.focusPendingRestores)
