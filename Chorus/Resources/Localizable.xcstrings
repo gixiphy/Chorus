@@ -7745,6 +7745,16 @@
         }
       }
     },
+    "把套用過建議的每台螢幕差異值與曲線參數，還原到第一次套用建議之前的配置。遠端螢幕若已離線或移除則跳過" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restores each display that had advice applied, plus the curve parameters, to how they were before advice was first applied. Remote displays that are offline or removed are skipped"
+          }
+        }
+      }
+    },
     "把照片與裝置配置交給本機 %@ CLI 分析" : {
       "localizations" : {
         "en" : {
@@ -14037,6 +14047,16 @@
         }
       }
     },
+    "還原到套用建議前" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore to Before Advice"
+          }
+        }
+      }
+    },
     "還原整組" : {
       "localizations" : {
         "en" : {
@@ -14071,6 +14091,7 @@
       }
     },
     "還原本機與遠端螢幕的差異值，以及曲線參數。遠端螢幕若已離線或移除則跳過" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

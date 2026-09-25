@@ -275,14 +275,18 @@ final class LightingAdvisor {
     // MARK: - 套用與還原
 
     /// 套用勾選項：offset 走既有路徑（本機直接設、peer 送 command）、
-    /// 曲線參數進 SettingsStore；套用前 snapshot 舊值供單層還原。
+    /// 曲線參數進 SettingsStore。
+    ///
+    /// 快照記的是**套用建議之前**的原始配置，逐螢幕累積：連續套用多次時，
+    /// 已經記過的螢幕與曲線保留第一次的原值，只補記這次新碰到的螢幕。
+    /// 否則第二次套用會把第一次的建議值當成「原值」，還原只退到一半。
     func apply(
         _ advice: LightingAdvice,
         selectedOffsetIDs: Set<String>,
         applyMaxLux: Bool,
         applyMinBrightness: Bool
     ) {
-        var snapshot = ApplySnapshot(
+        var snapshot = loadSnapshot() ?? ApplySnapshot(
             displayOffsets: [:],
             remoteOffsets: [:] as [String: Double],
             minBrightness: settings.ambientCurve.minBrightness,
@@ -290,7 +294,9 @@ final class LightingAdvisor {
         )
         for suggestion in advice.offsets where selectedOffsetIDs.contains(suggestion.displayID) {
             if let uuid = localDisplayUUID(from: suggestion.displayID) {
-                snapshot.displayOffsets[uuid] = settings.ambientDisplayOffsets[uuid] ?? 0
+                if snapshot.displayOffsets[uuid] == nil {
+                    snapshot.displayOffsets[uuid] = settings.ambientDisplayOffsets[uuid] ?? 0
+                }
                 autoBrightness?.setDisplayOffset(suggestion.offset, for: uuid)
             } else if let id = remoteEndpointID(from: suggestion.displayID) {
                 // 遠端差異值現在讀得回來 → 還原值是真的，不再是「已知限制」。
@@ -300,7 +306,7 @@ final class LightingAdvisor {
                     continue
                 }
                 snapshot.remoteOffsets = (snapshot.remoteOffsets ?? [:])
-                    .merging([id.storageKey: current]) { _, new in new }
+                    .merging([id.storageKey: current]) { original, _ in original }
                 coordinator?.sendEndpointCommand(id, capability: .brightnessOffset, value: suggestion.offset)
             }
         }
@@ -319,13 +325,13 @@ final class LightingAdvisor {
 
     var canUndo: Bool { defaults.data(forKey: Self.snapshotKey) != nil }
 
-    /// 還原上次套用（單層）：本機與遠端的逐螢幕差異值，以及曲線。
+    /// 還原到套用建議之前：本機與遠端的逐螢幕差異值，以及曲線，
+    /// 一律回到第一次套用前記下的原值。
     ///
     /// 遠端那一半靠的是套用時記下的**回讀值**。裝置已離線或已移除時跳過並
     /// 記錄原因——硬送一個指令給不存在的端點，只會換回一則 unavailable。
     func undoLastApply() {
-        guard let data = defaults.data(forKey: Self.snapshotKey),
-              let snapshot = try? JSONDecoder().decode(ApplySnapshot.self, from: data) else { return }
+        guard let snapshot = loadSnapshot() else { return }
         for (uuid, offset) in snapshot.displayOffsets {
             autoBrightness?.setDisplayOffset(offset, for: uuid)
         }
@@ -341,6 +347,11 @@ final class LightingAdvisor {
         settings.ambientCurve.maxLux = snapshot.maxLux
         autoBrightness?.reapplyTargets()
         defaults.removeObject(forKey: Self.snapshotKey)
+    }
+
+    private func loadSnapshot() -> ApplySnapshot? {
+        guard let data = defaults.data(forKey: Self.snapshotKey) else { return nil }
+        return try? JSONDecoder().decode(ApplySnapshot.self, from: data)
     }
 
     private func saveSnapshot(_ snapshot: ApplySnapshot) {
