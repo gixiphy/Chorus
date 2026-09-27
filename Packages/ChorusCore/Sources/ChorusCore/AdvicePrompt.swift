@@ -49,6 +49,10 @@ public enum AdvicePrompt {
     public static let toolName = "submit_lighting_advice"
 
     /// 系統提示。判讀重點與輸出紀律見設計文件 §3。
+    ///
+    /// 輸出紀律**不提 `toolName`**：CLI 單發沒有這個工具，講了模型就會去找——
+    /// 2026-09-27 實測 Fable 先開 ToolSearch 撈 submit_lighting_advice、再叫 advisor
+    /// 花掉近一分鐘，整次分析被 watchdog 砍成「分析逾時」。
     public static func systemPrompt(responseLanguage: String = AdviceLanguage.current) -> String {
         """
         You are the display dimming advisor for Chorus, a macOS app that syncs brightness and volume \
@@ -71,7 +75,8 @@ public enum AdvicePrompt {
         orientation) from lights that merely happen to be on. Photos are auto-exposed, so image \
         brightness is not absolute illuminance; trust the labels and the lux statistics instead.
 
-        Output discipline (always report through the \(toolName) tool; write all text in \(responseLanguage)):
+        Output discipline (reply with the single JSON object described at the end of this message; \
+        write all text in \(responseLanguage)):
         - offset is an absolute recommendation, not a delta. Start conservatively (|offset| ≤ 0.15); \
         the learning mechanism fine-tunes from the user's manual corrections, so it need not be \
         perfect on the first pass.

@@ -23,7 +23,7 @@ enum AdviceError: Error {
     case engineNotFound(engineID: String)
     /// CLI 回報未登入／未認證（UI：請先在終端完成登入）。
     case notLoggedIn(engineID: String)
-    /// 逾時（預設 120s）後已終止子行程。
+    /// 逾時（`CLIAdviceExecution.defaultTimeout`）後已終止子行程。
     case timedOut
     /// 非零退出且非認證問題；帶 stderr 摘要。
     case processFailed(status: Int32, stderr: String)

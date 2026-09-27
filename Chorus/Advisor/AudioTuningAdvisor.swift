@@ -12,7 +12,7 @@ protocol AudioAdviceProviding: Sendable {
 struct CLIAudioAdviceProvider: AudioAdviceProviding {
     let engine: KnownCLIEngine
     let executable: URL
-    var timeout: Duration = .seconds(120)
+    var timeout: Duration = CLIAdviceExecution.defaultTimeout
 
     func advise(context: AudioTuningContext, sandbox: URL?) async throws -> AudioTuningAdvice {
         let run = KnownCLIEngine.RunContext(

@@ -283,7 +283,7 @@ enum CLIProcessRunner {
 struct CLIAdviceProvider: LightingAdviceProvider {
     let engine: KnownCLIEngine
     let executable: URL
-    var timeout: Duration = .seconds(120)
+    var timeout: Duration = CLIAdviceExecution.defaultTimeout
 
     func advise(
         photos: [LabeledPhoto],
@@ -317,6 +317,11 @@ struct CLIAdviceProvider: LightingAdviceProvider {
 /// 輸出型別由呼叫端指定（AdviceCodec 泛型 decode）。
 enum CLIAdviceExecution {
     typealias Output = CLIProcessRunner.Output
+
+    /// 顧問單發的時限（光環境與調音共用）。原本 120 秒：Opus 看兩張照片約 30 秒，
+    /// 但 Fable 在完全隔離的條件下也要 130 秒（2026-09-27 實測），照片最多四張、
+    /// decode 失敗還會重試一次。跟介面翻譯的單批時限對齊。
+    static let defaultTimeout: Duration = .seconds(300)
 
     static func perform<T: Decodable>(
         engine: KnownCLIEngine,

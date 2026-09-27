@@ -33,10 +33,12 @@ struct AdvicePromptTests {
         #expect(minBrightness["maximum"] as? Double == LightingAdvice.minBrightnessRange.upperBound)
     }
 
-    @Test("System prompt states output discipline, tool name and the response language")
+    @Test("System prompt states output discipline and the response language, without naming a tool")
     func systemPromptContent() {
         let prompt = AdvicePrompt.systemPrompt(responseLanguage: "Chinese (Traditional)")
-        #expect(prompt.contains(AdvicePrompt.toolName))
+        // CLI 沒有這個工具；提到它模型會去找（ToolSearch／advisor），拖到逾時
+        #expect(!prompt.contains(AdvicePrompt.toolName))
+        #expect(prompt.contains("single JSON object"))
         #expect(prompt.contains("gamma"))
         #expect(prompt.contains("0.15"))
         #expect(prompt.contains("write all text in Chinese (Traditional)"))

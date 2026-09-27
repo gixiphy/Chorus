@@ -476,6 +476,20 @@ struct CLIAdviceProviderTests {
         }
     }
 
+    @Test("claude：只給 Read，不載 MCP／hooks／advisor（慢模型會在那些工具上繞到逾時）")
+    func claudeIsIsolatedFromUserConfig() throws {
+        let (arguments, stdin) = claudeEngine().invocation(prompt: "analyze this", run: .init())
+        #expect(stdin == "analyze this")
+        let tools = try #require(arguments.firstIndex(of: "--tools"))
+        #expect(arguments[tools + 1] == "Read")
+        #expect(arguments.contains("--strict-mcp-config"))
+        #expect(!arguments.contains("--bare"), "--bare 會跳過 keychain，OAuth 登入失效")
+        let settings = try #require(arguments.firstIndex(of: "--settings"))
+        let object = try JSONSerialization.jsonObject(with: Data(arguments[settings + 1].utf8)) as? [String: Any]
+        #expect(object?["advisorModel"] as? String == "")
+        #expect(object?["disableAllHooks"] as? Bool == true)
+    }
+
     @Test("模型一律用 CLI 預設：目錄裡沒有一家的 argv 帶 --model／-m")
     func noEngineAsksForAModel() {
         for engine in KnownCLIEngine.catalog {

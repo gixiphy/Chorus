@@ -62,14 +62,30 @@ struct KnownCLIEngine: Identifiable, Sendable {
         var photoPaths: [String] = []
         /// 子行程逾時；CLI 自帶 timeout 參數的會設得比它略短，
         /// 讓 CLI 自己乾淨收尾而不是被我們 SIGTERM。
-        var timeout: Duration = .seconds(120)
+        var timeout: Duration = CLIAdviceExecution.defaultTimeout
     }
 
     /// 單發呼叫的參數與 prompt 傳遞方式。
     /// claude 與 amp 走 stdin（prompt 長，避開 argv）；其餘以參數帶 prompt。
     func invocation(prompt: String, run: RunContext) -> (arguments: [String], stdin: String?) {
         switch id {
-        case "claude", "openclaude":
+        case "claude":
+            // 單發只需要 Read。不隔離的話 `claude -p` 會照吃使用者的全域設定：
+            // 啟動所有 MCP server、帶上 ToolSearch／Agent／advisor 等工具，慢的模型
+            // （2026-09-27 實測 Fable）會在這些工具上繞遠路，整次分析拖到逾時。
+            // --tools 限定「有哪些工具」、--allowedTools 預先核准它，兩個都要。
+            // advisor 是伺服器端工具，--tools 關不掉，要靠 advisorModel 設空字串
+            //（實測使用者設了 advisorModel 時，Fable 會在分析中途諮詢它，一次 65 秒）；
+            // hooks 一併關掉——使用者的 SessionStart hook 可能連外，拖慢每次啟動。
+            // 不用 --bare（會跳過 keychain，OAuth 登入失效）；不動 --setting-sources
+            //（有人靠 user 設定裡的 apiKeyHelper／env 認證）。旗標實測於 2.1.283。
+            return (["-p", "--output-format", "json",
+                     "--tools", "Read", "--allowedTools", "Read",
+                     "--strict-mcp-config", "--disable-slash-commands",
+                     "--settings", #"{"advisorModel":"","disableAllHooks":true}"#], prompt)
+
+        case "openclaude":
+            // fork 版不保證認得上面那組隔離旗標，維持最小參數
             return (["-p", "--output-format", "json", "--allowedTools", "Read"], prompt)
 
         case "agy":
