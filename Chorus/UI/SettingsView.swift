@@ -56,6 +56,13 @@ private struct GeneralSettingsTab: View {
                         launchAtLogin = SMAppService.mainApp.status == .enabled
                     }
                 }
+            Toggle("在選單列圖示旁顯示藍牙耳機電量", isOn: Binding(
+                get: { appState.settings.showHeadsetBatteryInMenuBar },
+                set: { enabled in
+                    appState.settings.showHeadsetBatteryInMenuBar = enabled
+                    appState.headsetBattery.menuBarSettingChanged()
+                }
+            ))
             LabeledContent("版本") {
                 let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
                 let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"

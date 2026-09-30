@@ -89,6 +89,12 @@ final class AudioDeviceModel: Identifiable {
         return .classify(transport: transport, name: name)
     }
 
+    /// 藍牙／低功耗藍牙輸出——耳機電量只對這種裝置有意義。
+    var isBluetooth: Bool {
+        transportType == kAudioDeviceTransportTypeBluetooth
+            || transportType == kAudioDeviceTransportTypeBluetoothLE
+    }
+
     var transportLabel: String? {
         switch transportType {
         // 只有這個要翻——其餘幾個是原樣照寫的協定名

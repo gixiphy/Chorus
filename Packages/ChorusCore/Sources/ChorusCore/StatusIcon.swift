@@ -19,11 +19,16 @@ public struct StatusIconState: Equatable, Sendable {
     /// 調整當下顯示的百分比。非 nil 時以中央數字取代裝置圖示；
     /// nil ＝ 恢復裝置圖示（見 `StatusReadoutController`）。
     public var readout: StatusReadout?
+    /// 圖示右側的藍牙耳機電量（在倒數左邊）。nil ＝ 不畫這一格。
+    ///
+    /// 選單列多一格是使用者可關的（設定開關）：常駐顯示電量有用，
+    /// 但選單列的空間是使用者的，不是我們的。
+    public var battery: StatusBattery?
 
     public init(
         brightness: Double?, volume: Double?, isMuted: Bool,
         output: StatusOutputGlyph = .speaker, badge: StatusBadge?,
-        readout: StatusReadout? = nil
+        readout: StatusReadout? = nil, battery: StatusBattery? = nil
     ) {
         self.brightness = brightness
         self.volume = volume
@@ -31,6 +36,28 @@ public struct StatusIconState: Equatable, Sendable {
         self.output = output
         self.badge = badge
         self.readout = readout
+        self.battery = battery
+    }
+}
+
+/// 選單列圖示旁的藍牙耳機電量。
+public struct StatusBattery: Sendable, Equatable, Hashable {
+    public var percent: Int
+    public var level: HeadsetBattery.Level
+    /// 無障礙：左右耳不同時要分開唸。
+    public var left: Int?
+    public var right: Int?
+
+    public init(percent: Int, level: HeadsetBattery.Level, left: Int? = nil, right: Int? = nil) {
+        self.percent = percent
+        self.level = level
+        self.left = left
+        self.right = right
+    }
+
+    public init?(_ battery: HeadsetBattery) {
+        guard let percent = battery.displayPercent, let level = battery.level else { return nil }
+        self.init(percent: percent, level: level, left: battery.left, right: battery.right)
     }
 }
 

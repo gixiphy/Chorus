@@ -24,6 +24,8 @@ final class AudioDeviceManager {
     @ObservationIgnored weak var tapEngine: TapEngine?
     /// 選單列圖示的讀數：只有預設輸出（圖示畫的那台）的使用者調整才端出數字。
     @ObservationIgnored weak var statusReadout: StatusReadoutController?
+    /// 藍牙耳機電量：預設輸出／虛擬轉送目標變了要重追蹤。
+    @ObservationIgnored weak var headsetBattery: HeadsetBatteryMonitor?
 
     /// 我們自己剛寫入的值：snapshot 回報若與其相近則不覆蓋 UI（避免拖曳中跳動）。
     @ObservationIgnored private var recentLocalSets: [String: (value: Double, at: ContinuousClock.Instant)] = [:]
@@ -669,6 +671,7 @@ final class AudioDeviceManager {
             // 裝置清單變了 → 其他 Mac 的遠端分類要跟著變（去抖在 coordinator）
             coordinator?.scheduleDirectoryPublish()
         }
+        headsetBattery?.syncFromAudioManager()
     }
 
     /// 重算所有無軟體音量裝置的 DDC 橋接。
@@ -942,6 +945,7 @@ final class AudioDeviceManager {
                 self.virtualDriver?.setTarget(uid: target)
                 self.updateVirtualMirrorMode()
                 if changed { self.syncVirtualVolume(toTargetUID: target) }
+                self.headsetBattery?.syncFromAudioManager()
             }
             return
         }
@@ -949,6 +953,7 @@ final class AudioDeviceManager {
         virtualDriver.setTarget(uid: target)
         updateVirtualMirrorMode()
         syncVirtualVolume(toTargetUID: target)
+        headsetBattery?.syncFromAudioManager()
     }
     @ObservationIgnored private var retargetTask: Task<Void, Never>?
 

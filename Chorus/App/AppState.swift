@@ -45,6 +45,8 @@ final class AppState {
     let alertVolume: AlertVolumeController
     let automationEvents: AutomationEventHub
     let automationServer: ControlHTTPServer
+    /// 藍牙耳機電量（選單列＋選單內）。
+    let headsetBattery: HeadsetBatteryMonitor
 
     init(instance: InstanceConfig = .current) {
         // 最先開：啟動本身（列舉、iCloud Drive 探測）的停頓也要量得到
@@ -180,11 +182,14 @@ final class AppState {
         autoEq = AutoEqCatalog(instance: instance)
         timeline.mark("autoEq")
         alertVolume = AlertVolumeController()
+        headsetBattery = HeadsetBatteryMonitor()
         audioManager.tapEngine = tapEngine
         tapEngine.stateChangedHandler = { [weak audioManager] in
             audioManager?.refreshBridges()
         }
         timeline.mark("alertVolume")
+        headsetBattery.attach(audioManager: audioManager, settings: settings)
+        timeline.mark("headsetBattery")
         coordinator.tapEngine = tapEngine
         // 與光環境顧問共用同一份引擎 registry（設定頁只有一組引擎選擇）
         audioTuner = AudioTuningAdvisor(

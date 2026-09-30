@@ -23,6 +23,19 @@ struct VolumeSliderRow: View {
                     .font(.callout)
                     .lineLimit(1)
                     .help(nameHelp)
+                if let batteryBadge = headsetBatteryBadge {
+                    HStack(spacing: 2) {
+                        // SF Symbols 只有橫式電池——轉 -90° 成直立（凸點朝上），
+                        // 寬度收窄免得旋轉後的留白把百分比推遠。
+                        Image(systemName: batteryBadge.symbol)
+                            .rotationEffect(.degrees(-90))
+                            .frame(width: 8)
+                        Text("\(batteryBadge.percent)%")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(batteryBadge.color)
+                    .help(batteryBadge.help)
+                }
                 Spacer()
                 if manager.isExcluded(device) {
                     Text("已排除")
@@ -185,6 +198,41 @@ struct VolumeSliderRow: View {
 
     private var displayName: String {
         manager.displayName(for: device)
+    }
+
+    /// 這一列對應目前追蹤的藍牙輸出時才顯示電量；讀不到就不畫，不顯示 `--`。
+    private var headsetBatteryBadge: (percent: Int, symbol: String, color: Color, help: String)? {
+        let monitor = appState.headsetBattery
+        guard let target = monitor.targetUID,
+              device.uid == target || forwardTarget?.uid == target,
+              let battery = monitor.battery,
+              let percent = battery.displayPercent
+        else { return nil }
+
+        let symbol: String = switch percent {
+        case 76...100: "battery.100percent"
+        case 51...75: "battery.75percent"
+        case 26...50: "battery.50percent"
+        case 1...25: "battery.25percent"
+        default: "battery.0percent"
+        }
+        let color: Color = switch battery.level {
+        case .critical: .red
+        case .low: .orange
+        case .normal, nil: .secondary
+        }
+
+        var parts: [String] = []
+        if let left = battery.left { parts.append(String(localized: "左耳 \(left)%")) }
+        if let right = battery.right { parts.append(String(localized: "右耳 \(right)%")) }
+        if let chargingCase = battery.chargingCase {
+            parts.append(String(localized: "充電盒 \(chargingCase)%"))
+        }
+        if parts.isEmpty, let main = battery.main {
+            parts.append(String(localized: "耳機電量 \(main)%"))
+        }
+        let help = parts.joined(separator: String(localized: "、"))
+        return (percent, symbol, color, help)
     }
 
     /// 使用者選的模式現在不能用時的說明（沒降級時 nil）。
