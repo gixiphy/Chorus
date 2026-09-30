@@ -23,6 +23,12 @@ struct MenuBarLabel: View {
         let displays = appState.displayManager.displays
         let display = displays.first { $0.id == CGMainDisplayID() } ?? displays.first
         let device = appState.audioManager.defaultDevice
+        let battery: StatusBattery? = {
+            guard appState.settings.showHeadsetBatteryInMenuBar,
+                  let raw = appState.headsetBattery.battery
+            else { return nil }
+            return StatusBattery(raw)
+        }()
         return StatusIconState(
             brightness: StatusIcon.quantize(display?.brightness),
             volume: StatusIcon.quantize(device?.volume),
@@ -33,7 +39,8 @@ struct MenuBarLabel: View {
                 keepAwakeHolding: appState.keepAwake.isHolding,
                 focusRemaining: nil
             ),
-            readout: appState.statusReadout.readout
+            readout: appState.statusReadout.readout,
+            battery: battery
         )
     }
 

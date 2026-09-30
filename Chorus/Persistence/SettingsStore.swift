@@ -43,6 +43,7 @@ final class SettingsStore {
         static let ambientLocation = "chorus.ambient.location"
         static let hiddenAudioDevices = "chorus.audio.hiddenDevices"
         static let mediaKeyCapture = "chorus.mediaKeys.enabled"
+        static let showHeadsetBatteryInMenuBar = "chorus.audio.showHeadsetBatteryInMenuBar"
         static let audioBridgeDisabled = "chorus.audio.bridgeDisabled"
         static let peerKnownControls = "chorus.peer.knownControls"
         static let advisorEngineID = "chorus.advisor.engineID"
@@ -221,6 +222,11 @@ final class SettingsStore {
     /// 情境接手：螢幕喇叭音量鍵、無內建螢幕機器的亮度鍵。
     var mediaKeyCaptureEnabled: Bool {
         didSet { defaults.set(mediaKeyCaptureEnabled, forKey: Key.mediaKeyCapture) }
+    }
+
+    /// 選單列圖示旁常駐顯示藍牙耳機電量。預設開；關掉後選單內仍會顯示。
+    var showHeadsetBatteryInMenuBar: Bool {
+        didSet { defaults.set(showHeadsetBatteryInMenuBar, forKey: Key.showHeadsetBatteryInMenuBar) }
     }
 
     /// 視窗排列總開關（預設關；需輔助使用權限）。
@@ -637,6 +643,8 @@ final class SettingsStore {
         ambientLocation = defaults.array(forKey: Key.ambientLocation) as? [Double]
         hiddenAudioDevices = Set(defaults.stringArray(forKey: Key.hiddenAudioDevices) ?? [])
         mediaKeyCaptureEnabled = defaults.bool(forKey: Key.mediaKeyCapture)
+        showHeadsetBatteryInMenuBar =
+            defaults.object(forKey: Key.showHeadsetBatteryInMenuBar) as? Bool ?? true
         windowArrangementEnabled = defaults.bool(forKey: Key.windowArrangementEnabled)
         if defaults.object(forKey: Key.windowArrangementGap) != nil {
             windowArrangementGap = min(24, max(0, defaults.double(forKey: Key.windowArrangementGap)))
