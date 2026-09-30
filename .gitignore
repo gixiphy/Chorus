@@ -36,3 +36,5 @@ build/
 /build
 /DerivedData
 /Packages/ChorusCore/.build
+# Linux resolves swift-crypto; macOS builds have no package dependencies.
+/Packages/ChorusCore/Package.resolved
