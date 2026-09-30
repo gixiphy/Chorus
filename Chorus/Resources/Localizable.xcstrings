@@ -4591,6 +4591,22 @@
         }
       }
     },
+    "右耳 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right Ear %lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右耳 %lld%%"
+          }
+        }
+      }
+    },
     "右" : {
       "localizations" : {
         "en" : {
@@ -5244,6 +5260,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "也在另一台 Mac 上打开“配对新设备”窗口"
+          }
+        }
+      }
+    },
+    "在選單列圖示旁顯示藍牙耳機電量" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Bluetooth Headset Battery Next to Menu Bar Icon"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在菜单栏图标旁显示蓝牙耳机电量"
           }
         }
       }
@@ -6204,6 +6236,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "峰值"
+          }
+        }
+      }
+    },
+    "充電盒 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Case %lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "充电盒 %lld%%"
+          }
+        }
+      }
+    },
+    "左耳 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left Ear %lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左耳 %lld%%"
+          }
+        }
+      }
+    },
+    "左耳 %lld%%、右耳 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left Ear %lld%%, Right Ear %lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左耳 %lld%%、右耳 %lld%%"
           }
         }
       }
@@ -15080,6 +15160,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Can't adjust while offline (showing last known value)"
+          }
+        }
+      }
+    },
+    "耳機電量 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Headset Battery %lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "耳机电量 %lld%%"
           }
         }
       }

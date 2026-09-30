@@ -12,7 +12,8 @@ import ChorusCore
 /// 底部沿同一個圓畫一小段**亮度**弧。未點亮的軌道一律淡化。
 /// 調整當下主弧改畫讀數那個量（數字與圖形對齊），另一個量暫時換到底弧。
 /// App icon 也由此 renderer 產生，避免兩套輪廓漸漸分歧。
-/// 右側保留防睡眠或限時場景的倒數。
+/// 右側可並排：藍牙耳機電量、防睡眠或限時場景的倒數——兩格各自固定寬度，
+/// 不會互相擠掉（選單列的空間是使用者的，電量格可在設定關閉）。
 ///
 /// 中央那格沿用系統聲音選單的圖示語彙：內建喇叭畫那台 Mac、HDMI 畫螢幕、
 /// AirPods 畫 AirPods（SF Symbol）；一般喇叭與虛擬裝置維持手繪喇叭。
@@ -33,8 +34,10 @@ enum StatusIconRenderer {
         guard let descriptor = base.fontDescriptor.withDesign(.rounded) else { return base }
         return NSFont(descriptor: descriptor, size: size) ?? base
     }
-    /// 圖示與倒數文字之間的間距。
-    private static let badgeGap: CGFloat = 3
+    /// 圖示與右側各段之間的間距。
+    private static let segmentGap: CGFloat = 3
+    /// 電量段與倒數段之間稍寬一點，兩格並排才分得清。
+    private static let batteryBadgeGap: CGFloat = 4
     private static var inactiveAlpha: CGFloat { CGFloat(StatusIcon.inactiveTrackAlpha) }
     private static let detailLineWidth: CGFloat = 1.15
 
@@ -58,12 +61,17 @@ enum StatusIconRenderer {
     }
 
     private static func render(_ state: StatusIconState) -> NSImage {
+        let batteryWidth = state.battery.map { reservedWidth(forBatteryPercent: $0.percent) } ?? 0
         let badgeWidth = state.badge.map { reservedWidth(forBadge: $0.text) } ?? 0
-        let totalWidth = side + (badgeWidth > 0 ? badgeGap + badgeWidth : 0)
+        var totalWidth = side
+        if batteryWidth > 0 { totalWidth += segmentGap + batteryWidth }
+        if badgeWidth > 0 {
+            totalWidth += (batteryWidth > 0 ? batteryBadgeGap : segmentGap) + badgeWidth
+        }
         // drawingHandler 會在每個 scale 各呼叫一次，換螢幕（1x↔2x）時自動重畫
         let image = NSImage(size: NSSize(width: totalWidth, height: side), flipped: false) { _ in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            draw(state, in: context, badgeWidth: badgeWidth)
+            draw(state, in: context, batteryWidth: batteryWidth, badgeWidth: badgeWidth)
             return true
         }
         image.isTemplate = true
@@ -73,7 +81,10 @@ enum StatusIconRenderer {
 
     // MARK: - 繪製
 
-    private static func draw(_ state: StatusIconState, in context: CGContext, badgeWidth: CGFloat) {
+    private static func draw(
+        _ state: StatusIconState, in context: CGContext,
+        batteryWidth: CGFloat, badgeWidth: CGFloat
+    ) {
         context.setStrokeColor(NSColor.black.cgColor)
         context.setFillColor(NSColor.black.cgColor)
         context.setLineCap(.round)
@@ -94,9 +105,17 @@ enum StatusIconRenderer {
         }
         drawBottomArc(arcs.bottom, in: context)
 
-        if let badge = state.badge, badgeWidth > 0 {
+        var x = side
+        if let battery = state.battery, batteryWidth > 0 {
+            x += segmentGap
             context.setAlpha(1)
-            draw(badge: badge.text, in: CGRect(x: side + badgeGap, y: 0, width: badgeWidth, height: side))
+            draw(battery: battery, in: CGRect(x: x, y: 0, width: batteryWidth, height: side), context: context)
+            x += batteryWidth
+        }
+        if let badge = state.badge, badgeWidth > 0 {
+            x += state.battery != nil ? batteryBadgeGap : segmentGap
+            context.setAlpha(1)
+            draw(badge: badge.text, in: CGRect(x: x, y: 0, width: badgeWidth, height: side))
         }
     }
 
@@ -251,7 +270,63 @@ enum StatusIconRenderer {
         context.strokePath()
     }
 
-    // MARK: 右側倒數
+    // MARK: 右側電量／倒數
+
+    private static func draw(battery: StatusBattery, in rect: CGRect, context: CGContext) {
+        let text = "\(battery.percent)%"
+        let attributed = NSAttributedString(string: text, attributes: [
+            .font: badgeFont,
+            .foregroundColor: NSColor.black,
+        ])
+        let textSize = attributed.size()
+        let iconW: CGFloat = 6
+        let iconH: CGFloat = 11
+        let gap: CGFloat = 2
+        let contentW = iconW + gap + textSize.width
+        let originX = rect.midX - contentW / 2
+        let iconRect = CGRect(
+            x: originX,
+            y: rect.midY - iconH / 2,
+            width: iconW,
+            height: iconH
+        )
+        drawBatteryGlyph(fill: CGFloat(battery.percent) / 100, in: iconRect, context: context)
+        let baseline = rect.midY - badgeFont.capHeight / 2
+        attributed.draw(at: CGPoint(
+            x: iconRect.maxX + gap,
+            y: baseline + badgeFont.descender
+        ))
+    }
+
+    /// 手繪直立小電池：外框＋頂端凸點，內部由下往上依百分比填滿。template 只有 alpha，
+    /// 低電量靠填滿程度表達，不靠顏色。（CGContext 原點在左下，y 往上長。）
+    private static func drawBatteryGlyph(fill: CGFloat, in rect: CGRect, context: CGContext) {
+        let nubW: CGFloat = 2.6
+        let nubH: CGFloat = 1.2
+        let body = CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - nubH)
+        let nub = CGRect(
+            x: rect.midX - nubW / 2,
+            y: body.maxY,
+            width: nubW,
+            height: nubH
+        )
+        context.setLineWidth(1)
+        context.stroke(body.insetBy(dx: 0.5, dy: 0.5))
+        context.fill(nub)
+
+        let inset: CGFloat = 1.5
+        let inner = body.insetBy(dx: inset, dy: inset)
+        guard inner.width > 0, inner.height > 0 else { return }
+        let filled = CGRect(
+            x: inner.minX,
+            y: inner.minY,
+            width: inner.width,
+            height: inner.height * min(max(fill, 0), 1)
+        )
+        if filled.height > 0 {
+            context.fill(filled)
+        }
+    }
 
     private static func draw(badge: String, in rect: CGRect) {
         let text = NSAttributedString(string: badge, attributes: [
@@ -274,6 +349,13 @@ enum StatusIconRenderer {
         return ceil(max(actual, ("00:00" as NSString).size(withAttributes: attributes).width))
     }
 
+    /// 電量段預留寬度：小電池圖 + 間距 + `100%`，數字從 100 掉到 9 時左邊圖示不抖。
+    private static func reservedWidth(forBatteryPercent _: Int) -> CGFloat {
+        let attributes: [NSAttributedString.Key: Any] = [.font: badgeFont]
+        let textW = ("100%" as NSString).size(withAttributes: attributes).width
+        return ceil(6 + 2 + textW)
+    }
+
     private static func accessibilityDescription(_ state: StatusIconState) -> String {
         var parts: [String] = []
         if let brightness = state.brightness {
@@ -283,6 +365,13 @@ enum StatusIconRenderer {
             parts.append(String(localized: "已靜音"))
         } else if let volume = state.volume {
             parts.append(String(localized: "音量 \(Int((volume * 100).rounded()))%"))
+        }
+        if let battery = state.battery {
+            if let left = battery.left, let right = battery.right, left != right {
+                parts.append(String(localized: "左耳 \(left)%、右耳 \(right)%"))
+            } else {
+                parts.append(String(localized: "耳機電量 \(battery.percent)%"))
+            }
         }
         if let badge = state.badge {
             // 唸出來要說對是誰的時間：同一串數字，防睡眠與限時場景的意思差很多

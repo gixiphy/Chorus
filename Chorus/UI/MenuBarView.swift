@@ -62,7 +62,13 @@ struct MenuBarView: View {
             .padding(.bottom, 12)
         }
         .frame(width: 300)
-        .onAppear { crashNotice = CrashReportCollector.shared.unacknowledged }
+        .onAppear {
+            crashNotice = CrashReportCollector.shared.unacknowledged
+            appState.headsetBattery.menuVisibilityChanged(true)
+        }
+        .onDisappear {
+            appState.headsetBattery.menuVisibilityChanged(false)
+        }
     }
 
     /// 捲動區的高度上限。選單列視窗**不會**自己長出捲軸——內容超過螢幕

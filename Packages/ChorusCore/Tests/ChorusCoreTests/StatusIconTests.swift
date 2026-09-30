@@ -138,4 +138,16 @@ struct StatusOutputGlyphTests {
         airPods.output = .airPods
         #expect(laptop != airPods)
     }
+
+    @Test("帶或不帶電量是不同 state，renderer 快取才會失效")
+    func stateIncludesBattery() {
+        let bare = StatusIconState(brightness: 0.5, volume: 0.5, isMuted: false, output: .airPods, badge: nil)
+        let withBattery = StatusIconState(
+            brightness: 0.5, volume: 0.5, isMuted: false, output: .airPods, badge: nil,
+            battery: StatusBattery(percent: 94, level: .normal, left: 93, right: 94)
+        )
+        #expect(bare != withBattery)
+        #expect(StatusBattery(HeadsetBattery(main: nil, left: nil, right: nil, chargingCase: 28)) == nil)
+        #expect(StatusBattery(HeadsetBattery(main: 50, left: nil, right: nil, chargingCase: nil))?.percent == 50)
+    }
 }
