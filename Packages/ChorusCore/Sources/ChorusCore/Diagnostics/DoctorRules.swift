@@ -132,6 +132,13 @@ public enum DoctorRules {
                 remedy: "結束並重新開啟 Chorus；若持續發生，確認沒有其他程式佔用指定的同步 port。"
             )
         }
+        // TLS-PSK 沒有金鑰就無從驗證，所以沒配對時刻意不開 listener（BonjourAdvertiser.restart）
+        if inputs.listenerState.isEmpty, inputs.peers.isEmpty {
+            return DoctorCheck(
+                id: "sync.listener", status: .ok, title: "接受其他 Mac 連入",
+                detail: "尚未配對任何裝置，配對後才會開啟。"
+            )
+        }
         if inputs.listenerState == "ready" {
             return DoctorCheck(id: "sync.listener", status: .ok, title: "接受其他 Mac 連入", detail: "正常")
         }

@@ -57,6 +57,16 @@ struct DoctorTests {
         #expect(!DoctorReport(generatedAt: .now, checks: checks).hasErrors)
     }
 
+    @Test("Listener not started without peers is expected, not a fault")
+    func listenerIdleWithoutPeers() {
+        var inputs = healthy()
+        inputs.listenerState = ""
+        let result = check("sync.listener", in: DoctorRules.evaluate(inputs))
+        #expect(result?.status == .ok)
+        #expect(result?.detail?.contains("配對") == true)
+        #expect(result?.remedy == nil)
+    }
+
     @Test("Local network denial is an error with a remedy")
     func discoveryDenied() {
         var inputs = healthy()
