@@ -134,3 +134,22 @@ public struct DoctorInputs: Sendable, Equatable {
         self.peers = peers
     }
 }
+
+public extension DoctorInputs.Peer.Phase {
+    /// 由連線槽的階段換算。`hasSession` 是「真的有一條通過 hello 的 session」：
+    /// slot 說 connected 但 session 已收掉的瞬間，對使用者而言就是沒連上。
+    /// 退避秒數無條件進位：剩 0.3 秒時說「0 秒後重撥」沒有意義。
+    init(slot: PeerSessionSlots.Phase, hasSession: Bool, now: Duration) {
+        switch slot {
+        case .connected:
+            self = hasSession ? .connected : .idle
+        case .dialing, .awaitingHello:
+            self = .connecting
+        case let .backoff(until):
+            let seconds = max(0, (until - now).millis / 1_000)
+            self = .backoff(secondsRemaining: Int(seconds.rounded(.up)))
+        case .idle:
+            self = .idle
+        }
+    }
+}

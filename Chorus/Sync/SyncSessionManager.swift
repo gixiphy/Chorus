@@ -524,13 +524,9 @@ final class SyncSessionManager {
         let current = ContinuousClock.now
         return pairedPeers.peers.map { record in
             let peerID = record.peerID
-            let phase: DoctorInputs.Peer.Phase = switch slots.phase(of: peerID) {
-            case .connected: sessions[peerID] != nil ? .connected : .idle
-            case .dialing, .awaitingHello: .connecting
-            case let .backoff(until):
-                .backoff(secondsRemaining: max(0, Int((until - now).millis / 1_000)))
-            case .idle: .idle
-            }
+            let phase = DoctorInputs.Peer.Phase(
+                slot: slots.phase(of: peerID), hasSession: sessions[peerID] != nil, now: now
+            )
             return DoctorInputs.Peer(
                 peerID: peerID,
                 deviceName: record.deviceName,

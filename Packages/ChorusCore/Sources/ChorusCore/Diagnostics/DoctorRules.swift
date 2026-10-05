@@ -61,9 +61,10 @@ public enum DoctorRules {
         inputs.mainLoopResponsive
             ? DoctorCheck(id: "app.mainLoop", status: .ok, title: "App 回應", detail: "正常")
             : DoctorCheck(
-                id: "app.mainLoop", status: .error, title: "App 回應",
-                detail: "主執行緒目前沒有回應。",
-                remedy: "等一分鐘再試；若持續發生，結束並重新開啟 Chorus，再到設定頁按「匯出診斷包…」。"
+                id: "app.mainLoop", status: .warning, title: "App 回應",
+                // 報告本身在主執行緒上組：走到這裡代表它已經恢復，只是探針還沒清
+                detail: "主執行緒剛才有一段時間沒有回應（產生這份報告時已恢復）。",
+                remedy: "若反覆出現，到設定頁按「匯出診斷包…」，把檔案附在問題回報裡。"
             )
     }
 
@@ -188,14 +189,15 @@ public enum DoctorRules {
         }
         guard !peer.candidates.isEmpty else {
             return DoctorCheck(
-                id: id, status: .error, title: title, detail: "找不到這台裝置的位址。",
+                id: id, status: .warning, title: title, detail: "找不到這台裝置的位址。",
                 remedy: "確認兩台 Mac 在同一個網路、對方的 Chorus 正在執行；跨網段時需要手動位址。"
             )
         }
         var detail = "未連線"
         if peer.consecutiveFailures > 0 { detail += "，已連續失敗 \(peer.consecutiveFailures) 次" }
         if case let .backoff(seconds) = peer.phase { detail += "，\(seconds) 秒後重撥" }
-        if let next = peer.nextCandidate { detail += "，下次嘗試 \(next)" }
+        detail += "；候選位址：\(peer.candidates.joined(separator: "、"))"
+        if let next = peer.nextCandidate, peer.candidates.count > 1 { detail += "（下次嘗試 \(next)）" }
         return DoctorCheck(
             id: id, status: .warning, title: title, detail: detail + "。",
             remedy: "確認對方的 Chorus 正在執行、兩台在同一個網路；對方也可以執行 chorus doctor 檢查區域網路權限。"

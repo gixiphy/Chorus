@@ -105,13 +105,19 @@ struct DoctorTests {
         #expect(result?.status == .warning)
         #expect(result?.detail?.contains("3") == true)
         #expect(result?.detail?.contains("192.168.1.20:55781") == true)
+        #expect(result?.detail?.contains("Studio._chorus._tcp.local.") == true)
     }
 
-    @Test("Dialer without any address is an error")
+    @Test("Dialer without any address warns, same severity as the non-dialer side")
     func noAddress() {
         let target = peer(phase: .idle, candidates: [])
         let result = check("peer.a1b2c3d4.connection", in: DoctorRules.evaluate(healthy(peers: [target])))
-        #expect(result?.status == .error)
+        #expect(result?.status == .warning)
+        let other = check(
+            "peer.a1b2c3d4.connection",
+            in: DoctorRules.evaluate(healthy(peers: [peer(phase: .idle, isDialer: false)]))
+        )
+        #expect(result?.status == other?.status)
     }
 
     @Test("Non-dialer waits for the other side instead of reporting failures")
@@ -156,8 +162,24 @@ struct DoctorTests {
         inputs.lastExitWasCrash = true
         let checks = DoctorRules.evaluate(inputs)
         #expect(check("permissions.accessibility", in: checks)?.status == .warning)
-        #expect(check("app.mainLoop", in: checks)?.status == .error)
+        let mainLoop = check("app.mainLoop", in: checks)
+        #expect(mainLoop?.status == .warning)
+        #expect(mainLoop?.detail?.contains("剛才") == true)
         #expect(check("app.lastExit", in: checks)?.status == .warning)
+    }
+
+    @Test("Slot phases map to doctor phases; backoff seconds round up")
+    func phaseMapping() {
+        let now: Duration = .seconds(100)
+        typealias Phase = DoctorInputs.Peer.Phase
+        #expect(Phase(slot: .connected, hasSession: true, now: now) == .connected)
+        #expect(Phase(slot: .connected, hasSession: false, now: now) == .idle)
+        #expect(Phase(slot: .dialing, hasSession: false, now: now) == .connecting)
+        #expect(Phase(slot: .awaitingHello, hasSession: false, now: now) == .connecting)
+        #expect(Phase(slot: .idle, hasSession: false, now: now) == .idle)
+        #expect(Phase(slot: .backoff(until: now + .milliseconds(300)), hasSession: false, now: now) == .backoff(secondsRemaining: 1))
+        #expect(Phase(slot: .backoff(until: now + .milliseconds(4_001)), hasSession: false, now: now) == .backoff(secondsRemaining: 5))
+        #expect(Phase(slot: .backoff(until: now - .seconds(2)), hasSession: false, now: now) == .backoff(secondsRemaining: 0))
     }
 
     @Test("Every non-ok check carries a remedy")
