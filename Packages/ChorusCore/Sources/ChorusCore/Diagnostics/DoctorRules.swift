@@ -152,10 +152,19 @@ public enum DoctorRules {
     private static func connection(_ peer: DoctorInputs.Peer) -> DoctorCheck {
         let id = "peer.\(peer.peerID.prefix(8)).connection"
         let title = "\(peer.deviceName)（\(peer.peerID.prefix(8))）"
-        guard peer.hasPSK else {
+        switch peer.key {
+        case .present:
+            break
+        case .missing:
             return DoctorCheck(
                 id: id, status: .error, title: title, detail: "配對金鑰遺失，無法建立加密連線。",
                 remedy: "在設定頁移除這台裝置，然後重新配對。"
+            )
+        case let .unreadable(status):
+            return DoctorCheck(
+                id: id, status: .error, title: title,
+                detail: "無法讀取配對金鑰（Keychain OSStatus \(status)）。",
+                remedy: "解鎖登入鑰匙圈，或在「鑰匙圈存取」允許 Chorus 讀取這個項目；金鑰仍在，不要移除這台裝置。"
             )
         }
         switch peer.phase {

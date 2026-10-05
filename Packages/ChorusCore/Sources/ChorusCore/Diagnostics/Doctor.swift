@@ -71,12 +71,20 @@ public struct DoctorInputs: Sendable, Equatable {
             case idle
         }
 
+        /// 配對金鑰在 Keychain 的狀態。「讀不到」和「不存在」要分開：
+        /// 鑰匙圈鎖住或存取被拒時金鑰其實還在，叫人重新配對會白白丟掉權限設定。
+        public enum KeyState: Sendable, Equatable {
+            case present
+            case missing
+            case unreadable(status: Int32)
+        }
+
         public var peerID: String
         public var deviceName: String
         public var phase: Phase
         /// peerID 較小的一方負責撥號（`PeerSessionSlots.isDialer`）。
         public var isDialer: Bool
-        public var hasPSK: Bool
+        public var key: KeyState
         /// 撥號候選（已依優先序、去重），以 `String(describing:)` 表示。
         public var candidates: [String]
         public var nextCandidate: String?
@@ -85,7 +93,7 @@ public struct DoctorInputs: Sendable, Equatable {
         public var lastHeardSecondsAgo: Int?
 
         public init(
-            peerID: String, deviceName: String, phase: Phase, isDialer: Bool, hasPSK: Bool,
+            peerID: String, deviceName: String, phase: Phase, isDialer: Bool, key: KeyState,
             candidates: [String], nextCandidate: String?, consecutiveFailures: Int,
             permissions: PeerPermissionPolicy, lastHeardSecondsAgo: Int?
         ) {
@@ -93,7 +101,7 @@ public struct DoctorInputs: Sendable, Equatable {
             self.deviceName = deviceName
             self.phase = phase
             self.isDialer = isDialer
-            self.hasPSK = hasPSK
+            self.key = key
             self.candidates = candidates
             self.nextCandidate = nextCandidate
             self.consecutiveFailures = consecutiveFailures

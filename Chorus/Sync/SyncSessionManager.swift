@@ -536,7 +536,7 @@ final class SyncSessionManager {
                 deviceName: record.deviceName,
                 phase: phase,
                 isDialer: slots.isDialer(for: peerID),
-                hasPSK: pairedPeers.psk(for: peerID) != nil,
+                key: pairedPeers.keyState(for: peerID),
                 candidates: dialCandidates(for: peerID).map { "\($0)" },
                 nextCandidate: dialEndpoint(for: peerID).map { "\($0)" },
                 consecutiveFailures: dialCursor.failures(for: peerID),

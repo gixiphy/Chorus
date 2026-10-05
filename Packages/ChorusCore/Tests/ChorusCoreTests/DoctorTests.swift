@@ -20,7 +20,7 @@ struct DoctorTests {
     private func peer(
         phase: DoctorInputs.Peer.Phase,
         isDialer: Bool = true,
-        hasPSK: Bool = true,
+        key: DoctorInputs.Peer.KeyState = .present,
         candidates: [String] = ["Studio._chorus._tcp.local."],
         failures: Int = 0,
         permissions: PeerPermissionPolicy = .full
@@ -30,7 +30,7 @@ struct DoctorTests {
             deviceName: "Studio",
             phase: phase,
             isDialer: isDialer,
-            hasPSK: hasPSK,
+            key: key,
             candidates: candidates,
             nextCandidate: candidates.first,
             consecutiveFailures: failures,
@@ -80,10 +80,20 @@ struct DoctorTests {
 
     @Test("Missing PSK is an error that asks to re-pair")
     func missingPSK() {
-        let checks = DoctorRules.evaluate(healthy(peers: [peer(phase: .idle, hasPSK: false)]))
+        let checks = DoctorRules.evaluate(healthy(peers: [peer(phase: .idle, key: .missing)]))
         let result = check("peer.a1b2c3d4.connection", in: checks)
         #expect(result?.status == .error)
         #expect(result?.remedy?.contains("重新配對") == true)
+    }
+
+    @Test("Unreadable Keychain item is not reported as missing")
+    func unreadableKeyDoesNotSuggestRepair() {
+        let checks = DoctorRules.evaluate(healthy(peers: [peer(phase: .idle, key: .unreadable(status: -25293))]))
+        let result = check("peer.a1b2c3d4.connection", in: checks)
+        #expect(result?.status == .error)
+        #expect(result?.detail?.contains("-25293") == true)
+        #expect(result?.remedy?.contains("重新配對") == false)
+        #expect(result?.remedy?.contains("鑰匙圈") == true)
     }
 
     @Test("Dialer with failures reports the next candidate")
@@ -152,7 +162,7 @@ struct DoctorTests {
 
     @Test("Every non-ok check carries a remedy")
     func remediesPresent() {
-        var inputs = healthy(peers: [peer(phase: .idle, hasPSK: false), peer(phase: .idle, isDialer: false)])
+        var inputs = healthy(peers: [peer(phase: .idle, key: .missing), peer(phase: .idle, isDialer: false)])
         inputs.browserState = "waiting(NoAuth)"
         inputs.listenerState = "failed(POSIX 48)"
         inputs.accessibilityTrusted = false

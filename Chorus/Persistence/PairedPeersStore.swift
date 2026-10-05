@@ -59,6 +59,15 @@ final class PairedPeersStore {
         }
     }
 
+    /// 配對金鑰的狀態（診斷用，不讀出金鑰本身）。
+    func keyState(for peerID: String) -> DoctorInputs.Peer.KeyState {
+        switch keychain.itemStatus(forAccount: Self.pskAccountPrefix + peerID) {
+        case errSecSuccess: .present
+        case errSecItemNotFound: .missing
+        case let status: .unreadable(status: status)
+        }
+    }
+
     func psk(for peerID: String) -> Data? {
         keychain.data(forAccount: Self.pskAccountPrefix + peerID)
     }
