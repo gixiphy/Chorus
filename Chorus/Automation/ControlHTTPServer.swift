@@ -37,6 +37,9 @@ final class ControlHTTPServer {
     @ObservationIgnored private unowned let executor: AutomationExecutor
     @ObservationIgnored private unowned let events: AutomationEventHub
     @ObservationIgnored private unowned let scenes: SceneStore
+    /// 診斷報告來源（AppState 提供；這裡不該知道同步與音訊的內部）。
+    /// nil ＝ 還沒接上，`/v1/doctor` 回 503。
+    @ObservationIgnored private var doctorReport: (@MainActor () -> DoctorReport)?
     /// 連線層（背景 queue）。nil ＝ 介面沒開。
     @ObservationIgnored private var transport: AutomationHTTPTransport?
     @ObservationIgnored private var eventSubscription: UUID?
@@ -59,6 +62,11 @@ final class ControlHTTPServer {
         self.executor = executor
         self.events = events
         self.scenes = scenes
+    }
+
+    /// AppState 的 init 要到尾段才能捕捉 self，所以來源用設定的而不是 init 參數。
+    func setDoctorSource(_ source: @escaping @MainActor () -> DoctorReport) {
+        doctorReport = source
     }
 
     // MARK: - Token
@@ -136,6 +144,9 @@ final class ControlHTTPServer {
             },
             scenes: { @MainActor [weak self] in
                 self?.scenesResponse() ?? Self.unavailable
+            },
+            doctor: { @MainActor [weak self] in
+                self?.doctorResponse() ?? Self.unavailable
             },
             execute: { @MainActor [weak self] requests, isBatch in
                 await self?.executeResponse(requests, isBatch: isBatch) ?? Self.unavailable
@@ -232,6 +243,14 @@ final class ControlHTTPServer {
     /// 呼叫端想看某個場景到底會做什麼不必再問一次。
     private func scenesResponse() -> AutomationHTTPTransport.Response {
         jsonResponse(scenes.scenes)
+    }
+
+    private func doctorResponse() -> AutomationHTTPTransport.Response {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
+        guard let doctorReport, let data = try? encoder.encode(doctorReport()) else { return Self.unavailable }
+        return .init(status: 200, json: String(decoding: data, as: UTF8.self))
     }
 
     /// executeAsync：限時場景要先把 peer 現值問回來，其餘請求原樣同步。

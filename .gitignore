@@ -29,9 +29,11 @@ dist/
 build/
 
 # repo 在 iCloud 同步的 ~/Documents 裡：build 快取若被同步，xcodebuild 開專案時會卡死在
-# NSFileCoordinator（2026-09-19 查明，.build 長到 36 GB）。實體放在 iCloud 不同步的 *.nosync，
+# NSFileCoordinator（2026-09-19 查明，.build 長到 36 GB）。實體放在
+# ~/Library/Caches/DevBuild/（iCloud 不同步；2026-10-05 確認 iCloud 已不理會 *.nosync，會加回 FinderInfo 讓 codesign 失敗），
 # 原名是指過去的 symlink——`build/` 這種結尾帶斜線的規則對 symlink 無效，所以另列不帶斜線的。
-# clone 或整個刪掉之後要重建：mkdir X.nosync && ln -s X.nosync X
+# clone 或整個刪掉之後要重建：mkdir -p ~/Library/Caches/DevBuild/Chorus_X && ln -s ~/Library/Caches/DevBuild/Chorus_X X
+# （Packages/ChorusCore/.build 指向 ~/Library/Caches/ChorusWorktrees/main-core.build）
 *.nosync
 /build
 /DerivedData

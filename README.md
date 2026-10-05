@@ -203,6 +203,7 @@ chorus scene 電影
 chorus scene 工作 --for 25m # 限時場景：時間到自動還原
 chorus scene --end          # 提前結束並還原
 chorus listen | jq          # 狀態變動的事件流
+chorus doctor               # 檢查權限、探索、各裝置連線與音訊路徑，並列出修復步驟
 ```
 
 **場景**：一組具名的動作（「電影」＝全部螢幕 30% ＋ 輸出音量 20%）。

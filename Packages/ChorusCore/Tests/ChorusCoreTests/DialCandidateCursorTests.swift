@@ -62,4 +62,15 @@ struct DialCandidateCursorTests {
     func ordered() {
         #expect(DialCandidateCursor.ordered(["x", nil, "y", "x"]) == ["x", "y"])
     }
+
+    @Test("failures(for:) reports consecutive failures")
+    func failureCount() {
+        var cursor = DialCandidateCursor()
+        #expect(cursor.failures(for: "A") == 0)
+        cursor.failed("A")
+        cursor.failed("A")
+        #expect(cursor.failures(for: "A") == 2)
+        cursor.succeeded("A")
+        #expect(cursor.failures(for: "A") == 0)
+    }
 }

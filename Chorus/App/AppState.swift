@@ -281,6 +281,8 @@ final class AppState {
         timeline.mark("windowManager.start")
         virtualDriver.refreshStatus()
         timeline.mark("virtualDriver.refresh")
+        // init 尾段才捕捉得到 self；報告在請求進來時才組，這裡只是接上來源
+        automationServer.setDoctorSource { [unowned self] in DoctorInputsCollector.report(appState: self) }
         automationServer.updateActivation()
         timeline.mark("automationServer.start")
         tapEngine.start()
