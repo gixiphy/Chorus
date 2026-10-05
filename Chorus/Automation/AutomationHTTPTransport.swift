@@ -361,6 +361,13 @@ final class AutomationHTTPTransport: @unchecked Sendable {
 
     // MARK: - 健康狀態
 
+    /// 主迴圈探針是否在期限內。`/v1/health` 與 doctor 共用同一條判斷。
+    static func mainLoopResponsive() -> Bool {
+        let watchdog = MainLoopWatchdog.shared
+        let loop = watchdog.snapshot()
+        return loop.running && (loop.pendingAge ?? .zero) < watchdog.configuration.thresholds.hang
+    }
+
     /// 背景組出的健康快照，不經主執行緒。`responsive` 看的是主迴圈探針：
     /// 主執行緒正卡著時這裡照樣回得出來，而且說的是 false。
     static func healthJSON() -> String {
@@ -368,7 +375,7 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         let loop = watchdog.snapshot()
         let metrics = OperationMetrics.shared.snapshot()
         let pendingAge = loop.pendingAge
-        let responsive = loop.running && (pendingAge ?? .zero) < watchdog.configuration.thresholds.hang
+        let responsive = mainLoopResponsive()
         func upper(_ histogram: LatencyHistogram) -> Any {
             histogram.percentile(0.95).map { $0 as Any } ?? NSNull()
         }

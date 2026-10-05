@@ -35,7 +35,7 @@ final class SyncSessionManager {
 
     /// 探索管道異常（權限被拒等）→ UI 顯示疑難排解提示。
     var hasDiscoveryProblem: Bool {
-        browserStateDescription.contains("NoAuth") || browserStateDescription.hasPrefix("waiting")
+        DoctorRules.isDiscoveryProblem(browserStateDescription)
     }
 
     @ObservationIgnored private let instance: InstanceConfig
@@ -514,6 +514,35 @@ final class SyncSessionManager {
         }
         if connectionStates[peerID] != state {
             connectionStates[peerID] = state
+        }
+    }
+
+    // MARK: - 診斷
+
+    /// `chorus doctor` 用的逐裝置快照。權限由呼叫端給：這裡不該知道權限怎麼存。
+    func doctorPeers(policy: (String) -> PeerPermissionPolicy) -> [DoctorInputs.Peer] {
+        let current = ContinuousClock.now
+        return pairedPeers.peers.map { record in
+            let peerID = record.peerID
+            let phase: DoctorInputs.Peer.Phase = switch slots.phase(of: peerID) {
+            case .connected: sessions[peerID] != nil ? .connected : .idle
+            case .dialing, .awaitingHello: .connecting
+            case let .backoff(until):
+                .backoff(secondsRemaining: max(0, Int((until - now).millis / 1_000)))
+            case .idle: .idle
+            }
+            return DoctorInputs.Peer(
+                peerID: peerID,
+                deviceName: record.deviceName,
+                phase: phase,
+                isDialer: slots.isDialer(for: peerID),
+                hasPSK: pairedPeers.psk(for: peerID) != nil,
+                candidates: dialCandidates(for: peerID).map { "\($0)" },
+                nextCandidate: dialEndpoint(for: peerID).map { "\($0)" },
+                consecutiveFailures: dialCursor.failures(for: peerID),
+                permissions: policy(peerID),
+                lastHeardSecondsAgo: lastHeard[peerID].map { Int((current - $0).components.seconds) }
+            )
         }
     }
 
