@@ -266,6 +266,7 @@ chorus scene 電影
 chorus scene 工作 --for 25m # timed scene: auto-restore when time is up
 chorus scene --end          # end early and restore
 chorus listen | jq          # event stream of state changes
+chorus doctor               # check permissions, discovery, peer connections and audio, with fixes
 ```
 
 **Scenes**: named action sets ("電影" = all displays 30% + output volume 20%).
