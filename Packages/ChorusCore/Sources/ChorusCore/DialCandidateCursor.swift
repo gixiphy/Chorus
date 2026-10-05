@@ -13,6 +13,11 @@ public struct DialCandidateCursor: Sendable, Equatable {
         return candidates[(failures[peer] ?? 0) % candidates.count]
     }
 
+    /// 連續失敗次數（診斷用）。
+    public func failures(for peer: String) -> Int {
+        failures[peer] ?? 0
+    }
+
     /// 撥號或 hello 階段失敗：下次換下一個候選。
     public mutating func failed(_ peer: String) {
         failures[peer, default: 0] += 1
