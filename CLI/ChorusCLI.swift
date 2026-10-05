@@ -316,50 +316,47 @@ struct ChorusCLI {
     }
 
     /// 先在本機排除「介面沒開／App 沒跑」，再問 App；主執行緒卡住時退回 /v1/health。
+    /// 每種失敗的文字、JSON 與結束碼都由 DoctorFailure 決定。
     private static func runDoctor(json: Bool) async -> Int32 {
+        func fail(_ failure: DoctorFailure) -> Int32 {
+            print(failure.render(json: json))
+            return failure.exitCode
+        }
         let config: Config
         do {
             config = try Config.load()
         } catch {
-            print("✗ 自動化介面 — \(error.message)")
-            print("   → 到 Chorus 設定頁開啟「自動化介面」後再執行 chorus doctor。")
-            return 3
+            return fail(.notConfigured(error.message))
         }
         let client = Client(config: config)
+        let status: Int
+        let body: Data
         do {
-            let (status, body) = try await client.getResponse("/v1/doctor")
-            switch status {
-            case 200:
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
+            (status, body) = try await client.getResponse("/v1/doctor")
+        } catch let error as CLIError {
+            return fail(.unauthorized(error.message))
+        } catch let error as URLError where error.code == .timedOut {
+            return fail(.timedOut(port: config.port))
+        } catch {
+            return fail(.unreachable(port: config.port))
+        }
+        switch status {
+        case 200:
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            do {
                 let report = try decoder.decode(DoctorReport.self, from: body)
                 print(json ? String(decoding: body, as: UTF8.self) : DoctorFormatter.render(report))
                 return report.hasErrors ? 1 : 0
-            case 504:
-                print("✗ App 回應 — Chorus 正在執行，但主執行緒超過 10 秒沒有回應。")
-                if let health = try? await client.get("/v1/health") {
-                    print("   健康快照：\(health)")
-                }
-                print("   → 等一分鐘再試；若持續發生，結束並重新開啟 Chorus，再到設定頁按「匯出診斷包…」。")
-                return 1
-            case 404:
-                print("✗ Chorus 版本 — 這個版本的 Chorus 還沒有 /v1/doctor。")
-                print("   → 更新 Chorus 後再試。")
-                return 1
-            default:
-                print("✗ 自動化介面 — HTTP \(status) \(String(decoding: body, as: UTF8.self))")
-                return 1
+            } catch {
+                return fail(.unreadableReport(error.localizedDescription))
             }
-        } catch let error as CLIError {
-            print("✗ 自動化介面 — \(error.message)")
-            return error.exitCode
-        } catch let error as URLError where error.code == .cannotConnectToHost || error.code == .networkConnectionLost {
-            print("✗ 連線 — 連不上 127.0.0.1:\(config.port)。")
-            print("   → 確認 Chorus 正在執行，且設定頁的自動化介面 port 與 ~/.config/chorus/config.json 一致。")
-            return 4
-        } catch {
-            print("✗ 連線 — \(error)")
-            return 4
+        case 504:
+            return fail(.mainThreadStalled(health: try? await client.get("/v1/health")))
+        case 404:
+            return fail(.unsupportedApp)
+        default:
+            return fail(.http(status: status, body: String(decoding: body, as: UTF8.self)))
         }
     }
 
