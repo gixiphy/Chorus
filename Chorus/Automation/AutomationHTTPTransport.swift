@@ -22,6 +22,7 @@ final class AutomationHTTPTransport: @unchecked Sendable {
     struct Handlers: Sendable {
         let state: @Sendable () async -> Response
         let scenes: @Sendable () async -> Response
+        let doctor: @Sendable () async -> Response
         /// `isBatch`：請求 body 是陣列（回應也要是陣列）。
         let execute: @Sendable (_ requests: [ControlRequest], _ isBatch: Bool) async -> Response
         /// 第一個事件流開啟（true）／最後一個關閉（false）。沒有訂閱者時不必編碼事件。
@@ -196,6 +197,8 @@ final class AutomationHTTPTransport: @unchecked Sendable {
             callMainThread(id) { [handlers] in await handlers.state() }
         case ("GET", "/v1/scenes"):
             callMainThread(id) { [handlers] in await handlers.scenes() }
+        case ("GET", "/v1/doctor"):
+            callMainThread(id) { [handlers] in await handlers.doctor() }
         case ("POST", "/v1/command"):
             handleCommand(id, body: request.body)
         case ("GET", "/v1/events"):
@@ -203,7 +206,7 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         default:
             respond(id, status: 404, json: Self.errorJSON(
                 "notFound",
-                "可用端點：POST /v1/command、GET /v1/state、GET /v1/scenes、GET /v1/events、GET /v1/health"
+                "可用端點：POST /v1/command、GET /v1/state、GET /v1/scenes、GET /v1/doctor、GET /v1/events、GET /v1/health"
             ))
         }
     }
