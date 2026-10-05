@@ -232,6 +232,8 @@ public struct EndpointCommandResult: Codable, Sendable, Equatable {
         public static let unavailable = Outcome(rawValue: "unavailable")
         /// 端點還在但寫入失敗。
         public static let failed = Outcome(rawValue: "failed")
+        /// 接收端的權限設定不允許這項控制。
+        public static let denied = Outcome(rawValue: "denied")
     }
 
     public let id: UUID
