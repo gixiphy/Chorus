@@ -60,6 +60,8 @@ final class SyncSessionManager {
     @ObservationIgnored private var listenerRetryTask: Task<Void, Never>?
     @ObservationIgnored private var listenerBackoff = RedialBackoff()
     @ObservationIgnored private var latestEndpoints: [String: NWEndpoint] = [:]
+    /// 撥號候選輪替（Bonjour → 手動位址）。只在撥號方有意義。
+    @ObservationIgnored private var dialCursor = DialCandidateCursor()
     @ObservationIgnored private var lastHeard: [String: ContinuousClock.Instant] = [:]
     @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
     /// 有 peer 連線時持有，避免 App Nap 拖慢心跳與同步。
@@ -142,6 +144,7 @@ final class SyncSessionManager {
         guard slots.isRunning else { return }
         Self.log.notice("睡醒：關閉 \(sessions.count) 條 session、\(connectionTasks.count) 條連線工作，重新撥號")
         let dialNow = slots.reset(peers: pairedPeers.peers.map(\.peerID))
+        dialCursor.reset()
         for task in retryTasks.values { task.cancel() }
         retryTasks = [:]
         let closedPeers = Array(sessions.keys)
@@ -262,15 +265,25 @@ final class SyncSessionManager {
     }
 
     private func maybeDial(_ peerID: String) {
-        guard let endpoint = dialEndpoint(for: peerID), pairedPeers.psk(for: peerID) != nil else { return }
-        guard case let .start(generation) = slots.requestDial(peerID, endpoint: "\(endpoint)", now: now) else {
+        guard dialEndpoint(for: peerID) != nil, pairedPeers.psk(for: peerID) != nil else { return }
+        guard case let .start(generation) = slots.requestDial(peerID, endpoint: discoveryKey(for: peerID), now: now) else {
             return
         }
         startDial(peerID, generation: generation)
     }
 
+    private func dialCandidates(for peerID: String) -> [NWEndpoint] {
+        DialCandidateCursor.ordered([latestEndpoints[peerID], manualEndpoint(for: peerID)])
+    }
+
     private func dialEndpoint(for peerID: String) -> NWEndpoint? {
-        latestEndpoints[peerID] ?? manualEndpoint(for: peerID)
+        dialCursor.pick(peerID, from: dialCandidates(for: peerID))
+    }
+
+    /// 給 slot 判斷「是不是探索到新端點」的鍵：只看探索結果，不看輪替到哪一個。
+    /// 否則輪替本身會被當成新端點而跳過退避，在兩個候選之間來回秒撥。
+    private func discoveryKey(for peerID: String) -> String? {
+        (latestEndpoints[peerID] ?? manualEndpoint(for: peerID)).map { "\($0)" }
     }
 
     /// slot 已經給了這件工作的 generation；這裡只負責真的撥出去。
@@ -281,7 +294,7 @@ final class SyncSessionManager {
             return
         }
         guard pendingHandshakes.count < Self.maxPendingHandshakes else {
-            attemptFailed(peerID, generation: generation, reason: "握手中的連線已達上限")
+            attemptFailed(peerID, generation: generation, reason: "握手中的連線已達上限", rotateEndpoint: false)
             return
         }
         let connection = PeerConnection.dial(
@@ -308,8 +321,12 @@ final class SyncSessionManager {
         return .hostPort(host: NWEndpoint.Host(String(parts[0])), port: port)
     }
 
-    private func attemptFailed(_ peerID: String, generation: UInt64, reason: String) {
+    private func attemptFailed(_ peerID: String, generation: UInt64, reason: String, rotateEndpoint: Bool = true) {
         if let delay = slots.attemptFailed(peerID, generation: generation, now: now, random: .random(in: 0..<1)) {
+            if rotateEndpoint, dialCandidates(for: peerID).count > 1 {
+                dialCursor.failed(peerID)
+                Self.log.notice("連線 \(peerID.prefix(8)) 下次改試 \(String(describing: dialEndpoint(for: peerID)))")
+            }
             Self.log.notice("連線 \(peerID.prefix(8)) 未建立（\(reason)），\(OperationMetrics.format(delay)) 後重撥")
             scheduleRetry(peerID, generation: generation, after: delay)
         }
@@ -449,6 +466,7 @@ final class SyncSessionManager {
         ) else { return nil }
         retryTasks.removeValue(forKey: peerID)?.cancel()
         sessions[peerID] = Session(connection: connection, generation: generation)
+        dialCursor.succeeded(peerID)
         lastHeard[peerID] = ContinuousClock.now
         updateActivityKeeper()
         refreshState(peerID)
