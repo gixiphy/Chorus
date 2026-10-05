@@ -37,9 +37,8 @@ final class ControlHTTPServer {
     @ObservationIgnored private unowned let executor: AutomationExecutor
     @ObservationIgnored private unowned let events: AutomationEventHub
     @ObservationIgnored private unowned let scenes: SceneStore
-    /// 診斷報告來源（AppState 提供；這裡不該知道同步與音訊的內部）。
-    /// nil ＝ 還沒接上，`/v1/doctor` 回 503。
-    @ObservationIgnored private var doctorReport: (@MainActor () -> DoctorReport)?
+    /// nil（還沒接上）或來源回傳 nil（AppState 已釋放）時，`/v1/doctor` 回 503。
+    @ObservationIgnored private var doctorReport: (@MainActor () -> DoctorReport?)?
     /// 連線層（背景 queue）。nil ＝ 介面沒開。
     @ObservationIgnored private var transport: AutomationHTTPTransport?
     @ObservationIgnored private var eventSubscription: UUID?
@@ -65,7 +64,7 @@ final class ControlHTTPServer {
     }
 
     /// AppState 的 init 要到尾段才能捕捉 self，所以來源用設定的而不是 init 參數。
-    func setDoctorSource(_ source: @escaping @MainActor () -> DoctorReport) {
+    func setDoctorSource(_ source: @escaping @MainActor () -> DoctorReport?) {
         doctorReport = source
     }
 
@@ -249,7 +248,7 @@ final class ControlHTTPServer {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
-        guard let doctorReport, let data = try? encoder.encode(doctorReport()) else { return Self.unavailable }
+        guard let report = doctorReport?(), let data = try? encoder.encode(report) else { return Self.unavailable }
         return .init(status: 200, json: String(decoding: data, as: UTF8.self))
     }
 
