@@ -135,6 +135,8 @@ final class ControlCoordinator {
     // MARK: - 遠端訊息
 
     private func handleEnvelope(peerID: String, _ envelope: Envelope) {
+        // 權限關卡在最前面：之後的每一條分支（含逐裝置那組）都已經是被允許的
+        guard admit(envelope.msg, from: peerID) else { return }
         let now = Self.wallNowMicros()
         // 逐裝置目錄那一組先攔：它們與下面的整機同步是兩套語意，
         // 混在同一個 switch 裡只會讓「哪些會進 LWW」越來越難看出來。

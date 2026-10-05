@@ -75,6 +75,7 @@ private struct PairedPeerRow: View {
                     .monospaced()
                     .foregroundStyle(.secondary)
                 Spacer()
+                PeerPermissionsMenu(peer: peer)
                 Text(statusLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -223,5 +224,70 @@ private struct PairedPeerRow: View {
         case .connecting: String(localized: "連線中")
         default: String(localized: "離線")
         }
+    }
+}
+
+/// 這台 Mac 允許對方做什麼。改動立即生效：下一則入站訊息就會套用新政策。
+private struct PeerPermissionsMenu: View {
+    @Environment(AppState.self) private var appState
+    let peer: PairedPeer
+
+    private var policy: PeerPermissionPolicy { peer.permissions ?? .full }
+
+    var body: some View {
+        Menu {
+            Toggle("接受同步（亮度、音量跟著對方變）", isOn: syncBinding)
+            Section("允許遙控") {
+                Toggle("亮度與對比", isOn: binding(.brightness))
+                Toggle("音量與靜音", isOn: binding(.audio))
+                Toggle("螢幕電源與輸入源", isOn: binding(.displayPower))
+                Toggle("防睡眠", isOn: binding(.keepAwake))
+            }
+            Divider()
+            Button("完整權限") { save(.full) }
+            Button("只能查看") { save(.viewOnly) }
+        } label: {
+            Label(summary, systemImage: "lock.shield")
+                .font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(String(localized: "這台 Mac 允許「\(peer.deviceName)」做什麼"))
+    }
+
+    private var summary: String {
+        if policy == .full { return String(localized: "完整權限") }
+        if policy == .viewOnly { return String(localized: "只能查看") }
+        return String(localized: "部分權限")
+    }
+
+    private var syncBinding: Binding<Bool> {
+        Binding(
+            get: { policy.acceptsSync },
+            set: { isOn in
+                var updated = policy
+                updated.acceptsSync = isOn
+                save(updated)
+            }
+        )
+    }
+
+    private func binding(_ control: PeerPermissionPolicy.Control) -> Binding<Bool> {
+        Binding(
+            get: { policy.allowedControls.contains(control) },
+            set: { isOn in
+                var updated = policy
+                if isOn {
+                    updated.allowedControls.insert(control)
+                } else {
+                    updated.allowedControls.remove(control)
+                }
+                save(updated)
+            }
+        )
+    }
+
+    private func save(_ updated: PeerPermissionPolicy) {
+        appState.pairedPeers.setPermissions(updated, for: peer.peerID)
     }
 }

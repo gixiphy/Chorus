@@ -1,3 +1,4 @@
+import ChorusCore
 import Foundation
 import Observation
 
@@ -11,6 +12,8 @@ struct PairedPeer: Codable, Identifiable, Sendable, Equatable {
     var deviceKind: String?
     /// 能力清單（如 ["als","display","audio"]），配對與每次 hello 時更新。
     var capabilities: [String]?
+    /// 這台 Mac 允許對方做什麼。nil ＝ 舊記錄 → 完整權限（與升級前一致）。
+    var permissions: PeerPermissionPolicy?
 
     var id: String { peerID }
 
@@ -20,7 +23,8 @@ struct PairedPeer: Codable, Identifiable, Sendable, Equatable {
         pairedAt: Date,
         manualEndpoint: String? = nil,
         deviceKind: String? = nil,
-        capabilities: [String]? = nil
+        capabilities: [String]? = nil,
+        permissions: PeerPermissionPolicy? = nil
     ) {
         self.peerID = peerID
         self.deviceName = deviceName
@@ -28,6 +32,7 @@ struct PairedPeer: Codable, Identifiable, Sendable, Equatable {
         self.manualEndpoint = manualEndpoint
         self.deviceKind = deviceKind
         self.capabilities = capabilities
+        self.permissions = permissions
     }
 }
 
@@ -60,8 +65,13 @@ final class PairedPeersStore {
 
     func add(_ peer: PairedPeer, psk: Data) {
         keychain.set(psk, forAccount: Self.pskAccountPrefix + peer.peerID)
+        var record = peer
+        // 重新配對（換金鑰）不可以把使用者設的限制悄悄重設成完整權限
+        if record.permissions == nil {
+            record.permissions = peers.first { $0.peerID == peer.peerID }?.permissions
+        }
         peers.removeAll { $0.peerID == peer.peerID }
-        peers.append(peer)
+        peers.append(record)
         persist()
     }
 
@@ -73,6 +83,20 @@ final class PairedPeersStore {
 
     func isPaired(_ peerID: String) -> Bool {
         peers.contains { $0.peerID == peerID }
+    }
+
+    /// 接收端判斷用。未配對的裝置（正常不會發生：沒有 PSK 連不進來）一律只能查看。
+    func policy(for peerID: String) -> PeerPermissionPolicy {
+        guard let peer = peers.first(where: { $0.peerID == peerID }) else { return .viewOnly }
+        return peer.permissions ?? .full
+    }
+
+    func setPermissions(_ policy: PeerPermissionPolicy, for peerID: String) {
+        guard let index = peers.firstIndex(where: { $0.peerID == peerID }),
+              peers[index].permissions != policy
+        else { return }
+        peers[index].permissions = policy
+        persist()
     }
 
     /// 每次 sync hello 帶來的最新裝置資訊（名稱／類型／能力）寫回記錄。
