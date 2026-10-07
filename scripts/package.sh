@@ -47,19 +47,23 @@ sed -i '' "s/CFBundleVersion: \".*\"/CFBundleVersion: \"$NEXT_BUILD\"/" project.
 echo "▸ 版本 $VERSION (build $NEXT_BUILD)"
 
 xcodegen generate > /dev/null
-rm -rf dist/Chorus.xcarchive
+BUILD_CACHE="$HOME/Library/Caches/DevBuild"
+ARCHIVE="$BUILD_CACHE/Chorus_Archive/Chorus.xcarchive"
+mkdir -p "$BUILD_CACHE/Chorus_Archive" "$BUILD_CACHE/Chorus_DerivedData"
+rm -rf "$ARCHIVE"
 xcodebuild -project Chorus.xcodeproj -scheme Chorus -configuration Release \
-  archive -archivePath dist/Chorus.xcarchive 2>&1 | grep -E "error:|ARCHIVE" || true
+  -derivedDataPath "$BUILD_CACHE/Chorus_DerivedData" \
+  archive -archivePath "$ARCHIVE" 2>&1 | xcsift -f toon -w -E
 
-[[ -d dist/Chorus.xcarchive/Products/Applications/Chorus.app ]] || { echo "archive 失敗" >&2; exit 1; }
+[[ -d "$ARCHIVE/Products/Applications/Chorus.app" ]] || { echo "archive 失敗" >&2; exit 1; }
 
 # 保留 dSYM：archive 每次都會被砍掉、dist/ 又不進版控，之前發出去的版本一份符號都沒留，
 # 使用者送來的 crash 報告完全對不回原始碼。zip 檔名帶版本與 build，發 GitHub Release 時一起附上。
 mkdir -p dist/dsyms
 DSYM_ZIP="dist/dsyms/Chorus-$VERSION-b$NEXT_BUILD.dSYMs.zip"
-if [[ -d dist/Chorus.xcarchive/dSYMs ]]; then
+if [[ -d "$ARCHIVE/dSYMs" ]]; then
   rm -f "$DSYM_ZIP"
-  ditto -c -k --keepParent dist/Chorus.xcarchive/dSYMs "$DSYM_ZIP"
+  ditto -c -k --keepParent "$ARCHIVE/dSYMs" "$DSYM_ZIP"
   echo "▸ 已保存 dSYM：$DSYM_ZIP（發 Release 時請一起附上）"
 else
   echo "⚠︎ archive 裡沒有 dSYMs 目錄，這版無法事後符號化" >&2
@@ -76,7 +80,7 @@ rm -f dist/Chorus-*.zip(N)   # (N) = 沒有符合的檔案就當空的（zsh 預
 WORK=$(mktemp -d /tmp/chorus-pkg.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 APP="$WORK/Chorus.app"
-ditto dist/Chorus.xcarchive/Products/Applications/Chorus.app "$APP"
+ditto "$ARCHIVE/Products/Applications/Chorus.app" "$APP"
 # 建置產物的權限可能不是 world-readable；內嵌的 HAL driver 由 _coreaudiod 讀取，
 # 少了 go+r 安裝後就載不進去。在打包前先正規化。
 chmod -R go+rX "$APP"
