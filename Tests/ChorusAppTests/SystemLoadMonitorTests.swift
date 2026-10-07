@@ -1,3 +1,4 @@
+import AppKit
 import ChorusCore
 import Foundation
 import Testing
@@ -124,6 +125,64 @@ struct KeepAwakeLoadModeTests {
         }
         func isActive(_ id: IOPMAssertionID) -> Bool { active[id] != nil }
         func release(_ id: IOPMAssertionID) { active.removeValue(forKey: id) }
+    }
+
+    @Test("Sleep and wake restart load sampling and reacquire display protection")
+    func loadModeResumesAfterSleep() async throws {
+        let center = NotificationCenter()
+        let assertions = FakeAssertions()
+        let sampler = FakeSystemLoadSampler()
+        let clock = ManualDoubleClock(0)
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "load-wake-\(UUID().uuidString)")!)
+        let monitor = SystemLoadMonitor(
+            sampler: sampler, now: { clock.time }, pollInterval: .milliseconds(5)
+        )
+        let controller = KeepAwakeController(
+            settings: settings, displayManager: DisplayManager(settings: settings),
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            systemLoad: monitor, assertions: assertions, now: { clock.time },
+            workspaceNotifications: center
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileSystemBusy)
+        let initialDeadline = ContinuousClock.now + .seconds(2)
+        while await sampler.sampleCount == 0, ContinuousClock.now < initialDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(await sampler.sampleCount == 1)
+
+        center.post(name: NSWorkspace.willSleepNotification, object: nil)
+        #expect(!controller.isHolding)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        let wakeDeadline = ContinuousClock.now + .seconds(2)
+        while await sampler.sampleCount < 2, ContinuousClock.now < wakeDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(await sampler.sampleCount == 2)
+
+        for time in [100.0, 105, 110, 115] {
+            clock.time = time
+            await sampler.enqueue(SystemLoadSample(
+                sampledAt: time, cpu: .value(90), gpu: .unsupported, network: .value(0)
+            ))
+            let deadline = ContinuousClock.now + .seconds(2)
+            while monitor.latestSample?.sampledAt != time, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            try #require(monitor.latestSample?.sampledAt == time)
+        }
+        #expect(controller.isHolding)
+        #expect(assertions.active.values.contains(kIOPMAssertionTypePreventUserIdleDisplaySleep))
+
+        controller.shutdown()
+        let count = await sampler.sampleCount
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(await sampler.sampleCount == count)
+        #expect(assertions.active.isEmpty)
+        await sampler.resumePending(with: SystemLoadSample(
+            sampledAt: 120, cpu: .value(90), gpu: .unsupported, network: .value(0)
+        ))
     }
 
     @Test func loadModeHoldsAfterQualificationAndDropsOnOff() async {

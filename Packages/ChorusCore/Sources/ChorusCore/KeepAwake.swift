@@ -17,14 +17,13 @@ public enum KeepAwakeMode: Sendable, Equatable, Codable, Hashable {
     /// 有 AI agent 在工作時才防睡眠——agent 收工即自動失效
     /// （學 Orca 的 "Keep computer awake: Agent"）。
     ///
-    /// 這一檔與其他檔的**防的東西不一樣**：擋的是系統待機而不是螢幕待機。
-    /// agent 跑整夜時要的是機器別睡，螢幕暗掉反而正好。見 `assertionPlan`。
+    /// 同時保持螢幕與系統清醒，避免工作被待機中斷。見 `assertionPlan`。
     case whileAgentsWorking
     /// 整機 CPU／GPU／網路持續高負載時才防睡眠——負載消退後自動解除。
     case whileSystemBusy
 }
 
-/// 持有期間各擋哪一種待機。兩個旗標互相獨立：Agent 模式只擋系統待機，
+/// 持有期間各擋哪一種待機。Agent 模式同時擋螢幕與系統待機，
 /// 其餘模式一定擋螢幕待機、系統待機看設定。
 public struct KeepAwakeAssertionPlan: Sendable, Equatable, Hashable {
     public let preventsDisplaySleep: Bool
@@ -82,16 +81,15 @@ public enum KeepAwakePlanner {
 
     /// 這個模式在持有期間各要擋哪一種待機。
     ///
-    /// Agent 模式是唯一的例外：擋系統待機、**不擋**螢幕待機，而且不吃
-    /// 「連系統待機一起擋」那個開關——它本來就是為了那件事存在的。
-    /// 其餘模式維持原本語意：擋螢幕待機，系統待機看開關。
+    /// 所有模式都擋螢幕待機。Agent 模式固定加擋系統待機，
+    /// 其餘模式的系統待機保護依「連系統待機一起擋」開關決定。
     public static func assertionPlan(
         mode: KeepAwakeMode,
         alsoPreventSystemSleep: Bool
     ) -> KeepAwakeAssertionPlan {
         switch mode {
         case .whileAgentsWorking:
-            KeepAwakeAssertionPlan(preventsDisplaySleep: false, preventsSystemSleep: true)
+            KeepAwakeAssertionPlan(preventsDisplaySleep: true, preventsSystemSleep: true)
         case .off, .duration, .indefinite, .whileDisplayConnected, .whileAppRunning, .whileSystemBusy:
             KeepAwakeAssertionPlan(
                 preventsDisplaySleep: true,

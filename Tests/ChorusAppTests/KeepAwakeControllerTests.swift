@@ -180,4 +180,48 @@ struct KeepAwakeControllerTests {
             #expect(!assertions.isActive(id))
         }
     }
+
+    @Test("Working agents require display protection before reporting success and release it when idle")
+    func agentDisplayProtection() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "agent-display-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let log = root.appending(path: "session.jsonl")
+        try Data("{}\n".utf8).write(to: log)
+        let monitor = AgentActivityMonitor(
+            sources: [ResolvedAgentLogSource(engine: "Codex", root: root)],
+            processSampler: nil, pollInterval: .seconds(3600)
+        )
+        let assertions = FakeAssertions()
+        assertions.failingTypes = [kIOPMAssertionTypePreventUserIdleDisplaySleep]
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "agent-display-\(UUID().uuidString)")!)
+        let controller = KeepAwakeController(
+            settings: settings, displayManager: DisplayManager(settings: settings),
+            agentActivity: monitor, assertions: assertions,
+            workspaceNotifications: NotificationCenter()
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !monitor.isWorking, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(monitor.isWorking)
+        #expect(!controller.isHolding)
+        #expect(controller.activationFailed)
+
+        assertions.failingTypes = []
+        controller.reevaluate()
+        #expect(controller.isHolding)
+        #expect(!controller.activationFailed)
+        #expect(Set(assertions.active.values) == [
+            kIOPMAssertionTypePreventUserIdleDisplaySleep,
+            kIOPMAssertionTypePreventUserIdleSystemSleep,
+        ])
+
+        try FileManager.default.removeItem(at: log)
+        await monitor.refresh()
+        #expect(!controller.isHolding)
+        #expect(assertions.active.isEmpty)
+    }
 }

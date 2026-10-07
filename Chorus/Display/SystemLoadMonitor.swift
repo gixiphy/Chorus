@@ -84,10 +84,11 @@ final class SystemLoadMonitor {
         apply(sample: sample, now: now)
     }
 
-    /// After sleep: clear baselines / latches and restart sampling if still armed.
+    /// The controller calls this only while load mode is armed. Sleep has already
+    /// stopped polling, so `running` cannot be used as the condition for resuming.
     func resetAfterWake() {
-        guard running else { return }
         let config = configuration
+        stop()
         start(configuration: config)
     }
 

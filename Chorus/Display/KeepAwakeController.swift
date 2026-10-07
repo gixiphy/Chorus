@@ -45,8 +45,8 @@ struct SystemKeepAwakeAssertions: KeepAwakeAsserting {
 /// - 加擋「系統待機」（`PreventUserIdleSystemSleep`）是額外選項，給長時間
 ///   下載／編譯的情境。
 ///
-/// Agent 模式（M9-2）是唯一反過來的一檔：只擋系統待機、不擋螢幕待機。
-/// agent 跑整夜時要的是機器別睡，螢幕暗掉正好。哪一檔擋什麼由
+/// Agent 模式（M9-2）固定同時擋螢幕與系統待機，避免工作被待機中斷。
+/// 哪一檔擋什麼由
 /// `KeepAwakePlanner.assertionPlan` 決定，不在這裡分支。
 ///
 /// assertion 是 process 綁定的：Chorus 結束時核心自動釋放，
@@ -105,6 +105,7 @@ final class KeepAwakeController {
     @ObservationIgnored private var startedAt: Double?
     @ObservationIgnored private let assertions: any KeepAwakeAsserting
     @ObservationIgnored private let now: () -> Double
+    @ObservationIgnored private let workspaceNotifications: NotificationCenter
     @ObservationIgnored private var displayAssertion: IOPMAssertionID?
     @ObservationIgnored private var systemAssertion: IOPMAssertionID?
     @ObservationIgnored private var tickTask: Task<Void, Never>?
@@ -120,7 +121,8 @@ final class KeepAwakeController {
         agentActivity: AgentActivityMonitor = AgentActivityMonitor(),
         systemLoad: SystemLoadMonitor = SystemLoadMonitor(),
         assertions: any KeepAwakeAsserting = SystemKeepAwakeAssertions(),
-        now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }
+        now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
+        workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter
     ) {
         self.settings = settings
         self.displayManager = displayManager
@@ -128,6 +130,7 @@ final class KeepAwakeController {
         self.systemLoad = systemLoad
         self.assertions = assertions
         self.now = now
+        self.workspaceNotifications = workspaceNotifications
         alsoPreventSystemSleep = settings.keepAwakePreventsSystemSleep
         agentProcessDetectionEnabled = settings.keepAwakeProcessDetection
         agentCustomProcessNames = settings.keepAwakeCustomProcessNames
@@ -302,7 +305,7 @@ final class KeepAwakeController {
     }
 
     private func updateWakeObservers() {
-        let center = NSWorkspace.shared.notificationCenter
+        let center = workspaceNotifications
         wakeObservers.forEach { center.removeObserver($0) }
         wakeObservers = []
         if let sleepObserver {

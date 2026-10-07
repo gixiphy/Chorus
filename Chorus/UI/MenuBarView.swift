@@ -350,7 +350,7 @@ private struct KeepAwakeRow: View {
         }
     }
 
-    /// Agent 模式擋的不是螢幕待機，杯子圖示會誤導；持有時改用機器人。
+    /// Agent 模式用 CPU 圖示辨識觸發來源，填滿代表保護已生效。
     private var iconName: String {
         let keepAwake = appState.keepAwake
         if keepAwake.mode == .whileAgentsWorking {
@@ -403,7 +403,7 @@ private struct KeepAwakeRow: View {
             guard keepAwake.isHolding else { return String(localized: "沒有 agent 在工作 — 暫停中") }
             let count = String(keepAwake.agentActivity.working.count)
             let sources = engines.joined(separator: "、")
-            return String(localized: "\(count) 個 \(sources) 在工作中 — 系統不待機")
+            return String(localized: "\(count) 個 \(sources) 在工作中 — 螢幕與系統不待機")
         case .whileSystemBusy:
             return SystemLoadStatusFormatter.caption(
                 evaluation: keepAwake.systemLoad.evaluation,

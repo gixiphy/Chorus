@@ -175,7 +175,7 @@ private struct DisplaySettingsTab: View {
                 Text("開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時／有 agent 在工作時／高負載時）在選單列。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("「有 agent 在工作時」不吃上面這個開關：它一律只擋系統待機、不擋螢幕待機——agent 跑整夜時要的是機器別睡，螢幕暗掉正好。已知的 agent 看 session log 是否在寫入；其餘 CLI agent 看有終端機的行程樹 30 秒內是否有 CPU 活動（IDE 內嵌、無終端機的不算）；停手 5 分鐘後放開。")
+                Text("「有 agent 在工作時」一律保持螢幕與系統清醒，不受上面這個開關影響。已知的 agent 看 session log 是否在寫入；其餘 CLI agent 看有終端機的行程樹 30 秒內是否有 CPU 活動（IDE 內嵌、無終端機的不算）；停手 5 分鐘後放開。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 AgentDetectionControls()

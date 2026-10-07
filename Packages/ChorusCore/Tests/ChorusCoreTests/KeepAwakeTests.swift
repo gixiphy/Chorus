@@ -116,12 +116,12 @@ struct KeepAwakeTests {
         ))
     }
 
-    @Test("Agent mode blocks system sleep instead of display sleep, ignoring the toggle")
+    @Test("Agent mode keeps both the display and system awake, ignoring the toggle")
     func agentAssertionPlan() {
         for toggle in [true, false] {
             #expect(
                 KeepAwakePlanner.assertionPlan(mode: .whileAgentsWorking, alsoPreventSystemSleep: toggle)
-                    == KeepAwakeAssertionPlan(preventsDisplaySleep: false, preventsSystemSleep: true)
+                    == KeepAwakeAssertionPlan(preventsDisplaySleep: true, preventsSystemSleep: true)
             )
         }
     }
