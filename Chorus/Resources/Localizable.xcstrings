@@ -1324,6 +1324,22 @@
         }
       }
     },
+    "Chrome 未關閉背景節流 — browser-use 可能變慢" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chrome background throttling is on — browser-use may be slow"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chrome 未关闭背景节流 — browser-use 可能变慢"
+          }
+        }
+      }
+    },
     "DDC" : {
       "localizations" : {
         "en" : {

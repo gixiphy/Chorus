@@ -347,6 +347,13 @@ private struct KeepAwakeRow: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 2)
+            if appState.keepAwake.mode == .whileAgentsWorking,
+               appState.keepAwake.agentActivity.chromiumThrottleWarning {
+                Text("Chrome 未關閉背景節流 — browser-use 可能變慢")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 2)
+            }
         }
     }
 

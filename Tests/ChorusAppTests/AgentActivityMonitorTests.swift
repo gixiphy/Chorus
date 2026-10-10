@@ -58,7 +58,12 @@ struct AgentActivityMonitorTests {
         sampler: (any AgentProcessSampling)? = nil,
         graceSeconds: Double = 300
     ) -> AgentActivityMonitor {
-        AgentActivityMonitor(sources: sources, processSampler: sampler, graceSeconds: graceSeconds)
+        let monitor = AgentActivityMonitor(
+            sources: sources, processSampler: sampler, graceSeconds: graceSeconds
+        )
+        // 單元測試不掃本機 Chrome，避免環境偶發變紅。
+        monitor.chromiumThrottleWarningOverride = false
+        return monitor
     }
 
     // MARK: - 第一層：session log
@@ -261,5 +266,23 @@ struct AgentActivityMonitorTests {
         await monitor.refresh()
         #expect(monitor.working.count == 1)
         #expect(monitor.working.map { URL(fileURLWithPath: $0.id).lastPathComponent } == ["a.jsonl"])
+    }
+
+    @Test("Chromium throttle warning updates on refresh and clears on stop")
+    func chromiumThrottleWarningLifecycle() async {
+        let monitor = AgentActivityMonitor(sources: [], processSampler: nil)
+        monitor.chromiumThrottleWarningOverride = true
+        await monitor.refresh()
+        #expect(monitor.chromiumThrottleWarning)
+
+        monitor.chromiumThrottleWarningOverride = false
+        await monitor.refresh()
+        #expect(!monitor.chromiumThrottleWarning)
+
+        monitor.chromiumThrottleWarningOverride = true
+        await monitor.refresh()
+        #expect(monitor.chromiumThrottleWarning)
+        monitor.stop()
+        #expect(!monitor.chromiumThrottleWarning)
     }
 }

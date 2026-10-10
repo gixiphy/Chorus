@@ -101,4 +101,12 @@ struct AgentProcessScannerTests {
         let snapshot = AgentProcessScanner.collect(records: records, matcher: AgentProcessMatcher())
         #expect(snapshot.samples.map(\.engine).sorted() == ["Claude Code", "Cursor CLI"])
     }
+
+    @Test("Chromium throttle scan ignores synthetic pids with no argv")
+    func chromiumThrottleIgnoresUnreadable() {
+        let records = [
+            Record(pid: 900_040, ppid: 1, comm: "Google Chrome", hasTTY: false),
+        ]
+        #expect(!AgentProcessScanner.chromiumThrottleWarning(records: records))
+    }
 }

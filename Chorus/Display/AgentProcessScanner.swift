@@ -139,6 +139,20 @@ struct AgentProcessScanner: AgentProcessSampling {
         }
     }
 
+    /// 掃描 Chrome／Chromium 主行程，依 `ChromiumThrottlePolicy` 決定要不要警告。
+    nonisolated static func chromiumThrottleWarning(
+        records: [ProcessRecord] = listProcesses()
+    ) -> Bool {
+        var argumentLists: [[String]] = []
+        for record in records where ChromiumThrottlePolicy.isPossibleBrowserComm(record.comm) {
+            guard let args = arguments(pid: record.pid),
+                  ChromiumThrottlePolicy.isBrowserMain(arguments: args)
+            else { continue }
+            argumentLists.append(args)
+        }
+        return ChromiumThrottlePolicy.shouldWarn(processArgumentLists: argumentLists)
+    }
+
     /// 這個行程的 argv。別人的行程、zombie、剛結束的都回 nil。
     nonisolated static func arguments(pid: Int32) -> [String]? {
         guard argumentsMax > 0 else { return nil }

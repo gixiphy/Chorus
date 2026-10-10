@@ -21,6 +21,10 @@ final class AgentActivityMonitor {
     private(set) var working: [AgentSessionSample] = []
     var isWorking: Bool { !working.isEmpty }
 
+    /// Chrome／Chromium 在跑但沒帶反節流 flag——browser-use 類 agent 可能變慢。
+    /// 只在 Agent 模式輪詢時更新；離開模式清掉。
+    private(set) var chromiumThrottleWarning = false
+
     /// 工作中的 session 是哪幾支 agent 的（選單說明用，去重、保持出現順序）。
     var engines: [String] {
         var seen = Set<String>()
@@ -40,6 +44,8 @@ final class AgentActivityMonitor {
     @ObservationIgnored private var processState = AgentProcessActivityPlanner.State()
     @ObservationIgnored private var matcher = AgentProcessMatcher()
     @ObservationIgnored private var processDetectionEnabled = true
+    /// 測試縫：非 nil 時略過真掃描，直接用這個值。
+    @ObservationIgnored var chromiumThrottleWarningOverride: Bool?
 
     /// 第一層掃描超過這個時間就寫一行 `.notice` 並點名最慢的根——
     /// 這是常駐成本，變慢了要看得到，不能只活在 `.debug` 裡。
@@ -82,6 +88,7 @@ final class AgentActivityMonitor {
         pollTask?.cancel()
         pollTask = nil
         working = []
+        chromiumThrottleWarning = false
         processState = AgentProcessActivityPlanner.State()
     }
 
@@ -105,9 +112,14 @@ final class AgentActivityMonitor {
         let sampler = processDetectionEnabled ? processSampler : nil
         let matcher = matcher
         // 兩層互不相干：目錄 IO 與 syscall 同時跑，一輪的長度是慢的那一半。
+        // Chromium 節流檢查獨立、便宜，跟它們一起跑。
         async let logScan = Self.scanLogs(sources)
         async let processScan = Self.scanProcesses(sampler, matcher: matcher)
-        let (logs, processes) = await (logScan, processScan)
+        async let chromiumWarn = Self.scanChromiumThrottle(
+            override: chromiumThrottleWarningOverride
+        )
+        let (logs, processes, warn) = await (logScan, processScan, chromiumWarn)
+        chromiumThrottleWarning = warn
 
         var processSamples: [AgentSessionSample] = []
         if let snapshot = processes.snapshot {
@@ -265,6 +277,13 @@ final class AgentActivityMonitor {
         let started = ContinuousClock.now
         let snapshot = await sampler.snapshot(matcher: matcher)
         return ProcessScan(snapshot: snapshot, elapsed: ContinuousClock.now - started)
+    }
+
+    private static func scanChromiumThrottle(override: Bool?) async -> Bool {
+        if let override { return override }
+        return await Task.detached(priority: .utility) {
+            AgentProcessScanner.chromiumThrottleWarning()
+        }.value
     }
 }
 
