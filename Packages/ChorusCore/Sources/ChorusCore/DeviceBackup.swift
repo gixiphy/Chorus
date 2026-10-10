@@ -102,6 +102,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
     public var keepAwakeProcessDetection: Bool
     public var keepAwakeCustomProcessNames: [String]
     public var keepAwakeBatteryFloor: KeepAwakeBatteryFloor
+    public var keepAwakeAgentIdleBlankEnabled: Bool
+    public var keepAwakeAgentIdleMinutes: KeepAwakeAgentIdleMinutes
     public var mediaKeyCaptureEnabled: Bool
     public var syncBrightnessEnabled: Bool
     public var syncVolumeEnabled: Bool
@@ -153,6 +155,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         keepAwakeProcessDetection: Bool = true,
         keepAwakeCustomProcessNames: [String] = [],
         keepAwakeBatteryFloor: KeepAwakeBatteryFloor = .default,
+        keepAwakeAgentIdleBlankEnabled: Bool = false,
+        keepAwakeAgentIdleMinutes: KeepAwakeAgentIdleMinutes = .default,
         mediaKeyCaptureEnabled: Bool = false,
         syncBrightnessEnabled: Bool = true,
         syncVolumeEnabled: Bool = true,
@@ -203,6 +207,8 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         self.keepAwakeProcessDetection = keepAwakeProcessDetection
         self.keepAwakeCustomProcessNames = keepAwakeCustomProcessNames.sorted()
         self.keepAwakeBatteryFloor = keepAwakeBatteryFloor
+        self.keepAwakeAgentIdleBlankEnabled = keepAwakeAgentIdleBlankEnabled
+        self.keepAwakeAgentIdleMinutes = keepAwakeAgentIdleMinutes
         self.mediaKeyCaptureEnabled = mediaKeyCaptureEnabled
         self.syncBrightnessEnabled = syncBrightnessEnabled
         self.syncVolumeEnabled = syncVolumeEnabled
@@ -269,6 +275,10 @@ public struct DeviceBackup: VersionedSnapshot, Equatable {
         keepAwakeCustomProcessNames = try list(.keepAwakeCustomProcessNames)
         keepAwakeBatteryFloor = try c.decodeIfPresent(
             KeepAwakeBatteryFloor.self, forKey: .keepAwakeBatteryFloor) ?? .default
+        keepAwakeAgentIdleBlankEnabled = try c.decodeIfPresent(
+            Bool.self, forKey: .keepAwakeAgentIdleBlankEnabled) ?? false
+        keepAwakeAgentIdleMinutes = try c.decodeIfPresent(
+            KeepAwakeAgentIdleMinutes.self, forKey: .keepAwakeAgentIdleMinutes) ?? .default
         mediaKeyCaptureEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyCaptureEnabled) ?? false
         syncBrightnessEnabled = try c.decodeIfPresent(Bool.self, forKey: .syncBrightnessEnabled) ?? true
         syncVolumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .syncVolumeEnabled) ?? true
@@ -335,6 +345,7 @@ public enum BackupPortability {
         // 只有在兩者都空的時候才真的把模式打開。
         "keepAwakeAgentMode", "keepAwakeProcessDetection", "keepAwakeCustomProcessNames",
         "keepAwakeBatteryFloor",
+        "keepAwakeAgentIdleBlankEnabled", "keepAwakeAgentIdleMinutes",
         "keepAwakeSystemLoadConfiguration",
         "mediaKeyCaptureEnabled",
         "syncBrightnessEnabled", "syncVolumeEnabled",

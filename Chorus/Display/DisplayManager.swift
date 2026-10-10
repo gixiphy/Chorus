@@ -55,6 +55,10 @@ final class DisplayManager {
     /// `displays` 刪掉——電源鈕跟著消失，使用者再也開不回來（只能結束 App
     /// 靠 kCGConfigureForAppOnly 還原）。refresh 時一律補回清單。
     @ObservationIgnored private var poweredOffModels: [String: DisplayModel] = [:]
+    /// Agent 閒置熄屏關掉的顯示器。恢復時只開這些，不碰使用者手動關掉的。
+    @ObservationIgnored private var idleOffUUIDs: Set<String> = []
+    /// 每次熄屏／恢復都 +1；遲到的非同步動作看到世代變了就丟掉。
+    @ObservationIgnored private var idleBlankGeneration: UInt64 = 0
 
     init(
         settings: SettingsStore,
@@ -358,7 +362,7 @@ final class DisplayManager {
                 supportsDDCPower: model.supportsDDCPower,
                 supportsSoftDisconnect: softDisconnect.isAvailable,
                 isOnlyActiveDisplay: isOnly
-            ))
+            ), purpose: .user)
         }
         // 內建排最前，其餘依名稱
         models.sort { lhs, rhs in
@@ -512,6 +516,9 @@ final class DisplayManager {
     private func apply(_ model: DisplayModel, source: BrightnessReadSource = .localWrite) {
         let token = OperationMetrics.shared.begin("display.brightness.apply.\(source.rawValue)")
         defer { OperationMetrics.shared.end(token) }
+        // 關機中不寫硬體亮度：DDC 螢幕收到亮度寫入可能被喚醒；
+        // gamma 雖有 blackedOut 擋住，但這裡一併跳過，開回來時由 powerOn → apply 寫回。
+        guard !model.isPoweredOff else { return }
         let output = pipeline(for: model).map(
             slider: model.brightness,
             hasHardwareControl: model.hasHardwareControl
@@ -718,9 +725,67 @@ final class DisplayManager {
         if !on, configurationController?.activeDisplayUUID == model.uuid {
             configurationController?.abortForEmergencyOrQuit(reason: .cancelled)
         }
+        // 使用者手動開回來的，從閒置熄屏所有權拿掉，避免之後 restore 再動它。
+        if on { idleOffUUIDs.remove(model.uuid) }
         ChorusLog.display.notice("螢幕電源 \(on ? "開" : "關")：\(model.name) layer=\(model.powerLayer)")
         if on { powerOn(model) } else { powerOff(model) }
     }
+
+    /// Agent 閒置熄屏：關掉目前開著的螢幕。不用 soft-disconnect（會搬視窗）。
+    /// 回傳這次實際關掉的 UUID；已關的不碰。
+    @discardableResult
+    func blankForIdle() -> Set<String> {
+        idleBlankGeneration &+= 1
+        let generation = idleBlankGeneration
+        var blanked: Set<String> = []
+        let active = displays.filter { !$0.isPoweredOff }
+        let isOnly = active.count <= 1
+        for model in active {
+            guard generation == idleBlankGeneration else { break }
+            model.powerLayer = DisplayPowerPlanner.layer(for: DisplayPowerCapability(
+                supportsDDCPower: model.supportsDDCPower,
+                supportsSoftDisconnect: softDisconnect.isAvailable,
+                isOnlyActiveDisplay: isOnly
+            ), purpose: .idle)
+            powerOff(model)
+            blanked.insert(model.uuid)
+        }
+        idleOffUUIDs.formUnion(blanked)
+        if !blanked.isEmpty {
+            ChorusLog.display.notice("Agent 閒置熄屏：\(blanked.count) 台")
+        }
+        return blanked
+    }
+
+    /// 只開回閒置熄屏關掉的螢幕；使用者手動關掉的不碰。
+    func restoreIdleBlank() {
+        idleBlankGeneration &+= 1
+        let owned = idleOffUUIDs
+        idleOffUUIDs = []
+        guard !owned.isEmpty else { return }
+        var restored = 0
+        for uuid in owned {
+            if let model = displays.first(where: { $0.uuid == uuid }), model.isPoweredOff {
+                powerOn(model)
+                restored += 1
+            } else if let model = poweredOffModels[uuid] {
+                powerOn(model)
+                restored += 1
+            }
+        }
+        if restored > 0 {
+            ChorusLog.display.notice("Agent 閒置熄屏復原：\(restored) 台")
+        }
+    }
+
+    /// 測試縫：目前閒置熄屏擁有的 UUID。
+    var idleBlankOwnedUUIDsForTesting: Set<String> { idleOffUUIDs }
+
+    /// 測試縫：推進世代，模擬「恢復之後遲到的熄屏回呼」。
+    func bumpIdleBlankGenerationForTesting() { idleBlankGeneration &+= 1 }
+
+    /// 測試縫：若世代已變，blank 中途會停下來。
+    var idleBlankGenerationForTesting: UInt64 { idleBlankGeneration }
 
     /// 遙控指定顯示器（UUID 不存在時 no-op）。**不**觸發廣播。
     func applyDisplayPower(_ on: Bool, toUUID uuid: String) {
@@ -743,6 +808,8 @@ final class DisplayManager {
     @discardableResult
     func restoreAllDisplayPower() -> Int {
         configurationController?.abortForEmergencyOrQuit(reason: .supersededByEmergency)
+        idleBlankGeneration &+= 1
+        idleOffUUIDs = []
         var restored = 0
         var handled: Set<String> = []
         for model in displays where model.isPoweredOff {

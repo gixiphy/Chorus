@@ -52,6 +52,8 @@ struct DeviceBackupTests {
             keepAwakeProcessDetection: !flag,
             keepAwakeCustomProcessNames: ["proc-\(tag)"],
             keepAwakeBatteryFloor: flag ? .percent10 : .percent30,
+            keepAwakeAgentIdleBlankEnabled: flag,
+            keepAwakeAgentIdleMinutes: flag ? .three : .fifteen,
             mediaKeyCaptureEnabled: flag,
             syncBrightnessEnabled: flag,
             syncVolumeEnabled: flag,

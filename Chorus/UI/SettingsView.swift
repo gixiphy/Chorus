@@ -191,6 +191,24 @@ private struct DisplaySettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 AgentDetectionControls()
+                Toggle("Agent 閒置時熄屏", isOn: Binding(
+                    get: { appState.keepAwake.agentIdleBlankEnabled },
+                    set: { appState.keepAwake.agentIdleBlankEnabled = $0 }
+                ))
+                if appState.keepAwake.agentIdleBlankEnabled {
+                    Picker("閒置多久後熄屏", selection: Binding(
+                        get: { appState.keepAwake.agentIdleBlankMinutes },
+                        set: { appState.keepAwake.agentIdleBlankMinutes = $0 }
+                    )) {
+                        Text("3 分鐘").tag(KeepAwakeAgentIdleMinutes.three)
+                        Text("5 分鐘").tag(KeepAwakeAgentIdleMinutes.five)
+                        Text("10 分鐘").tag(KeepAwakeAgentIdleMinutes.ten)
+                        Text("15 分鐘").tag(KeepAwakeAgentIdleMinutes.fifteen)
+                    }
+                }
+                Text("僅在 Agent 模式且正在持有長亮時生效。預設關閉——有人就是要看著畫面。一有滑鼠或鍵盤輸入、agent 收工、或離開 Agent 模式就開回螢幕。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             SystemLoadSettingsSection()
             AmbientCurveSection()

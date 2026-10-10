@@ -9,7 +9,7 @@ struct DisplayPowerTests {
             supportsDDCPower: true,
             supportsSoftDisconnect: true,
             isOnlyActiveDisplay: false
-        ))
+        ), purpose: .user)
         #expect(layer == .ddc)
     }
 
@@ -19,7 +19,7 @@ struct DisplayPowerTests {
             supportsDDCPower: false,
             supportsSoftDisconnect: true,
             isOnlyActiveDisplay: false
-        ))
+        ), purpose: .user)
         #expect(layer == .softDisconnect)
     }
 
@@ -29,7 +29,7 @@ struct DisplayPowerTests {
             supportsDDCPower: false,
             supportsSoftDisconnect: true,
             isOnlyActiveDisplay: true
-        ))
+        ), purpose: .user)
         #expect(layer == .gammaBlackout)
     }
 
@@ -39,7 +39,7 @@ struct DisplayPowerTests {
             supportsDDCPower: true,
             supportsSoftDisconnect: false,
             isOnlyActiveDisplay: true
-        ))
+        ), purpose: .user)
         #expect(layer == .ddc)
     }
 
@@ -49,8 +49,28 @@ struct DisplayPowerTests {
             supportsDDCPower: false,
             supportsSoftDisconnect: false,
             isOnlyActiveDisplay: false
-        ))
+        ), purpose: .user)
         #expect(layer == .gammaBlackout)
+    }
+
+    @Test("Idle blanking never soft-disconnects — that would move windows")
+    func idleNeverSoftDisconnects() {
+        let layer = DisplayPowerPlanner.layer(for: DisplayPowerCapability(
+            supportsDDCPower: false,
+            supportsSoftDisconnect: true,
+            isOnlyActiveDisplay: false
+        ), purpose: .idle)
+        #expect(layer == .gammaBlackout)
+    }
+
+    @Test("Idle blanking still prefers DDC when available")
+    func idleStillPrefersDDC() {
+        let layer = DisplayPowerPlanner.layer(for: DisplayPowerCapability(
+            supportsDDCPower: true,
+            supportsSoftDisconnect: true,
+            isOnlyActiveDisplay: false
+        ), purpose: .idle)
+        #expect(layer == .ddc)
     }
 
     @Test("We never write the hard-off VCP value")

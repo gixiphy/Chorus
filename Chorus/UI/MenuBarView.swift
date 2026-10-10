@@ -415,6 +415,9 @@ private struct KeepAwakeRow: View {
         case .whileAgentsWorking:
             let engines = keepAwake.agentActivity.engines
             guard keepAwake.isHolding else { return String(localized: "沒有 agent 在工作 — 暫停中") }
+            if keepAwake.idleBlanker.isBlanked {
+                return String(localized: "Agent 工作中 — 閒置熄屏")
+            }
             let count = String(keepAwake.agentActivity.working.count)
             let sources = engines.joined(separator: "、")
             return String(localized: "\(count) 個 \(sources) 在工作中 — 螢幕與系統不待機")

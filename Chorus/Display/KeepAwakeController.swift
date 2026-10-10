@@ -74,6 +74,8 @@ final class KeepAwakeController {
     let systemLoad: SystemLoadMonitor
     /// 電量／溫度監聽。只有 `mode != .off` 時啟動。
     let powerSource: any PowerSourceObserving
+    /// Agent 閒置熄屏。只有 Agent 模式會驅動它。
+    let idleBlanker: AgentIdleBlanker
 
     /// 除了螢幕待機，是否連系統待機一起擋。
     var alsoPreventSystemSleep: Bool {
@@ -115,6 +117,24 @@ final class KeepAwakeController {
         }
     }
 
+    /// Agent 模式閒置熄屏（預設關閉）。
+    var agentIdleBlankEnabled: Bool {
+        didSet {
+            guard agentIdleBlankEnabled != oldValue else { return }
+            settings.keepAwakeAgentIdleBlankEnabled = agentIdleBlankEnabled
+            updateIdleBlanker()
+        }
+    }
+
+    /// 閒置多久後熄屏。
+    var agentIdleBlankMinutes: KeepAwakeAgentIdleMinutes {
+        didSet {
+            guard agentIdleBlankMinutes != oldValue else { return }
+            settings.keepAwakeAgentIdleMinutes = agentIdleBlankMinutes
+            updateIdleBlanker()
+        }
+    }
+
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private weak var displayManager: DisplayManager?
     @ObservationIgnored private var startedAt: Double?
@@ -139,6 +159,7 @@ final class KeepAwakeController {
         agentActivity: AgentActivityMonitor = AgentActivityMonitor(),
         systemLoad: SystemLoadMonitor = SystemLoadMonitor(),
         powerSource: any PowerSourceObserving = PowerSourceMonitor(),
+        idleBlanker: AgentIdleBlanker? = nil,
         assertions: any KeepAwakeAsserting = SystemKeepAwakeAssertions(),
         notifier: any KeepAwakeNotifying = KeepAwakeNotifier(),
         now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
@@ -149,6 +170,7 @@ final class KeepAwakeController {
         self.agentActivity = agentActivity
         self.systemLoad = systemLoad
         self.powerSource = powerSource
+        self.idleBlanker = idleBlanker ?? AgentIdleBlanker(displays: displayManager)
         self.assertions = assertions
         self.notifier = notifier
         self.now = now
@@ -157,6 +179,8 @@ final class KeepAwakeController {
         batteryFloor = settings.keepAwakeBatteryFloor
         agentProcessDetectionEnabled = settings.keepAwakeProcessDetection
         agentCustomProcessNames = settings.keepAwakeCustomProcessNames
+        agentIdleBlankEnabled = settings.keepAwakeAgentIdleBlankEnabled
+        agentIdleBlankMinutes = settings.keepAwakeAgentIdleMinutes
         agentActivity.onWorkingChanged = { [weak self] in self?.reevaluate() }
         systemLoad.onDecisionChanged = { [weak self] in self?.reevaluate() }
         powerSource.onChange = { [weak self] in self?.reevaluate() }
@@ -278,6 +302,7 @@ final class KeepAwakeController {
     /// 使用 runtime `activate(.off)`：不清除已保存偏好。
     func shutdown() {
         shutDown = true
+        idleBlanker.stop()
         deactivate()
     }
 
@@ -332,6 +357,19 @@ final class KeepAwakeController {
             && (!plan.preventsDisplaySleep || displayAssertion != nil)
             && (!plan.preventsSystemSleep || systemAssertion != nil)
         activationFailed = shouldHold && !isHolding
+        updateIdleBlanker()
+    }
+
+    private func updateIdleBlanker() {
+        if case .whileAgentsWorking = mode {
+            idleBlanker.configure(
+                enabled: agentIdleBlankEnabled,
+                minutes: agentIdleBlankMinutes
+            )
+            idleBlanker.update(agentModeActive: true, holdingAssertion: isHolding)
+        } else {
+            idleBlanker.stop()
+        }
     }
 
     private func updatePowerFloorState() {

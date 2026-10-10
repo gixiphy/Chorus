@@ -826,6 +826,22 @@
         }
       }
     },
+    "10 分鐘" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "10 Minutes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "10 分钟"
+          }
+        }
+      }
+    },
     "10%" : {
       "localizations" : {
         "en" : {
@@ -838,6 +854,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "10%"
+          }
+        }
+      }
+    },
+    "15 分鐘" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "15 Minutes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "15 分钟"
           }
         }
       }
@@ -890,6 +922,22 @@
         }
       }
     },
+    "3 分鐘" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3 Minutes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3 分钟"
+          }
+        }
+      }
+    },
     "3/4＋1/4 並排" : {
       "localizations" : {
         "en" : {
@@ -934,6 +982,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "30%"
+          }
+        }
+      }
+    },
+    "5 分鐘" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "5 Minutes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "5 分钟"
           }
         }
       }
@@ -998,6 +1062,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Agent"
+          }
+        }
+      }
+    },
+    "Agent 工作中 — 閒置熄屏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agents working — displays blanked for idle"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 工作中 — 闲置熄屏"
+          }
+        }
+      }
+    },
+    "Agent 閒置時熄屏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blank Displays While Agent Idle"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 闲置时熄屏"
           }
         }
       }
@@ -3508,6 +3604,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "传输路径：%@ → %@"
+          }
+        }
+      }
+    },
+    "僅在 Agent 模式且正在持有長亮時生效。預設關閉——有人就是要看著畫面。一有滑鼠或鍵盤輸入、agent 收工、或離開 Agent 模式就開回螢幕。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only while Agent mode is holding keep-awake. Off by default — some people want to watch the screen. Any mouse or keyboard input, agents going idle, or leaving Agent mode turns displays back on."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在 Agent 模式且正在持有常亮时生效。默认关闭——有人就是要看着画面。一有鼠标或键盘输入、agent 收工、或离开 Agent 模式就开回屏幕。"
           }
         }
       }
@@ -15201,6 +15313,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "开关与触发条件（30 分钟／1 小时／无限期／连接某台显示器时／某个 App 运行时／有 agent 在工作时／高负载时）在菜单栏中。"
+          }
+        }
+      }
+    },
+    "閒置多久後熄屏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Idle Timeout"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闲置多久后熄屏"
           }
         }
       }

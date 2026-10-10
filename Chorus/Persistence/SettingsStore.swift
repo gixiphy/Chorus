@@ -70,6 +70,8 @@ final class SettingsStore {
         static let keepAwakeProcessDetection = "chorus.keepAwake.processDetection"
         static let keepAwakeCustomProcessNames = "chorus.keepAwake.customProcessNames"
         static let keepAwakeBatteryFloor = "chorus.keepAwake.batteryFloor"
+        static let keepAwakeAgentIdleBlankEnabled = "chorus.keepAwake.agentIdleBlank"
+        static let keepAwakeAgentIdleMinutes = "chorus.keepAwake.agentIdleMinutes"
         static let virtualTargetUID = "chorus.audio.virtualTargetUID"
         static let automationServer = "chorus.automation.serverEnabled"
         static let automationPort = "chorus.automation.serverPort"
@@ -545,6 +547,16 @@ final class SettingsStore {
         didSet { defaults.set(keepAwakeBatteryFloor.rawValue, forKey: Key.keepAwakeBatteryFloor) }
     }
 
+    /// Agent 模式閒置熄屏（預設關閉）。
+    var keepAwakeAgentIdleBlankEnabled: Bool {
+        didSet { defaults.set(keepAwakeAgentIdleBlankEnabled, forKey: Key.keepAwakeAgentIdleBlankEnabled) }
+    }
+
+    /// 閒置多久後熄屏（分鐘）。
+    var keepAwakeAgentIdleMinutes: KeepAwakeAgentIdleMinutes {
+        didSet { defaults.set(keepAwakeAgentIdleMinutes.rawValue, forKey: Key.keepAwakeAgentIdleMinutes) }
+    }
+
     /// 虛擬輸出裝置的轉送目標：**nil＝自動**（跟著使用中的螢幕走，都沒有就
     /// 回內建輸出）。指定 UID 則固定送那台——但它不在時仍會自動退回，
     /// 不會讓聲音消失；它回來時再接回去。
@@ -736,6 +748,13 @@ final class SettingsStore {
             keepAwakeBatteryFloor = floor
         } else {
             keepAwakeBatteryFloor = .default
+        }
+        keepAwakeAgentIdleBlankEnabled = defaults.bool(forKey: Key.keepAwakeAgentIdleBlankEnabled)
+        if let raw = defaults.object(forKey: Key.keepAwakeAgentIdleMinutes) as? Int,
+           let minutes = KeepAwakeAgentIdleMinutes(rawValue: raw) {
+            keepAwakeAgentIdleMinutes = minutes
+        } else {
+            keepAwakeAgentIdleMinutes = .default
         }
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)

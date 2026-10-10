@@ -32,18 +32,33 @@ public struct DisplayPowerCapability: Sendable, Equatable {
     }
 }
 
+/// 關螢幕的用途。閒置熄屏不走 soft-disconnect（會把視窗搬走）。
+public enum DisplayPowerPurpose: Sendable, Equatable {
+    /// 使用者手動／遙控電源鈕。
+    case user
+    /// Agent 閒置自動熄屏。
+    case idle
+}
+
 public enum DisplayPowerPlanner {
-    /// 依能力挑一層。順序即偏好順序：真省電 > 真關閉 > 保底。
+    /// 依能力與用途挑一層。順序即偏好順序：真省電 > 真關閉 > 保底。
     ///
     /// **唯一一台顯示器時絕不 soft-disconnect**：把僅存的顯示器移出 layout
     /// 會讓使用者完全沒有畫面可操作，連復原手勢的視覺回饋都沒有。
     /// DDC 不受此限——那是外接螢幕的正常用法（Mac mini 單螢幕），
     /// 且螢幕實體電源鍵永遠救得回來。
-    public static func layer(for capability: DisplayPowerCapability) -> DisplayPowerLayer {
+    ///
+    /// `purpose` 不給預設值：漏傳會在編譯期被抓到。
+    public static func layer(
+        for capability: DisplayPowerCapability,
+        purpose: DisplayPowerPurpose
+    ) -> DisplayPowerLayer {
         if capability.supportsDDCPower {
             return .ddc
         }
-        if capability.supportsSoftDisconnect, !capability.isOnlyActiveDisplay {
+        if purpose == .user,
+           capability.supportsSoftDisconnect,
+           !capability.isOnlyActiveDisplay {
             return .softDisconnect
         }
         return .gammaBlackout
