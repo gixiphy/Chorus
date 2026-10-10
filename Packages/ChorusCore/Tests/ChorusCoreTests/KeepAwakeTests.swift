@@ -8,9 +8,8 @@ struct KeepAwakeTests {
     func off() {
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: .off, startedAt: 100, now: 100,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
-        ,
-            systemBusy: false
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
     }
 
@@ -19,15 +18,13 @@ struct KeepAwakeTests {
         let mode = KeepAwakeMode.duration(seconds: 1800)
         #expect(KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 100, now: 100 + 1799,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
-        ,
-            systemBusy: false
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 100, now: 100 + 1800,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
-        ,
-            systemBusy: false
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
     }
 
@@ -35,16 +32,14 @@ struct KeepAwakeTests {
     func indefinite() {
         #expect(KeepAwakePlanner.shouldHoldAssertion(
             mode: .indefinite, startedAt: 0, now: 999_999,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
-        ,
-            systemBusy: false
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
         // 沒有 startedAt ＝ 沒真的啟用
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: .indefinite, startedAt: nil, now: 10,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
-        ,
-            systemBusy: false
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
     }
 
@@ -53,15 +48,13 @@ struct KeepAwakeTests {
         let mode = KeepAwakeMode.whileDisplayConnected(uuid: "AOC")
         #expect(KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
-            connectedDisplayUUIDs: ["AOC", "builtin"], runningAppBundleIDs: [], agentsWorking: false
-        ,
-            systemBusy: false
+            connectedDisplayUUIDs: ["AOC", "builtin"], runningAppBundleIDs: [], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
-            connectedDisplayUUIDs: ["builtin"], runningAppBundleIDs: [], agentsWorking: false
-        ,
-            systemBusy: false
+            connectedDisplayUUIDs: ["builtin"], runningAppBundleIDs: [], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
     }
 
@@ -71,23 +64,20 @@ struct KeepAwakeTests {
         #expect(KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
             connectedDisplayUUIDs: [],
-            runningAppBundleIDs: ["com.apple.FinalCut", "com.apple.finder"], agentsWorking: false
-        ,
-            systemBusy: false
+            runningAppBundleIDs: ["com.apple.FinalCut", "com.apple.finder"], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
         // App 關掉就失效，但模式留著——再開時要能自己恢復
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: ["com.apple.finder"], agentsWorking: false
-        ,
-            systemBusy: false
+            connectedDisplayUUIDs: [], runningAppBundleIDs: ["com.apple.finder"], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
         // 沒有 startedAt ＝ 沒真的啟用
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: nil, now: 50,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: ["com.apple.FinalCut"], agentsWorking: false
-        ,
-            systemBusy: false
+            connectedDisplayUUIDs: [], runningAppBundleIDs: ["com.apple.FinalCut"], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
     }
 
@@ -98,21 +88,22 @@ struct KeepAwakeTests {
             mode: mode, startedAt: 0, now: 50,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: true
         ,
-            systemBusy: false
+            systemBusy: false,
+            powerFloorTripped: false
         ))
         // agent 收工就放掉 assertion，但模式留著——下一輪再開工要能自己恢復
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false
-        ,
-            systemBusy: false
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
         // 沒有 startedAt ＝ 沒真的啟用
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: nil, now: 50,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: true
         ,
-            systemBusy: false
+            systemBusy: false,
+            powerFloorTripped: false
         ))
     }
 
@@ -151,17 +142,20 @@ struct KeepAwakeTests {
         #expect(KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [],
-            agentsWorking: false, systemBusy: true
+            agentsWorking: false, systemBusy: true,
+            powerFloorTripped: false
         ))
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [],
-            agentsWorking: false, systemBusy: false
+            agentsWorking: false, systemBusy: false,
+            powerFloorTripped: false
         ))
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: nil, now: 50,
             connectedDisplayUUIDs: [], runningAppBundleIDs: [],
-            agentsWorking: false, systemBusy: true
+            agentsWorking: false, systemBusy: true,
+            powerFloorTripped: false
         ))
         #expect(KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: 10, now: 30) == nil)
     }

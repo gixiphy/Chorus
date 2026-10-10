@@ -826,6 +826,22 @@
         }
       }
     },
+    "10%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "10%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "10%"
+          }
+        }
+      }
+    },
     "2/3＋1/3 並排" : {
       "localizations" : {
         "en" : {
@@ -838,6 +854,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "2/3＋1/3 并排"
+          }
+        }
+      }
+    },
+    "20%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "20%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "20%"
           }
         }
       }
@@ -886,6 +918,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "30 分钟"
+          }
+        }
+      }
+    },
+    "30%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "30%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "30%"
           }
         }
       }
@@ -1379,6 +1427,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "IOAVService：无（DDC 不可用或已降级）"
+          }
+        }
+      }
+    },
+    "Mac 過熱 — 暫停中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac overheating — paused"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 过热 — 已暂停"
+          }
+        }
+      }
+    },
+    "Mac 過熱，降溫後會自動恢復" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac is overheating; keep-awake will resume when it cools down."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 过热，降温后会自动恢复"
           }
         }
       }
@@ -2169,6 +2249,22 @@
         }
       }
     },
+    "「有 agent 在工作時」一律保持螢幕與系統清醒，不受上面這個開關影響。已知的 agent 看 session log 是否在寫入；其餘 CLI agent 看有終端機的行程樹 30 秒內是否有 CPU 活動（IDE 內嵌、無終端機的不算）；停手 5 分鐘後放開。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"While agents are working\" ignores the toggle above: it keeps both the display and system awake. Known agents are detected from their session logs; any other CLI agent is detected from whether its process tree, attached to a terminal, burned CPU in the last 30 seconds (agents embedded in an IDE, with no terminal, do not count). Chorus lets go 5 minutes after they stop."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「有 agent 在工作时」始终保持屏幕与系统清醒，不受上面这个开关影响。已知的 agent 看 session log 是否在写入；其余 CLI agent 看有终端的进程树 30 秒内是否有 CPU 活动（IDE 内嵌、无终端的不算）；停手 5 分钟后放开。"
+          }
+        }
+      }
+    },
     "「有 agent 在工作時」不吃上面這個開關：它一律只擋系統待機、不擋螢幕待機——agent 跑整夜時要的是機器別睡，螢幕暗掉正好。偵測靠 Claude Code 與 Codex 的 session log 有沒有在寫入（只看修改時間，不讀內容），停手 5 分鐘後放開。" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2182,22 +2278,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "「有 agent 在工作时」不吃上面这个开关：它一律只挡系统睡眠、不挡屏幕睡眠——agent 跑整夜时要的是机器别睡，屏幕暗掉正好。检测靠 Claude Code 与 Codex 的 session log 有没有在写入（只看修改时间，不读内容），停手 5 分钟后放开。"
-          }
-        }
-      }
-    },
-    "「有 agent 在工作時」一律保持螢幕與系統清醒，不受上面這個開關影響。已知的 agent 看 session log 是否在寫入；其餘 CLI agent 看有終端機的行程樹 30 秒內是否有 CPU 活動（IDE 內嵌、無終端機的不算）；停手 5 分鐘後放開。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "\"While agents are working\" ignores the toggle above: it keeps both the display and system awake. Known agents are detected from their session logs; any other CLI agent is detected from whether its process tree, attached to a terminal, burned CPU in the last 30 seconds (agents embedded in an IDE, with no terminal, do not count). Chorus lets go 5 minutes after they stop."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「有 agent 在工作时」始终保持屏幕与系统清醒，不受上面这个开关影响。已知的 agent 看 session log 是否在写入；其余 CLI agent 看有终端的进程树 30 秒内是否有 CPU 活动（IDE 内嵌、无终端的不算）；停手 5 分钟后放开。"
           }
         }
       }
@@ -3465,6 +3545,22 @@
         }
       }
     },
+    "充電盒 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Case %lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "充电盒 %lld%%"
+          }
+        }
+      }
+    },
     "先匯入桌面照片才能分析" : {
       "localizations" : {
         "en" : {
@@ -4639,22 +4735,6 @@
         }
       }
     },
-    "右耳 %lld%%" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Right Ear %lld%%"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "右耳 %lld%%"
-          }
-        }
-      }
-    },
     "右" : {
       "localizations" : {
         "en" : {
@@ -4827,6 +4907,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "右四分之三"
+          }
+        }
+      }
+    },
+    "右耳 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Right Ear %lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右耳 %lld%%"
           }
         }
       }
@@ -6304,54 +6400,6 @@
         }
       }
     },
-    "充電盒 %lld%%" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Case %lld%%"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "充电盒 %lld%%"
-          }
-        }
-      }
-    },
-    "左耳 %lld%%" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Left Ear %lld%%"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "左耳 %lld%%"
-          }
-        }
-      }
-    },
-    "左耳 %lld%%、右耳 %lld%%" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Left Ear %lld%%, Right Ear %lld%%"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "左耳 %lld%%、右耳 %lld%%"
-          }
-        }
-      }
-    },
     "左" : {
       "localizations" : {
         "en" : {
@@ -6604,6 +6652,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "左四分之三"
+          }
+        }
+      }
+    },
+    "左耳 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left Ear %lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左耳 %lld%%"
+          }
+        }
+      }
+    },
+    "左耳 %lld%%、右耳 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Left Ear %lld%%, Right Ear %lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左耳 %lld%%、右耳 %lld%%"
           }
         }
       }
@@ -10286,6 +10366,22 @@
         }
       }
     },
+    "溫度偏高" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Temperature elevated"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "温度偏高"
+          }
+        }
+      }
+    },
     "滑桿下段 25% 改為軟體調光：外接螢幕的硬體最低亮度常常還是太亮，夜間可再往下壓。" : {
       "localizations" : {
         "en" : {
@@ -10634,6 +10730,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "状态"
+          }
+        }
+      }
+    },
+    "用電池且電量低於底線時暫停長亮（接上電源或電量回升後自動恢復）。沒有內建電池的 Mac 不適用。溫度過高時也會暫停，不受此設定影響。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "While on battery, pause keep-awake below this level (resumes on power or after charge recovers). Not used on Macs without an internal battery. Critical temperature also pauses, regardless of this setting."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用电池且电量低于底线时暂停常亮（接上电源或电量回升后自动恢复）。没有内建电池的 Mac 不适用。温度过高时也会暂停，不受此设置影响。"
           }
         }
       }
@@ -12281,6 +12393,22 @@
         }
       }
     },
+    "耳機電量 %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Headset Battery %lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "耳机电量 %lld%%"
+          }
+        }
+      }
+    },
     "自動" : {
       "localizations" : {
         "en" : {
@@ -12797,6 +12925,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "屏幕常亮剩余 %@"
+          }
+        }
+      }
+    },
+    "螢幕長亮已暫停" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Awake Paused"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "屏幕常亮已暂停"
           }
         }
       }
@@ -15324,22 +15468,6 @@
         }
       }
     },
-    "耳機電量 %lld%%" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Headset Battery %lld%%"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "耳机电量 %lld%%"
-          }
-        }
-      }
-    },
     "電子" : {
       "localizations" : {
         "en" : {
@@ -15352,6 +15480,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "电子"
+          }
+        }
+      }
+    },
+    "電量低於 %lld%% — 暫停中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Battery below %lld%% — paused"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电量低于 %lld%% — 已暂停"
+          }
+        }
+      }
+    },
+    "電量低於底線，接上電源後會自動恢復" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Battery is below the floor; keep-awake will resume when plugged in."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电量低于底线，接上电源后会自动恢复"
+          }
+        }
+      }
+    },
+    "電量底線" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Battery Floor"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电量底线"
           }
         }
       }

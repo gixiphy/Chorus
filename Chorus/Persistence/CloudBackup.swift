@@ -153,6 +153,7 @@ final class CloudBackup {
             keepAwakeSystemLoadConfiguration: settings.keepAwakeSystemLoadConfiguration,
             keepAwakeProcessDetection: settings.keepAwakeProcessDetection,
             keepAwakeCustomProcessNames: settings.keepAwakeCustomProcessNames,
+            keepAwakeBatteryFloor: settings.keepAwakeBatteryFloor,
             mediaKeyCaptureEnabled: settings.mediaKeyCaptureEnabled,
             syncBrightnessEnabled: settings.syncBrightnessEnabled,
             syncVolumeEnabled: settings.syncVolumeEnabled,
@@ -208,6 +209,7 @@ final class CloudBackup {
         settings.keepAwakeSystemLoadConfiguration = backup.keepAwakeSystemLoadConfiguration
         settings.keepAwakeProcessDetection = backup.keepAwakeProcessDetection
         settings.keepAwakeCustomProcessNames = backup.keepAwakeCustomProcessNames
+        settings.keepAwakeBatteryFloor = backup.keepAwakeBatteryFloor
         settings.mediaKeyCaptureEnabled = backup.mediaKeyCaptureEnabled
         settings.syncBrightnessEnabled = backup.syncBrightnessEnabled
         settings.syncVolumeEnabled = backup.syncVolumeEnabled

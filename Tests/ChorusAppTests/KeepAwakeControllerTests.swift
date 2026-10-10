@@ -29,9 +29,32 @@ struct KeepAwakeControllerTests {
         }
     }
 
+    final class FakePowerSource: PowerSourceObserving {
+        var snapshot = PowerSnapshot(
+            hasInternalBattery: true, onBattery: false, percent: 80, thermal: .nominal
+        )
+        var onChange: (() -> Void)?
+        private(set) var started = false
+
+        func start() { started = true }
+        func stop() { started = false }
+
+        func publish(_ next: PowerSnapshot) {
+            snapshot = next
+            onChange?()
+        }
+    }
+
+    final class FakeNotifier: KeepAwakeNotifying {
+        var paused: [PowerFloorState] = []
+        func notifyPowerFloorPaused(_ state: PowerFloorState) { paused.append(state) }
+    }
+
     private func makeController(
         assertions: FakeAssertions,
         settings: SettingsStore? = nil,
+        powerSource: FakePowerSource? = nil,
+        notifier: FakeNotifier? = nil,
         now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }
     ) -> KeepAwakeController {
         let settings = settings
@@ -39,7 +62,10 @@ struct KeepAwakeControllerTests {
         return KeepAwakeController(
             settings: settings, displayManager: DisplayManager(settings: settings),
             agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
-            assertions: assertions, now: now
+            powerSource: powerSource ?? FakePowerSource(),
+            assertions: assertions,
+            notifier: notifier ?? FakeNotifier(),
+            now: now
         )
     }
 
@@ -157,10 +183,12 @@ struct KeepAwakeControllerTests {
         let settings = SettingsStore(defaults: defaults)
         // 第二層預設開啟：沒有全域 log 的 agent 只靠它。
         #expect(settings.keepAwakeProcessDetection)
+        #expect(settings.keepAwakeBatteryFloor == .percent20)
 
         let first = makeController(assertions: FakeAssertions(), settings: settings)
         first.agentProcessDetectionEnabled = false
         first.agentCustomProcessNames = ["aider", "goose"]
+        first.batteryFloor = .percent10
         first.shutdown()
 
         let reloaded = SettingsStore(defaults: defaults)
@@ -168,6 +196,7 @@ struct KeepAwakeControllerTests {
         defer { second.shutdown() }
         #expect(!second.agentProcessDetectionEnabled)
         #expect(second.agentCustomProcessNames == ["aider", "goose"])
+        #expect(second.batteryFloor == .percent10)
     }
 
     @Test("Real macOS assertions can be created, queried, and released")
@@ -179,6 +208,87 @@ struct KeepAwakeControllerTests {
             assertions.release(id)
             #expect(!assertions.isActive(id))
         }
+    }
+
+    @Test("Power floor releases assertions, notifies once, and reholds on recovery")
+    func powerFloorPausesAndResumes() {
+        let assertions = FakeAssertions()
+        let power = FakePowerSource()
+        let notifier = FakeNotifier()
+        let controller = makeController(
+            assertions: assertions, powerSource: power, notifier: notifier
+        )
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        #expect(controller.isHolding)
+        #expect(power.started)
+        #expect(notifier.paused.isEmpty)
+
+        power.publish(PowerSnapshot(
+            hasInternalBattery: true, onBattery: true, percent: 15, thermal: .nominal
+        ))
+        #expect(!controller.isHolding)
+        #expect(controller.pauseReason == .lowBattery(percent: 15))
+        #expect(assertions.active.isEmpty)
+        #expect(notifier.paused == [.lowBattery(percent: 15)])
+        #expect(controller.mode == .indefinite)
+
+        power.publish(PowerSnapshot(
+            hasInternalBattery: true, onBattery: true, percent: 14, thermal: .nominal
+        ))
+        #expect(notifier.paused.count == 1)
+
+        power.publish(PowerSnapshot(
+            hasInternalBattery: true, onBattery: false, percent: 14, thermal: .nominal
+        ))
+        #expect(controller.isHolding)
+        #expect(controller.pauseReason == .ok)
+        #expect(assertions.active.count == 1)
+    }
+
+    @Test("Duration mode keeps counting while paused by the power floor")
+    func powerFloorDoesNotCancelDuration() {
+        let assertions = FakeAssertions()
+        let power = FakePowerSource()
+        var time = 100.0
+        let controller = makeController(
+            assertions: assertions, powerSource: power, now: { time }
+        )
+        defer { controller.shutdown() }
+        controller.activate(.duration(seconds: 60))
+        #expect(controller.isHolding)
+
+        power.publish(PowerSnapshot(
+            hasInternalBattery: true, onBattery: true, percent: 10, thermal: .nominal
+        ))
+        #expect(!controller.isHolding)
+        #expect(controller.mode == .duration(seconds: 60))
+        #expect(controller.remainingSeconds == 60)
+
+        time = 130
+        controller.reevaluate()
+        #expect(controller.mode == .duration(seconds: 60))
+        #expect(controller.remainingSeconds == 30)
+        #expect(!controller.isHolding)
+
+        time = 160
+        controller.reevaluate()
+        #expect(controller.mode == .off)
+        #expect(!power.started)
+    }
+
+    @Test("Power source monitoring stops when keep-awake turns off")
+    func powerMonitorLifecycle() {
+        let assertions = FakeAssertions()
+        let power = FakePowerSource()
+        let controller = makeController(assertions: assertions, powerSource: power)
+        defer { controller.shutdown() }
+        #expect(!power.started)
+        controller.activate(.indefinite)
+        #expect(power.started)
+        controller.deactivate()
+        #expect(!power.started)
+        #expect(controller.pauseReason == .ok)
     }
 
     @Test("Working agents require display protection before reporting success and release it when idle")

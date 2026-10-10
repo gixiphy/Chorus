@@ -60,6 +60,10 @@ final class KeepAwakeController {
     private(set) var isHolding = false
     /// 條件成立，但 macOS 未接受所有必要的防睡眠請求。
     private(set) var activationFailed = false
+    /// 電量／溫度底線目前是否要求暫停（模式保留、assertion 放掉）。
+    private(set) var pauseReason: PowerFloorState = .ok
+    /// 溫度 `.serious`：不暫停，選單顯示警告。
+    private(set) var thermalWarning = false
     /// 計時模式的剩餘秒數（其餘模式為 nil）。
     /// 存成 property 而非 computed——選單要每秒重繪倒數，得是可觀察的變更。
     private(set) var remainingSeconds: Double?
@@ -68,12 +72,23 @@ final class KeepAwakeController {
     let agentActivity: AgentActivityMonitor
     /// 整機負載偵測。只有高負載模式會叫它 `start()`。
     let systemLoad: SystemLoadMonitor
+    /// 電量／溫度監聽。只有 `mode != .off` 時啟動。
+    let powerSource: any PowerSourceObserving
 
     /// 除了螢幕待機，是否連系統待機一起擋。
     var alsoPreventSystemSleep: Bool {
         didSet {
             guard alsoPreventSystemSleep != oldValue else { return }
             settings.keepAwakePreventsSystemSleep = alsoPreventSystemSleep
+            reevaluate()
+        }
+    }
+
+    /// 用電池時的電量底線；溫度臨界不受此設定影響。
+    var batteryFloor: KeepAwakeBatteryFloor {
+        didSet {
+            guard batteryFloor != oldValue else { return }
+            settings.keepAwakeBatteryFloor = batteryFloor
             reevaluate()
         }
     }
@@ -104,6 +119,7 @@ final class KeepAwakeController {
     @ObservationIgnored private weak var displayManager: DisplayManager?
     @ObservationIgnored private var startedAt: Double?
     @ObservationIgnored private let assertions: any KeepAwakeAsserting
+    @ObservationIgnored private let notifier: any KeepAwakeNotifying
     @ObservationIgnored private let now: () -> Double
     @ObservationIgnored private let workspaceNotifications: NotificationCenter
     @ObservationIgnored private var displayAssertion: IOPMAssertionID?
@@ -114,13 +130,17 @@ final class KeepAwakeController {
     /// 只有綁定 App 模式才掛：其餘模式不必為每次 App 啟動／結束醒來。
     @ObservationIgnored private var appObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var shutDown = false
+    /// 同一次觸發不重複發通知；恢復後清掉。
+    @ObservationIgnored private var didNotifyCurrentTrip = false
 
     init(
         settings: SettingsStore,
         displayManager: DisplayManager,
         agentActivity: AgentActivityMonitor = AgentActivityMonitor(),
         systemLoad: SystemLoadMonitor = SystemLoadMonitor(),
+        powerSource: any PowerSourceObserving = PowerSourceMonitor(),
         assertions: any KeepAwakeAsserting = SystemKeepAwakeAssertions(),
+        notifier: any KeepAwakeNotifying = KeepAwakeNotifier(),
         now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
         workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter
     ) {
@@ -128,14 +148,18 @@ final class KeepAwakeController {
         self.displayManager = displayManager
         self.agentActivity = agentActivity
         self.systemLoad = systemLoad
+        self.powerSource = powerSource
         self.assertions = assertions
+        self.notifier = notifier
         self.now = now
         self.workspaceNotifications = workspaceNotifications
         alsoPreventSystemSleep = settings.keepAwakePreventsSystemSleep
+        batteryFloor = settings.keepAwakeBatteryFloor
         agentProcessDetectionEnabled = settings.keepAwakeProcessDetection
         agentCustomProcessNames = settings.keepAwakeCustomProcessNames
         agentActivity.onWorkingChanged = { [weak self] in self?.reevaluate() }
         systemLoad.onDecisionChanged = { [weak self] in self?.reevaluate() }
+        powerSource.onChange = { [weak self] in self?.reevaluate() }
         // `didSet` 在 init 裡不會跑，設定得在這裡自己推一次給 monitor。
         agentActivity.configureProcessDetection(
             enabled: agentProcessDetectionEnabled, customProcessNames: agentCustomProcessNames
@@ -205,6 +229,7 @@ final class KeepAwakeController {
         updateWakeObservers()
         updateAgentMonitor()
         updateSystemLoadMonitor()
+        updatePowerSourceMonitor()
         reevaluate()
         // 長亮期間持續核對 assertion；建立失敗或失效後仍須重試。
         tickTask?.cancel()
@@ -264,6 +289,7 @@ final class KeepAwakeController {
         // 而那個模式是事件驅動的，不會每秒問一次。
         var running: Set<String> = []
         if case .whileAppRunning = mode { running = RunningApps.bundleIDs() }
+        updatePowerFloorState()
         let shouldHold = KeepAwakePlanner.shouldHoldAssertion(
             mode: mode,
             startedAt: startedAt,
@@ -271,7 +297,8 @@ final class KeepAwakeController {
             connectedDisplayUUIDs: connected,
             runningAppBundleIDs: running,
             agentsWorking: agentActivity.isWorking,
-            systemBusy: systemLoad.evaluation.shouldHold
+            systemBusy: systemLoad.evaluation.shouldHold,
+            powerFloorTripped: pauseReason.isTripped
         )
         let plan = KeepAwakePlanner.assertionPlan(mode: mode, alsoPreventSystemSleep: alsoPreventSystemSleep)
         if shouldHold {
@@ -289,19 +316,47 @@ final class KeepAwakeController {
             release(&displayAssertion)
             release(&systemAssertion)
             // 計時到期就把模式收乾淨，UI 才不會停在「開啟中」。
+            // 電量／溫度暫停**不收**：倒數照常走，恢復後繼續持有直到時間到。
             // 螢幕／App 綁定模式**不收**：螢幕接回來、App 再開時要能自己恢復。
-            if case .duration = mode {
+            if case .duration = mode,
+               KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: startedAt, now: currentTime) == 0 {
                 mode = .off
                 startedAt = nil
                 remainingSeconds = nil
                 tickTask?.cancel()
                 updateWakeObservers()
+                updatePowerSourceMonitor()
             }
         }
         isHolding = shouldHold
             && (!plan.preventsDisplaySleep || displayAssertion != nil)
             && (!plan.preventsSystemSleep || systemAssertion != nil)
         activationFailed = shouldHold && !isHolding
+    }
+
+    private func updatePowerFloorState() {
+        guard mode != .off else {
+            pauseReason = .ok
+            thermalWarning = false
+            didNotifyCurrentTrip = false
+            return
+        }
+        let previous = pauseReason
+        let next = PowerFloorPolicy.evaluate(
+            snapshot: powerSource.snapshot,
+            floor: batteryFloor,
+            previous: previous
+        )
+        pauseReason = next
+        thermalWarning = powerSource.snapshot.thermal == .serious && !next.isTripped
+        if next.isTripped {
+            if !previous.isTripped, !didNotifyCurrentTrip {
+                didNotifyCurrentTrip = true
+                notifier.notifyPowerFloorPaused(next)
+            }
+        } else {
+            didNotifyCurrentTrip = false
+        }
     }
 
     private func updateWakeObservers() {
@@ -366,6 +421,17 @@ final class KeepAwakeController {
             systemLoad.start(configuration: settings.keepAwakeSystemLoadConfiguration)
         } else {
             systemLoad.stop()
+        }
+    }
+
+    private func updatePowerSourceMonitor() {
+        if mode == .off {
+            powerSource.stop()
+            pauseReason = .ok
+            thermalWarning = false
+            didNotifyCurrentTrip = false
+        } else {
+            powerSource.start()
         }
     }
 

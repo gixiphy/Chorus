@@ -172,6 +172,18 @@ private struct DisplaySettingsTab: View {
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                Picker("電量底線", selection: Binding(
+                    get: { appState.keepAwake.batteryFloor },
+                    set: { appState.keepAwake.batteryFloor = $0 }
+                )) {
+                    Text("關閉").tag(KeepAwakeBatteryFloor.off)
+                    Text("10%").tag(KeepAwakeBatteryFloor.percent10)
+                    Text("20%").tag(KeepAwakeBatteryFloor.percent20)
+                    Text("30%").tag(KeepAwakeBatteryFloor.percent30)
+                }
+                Text("用電池且電量低於底線時暫停長亮（接上電源或電量回升後自動恢復）。沒有內建電池的 Mac 不適用。溫度過高時也會暫停，不受此設定影響。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text("開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時／有 agent 在工作時／高負載時）在選單列。")
                     .font(.caption)
                     .foregroundStyle(.secondary)

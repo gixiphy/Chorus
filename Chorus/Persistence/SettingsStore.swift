@@ -69,6 +69,7 @@ final class SettingsStore {
         static let keepAwakeSystemLoadConfiguration = "chorus.keepAwake.systemLoadConfiguration"
         static let keepAwakeProcessDetection = "chorus.keepAwake.processDetection"
         static let keepAwakeCustomProcessNames = "chorus.keepAwake.customProcessNames"
+        static let keepAwakeBatteryFloor = "chorus.keepAwake.batteryFloor"
         static let virtualTargetUID = "chorus.audio.virtualTargetUID"
         static let automationServer = "chorus.automation.serverEnabled"
         static let automationPort = "chorus.automation.serverPort"
@@ -539,6 +540,11 @@ final class SettingsStore {
         didSet { defaults.set(keepAwakeCustomProcessNames, forKey: Key.keepAwakeCustomProcessNames) }
     }
 
+    /// 用電池時電量低於此百分比就暫停長亮（預設 20%；`off` 關掉）。
+    var keepAwakeBatteryFloor: KeepAwakeBatteryFloor {
+        didSet { defaults.set(keepAwakeBatteryFloor.rawValue, forKey: Key.keepAwakeBatteryFloor) }
+    }
+
     /// 虛擬輸出裝置的轉送目標：**nil＝自動**（跟著使用中的螢幕走，都沒有就
     /// 回內建輸出）。指定 UID 則固定送那台——但它不在時仍會自動退回，
     /// 不會讓聲音消失；它回來時再接回去。
@@ -725,6 +731,12 @@ final class SettingsStore {
         }
         keepAwakeProcessDetection = defaults.object(forKey: Key.keepAwakeProcessDetection) as? Bool ?? true
         keepAwakeCustomProcessNames = defaults.stringArray(forKey: Key.keepAwakeCustomProcessNames) ?? []
+        if let raw = defaults.object(forKey: Key.keepAwakeBatteryFloor) as? Int,
+           let floor = KeepAwakeBatteryFloor(rawValue: raw) {
+            keepAwakeBatteryFloor = floor
+        } else {
+            keepAwakeBatteryFloor = .default
+        }
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)

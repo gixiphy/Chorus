@@ -378,8 +378,22 @@ private struct KeepAwakeRow: View {
 
     private var statusCaption: String {
         let keepAwake = appState.keepAwake
+        if keepAwake.pauseReason.isTripped {
+            switch keepAwake.pauseReason {
+            case .ok:
+                break
+            case .lowBattery:
+                let floor = keepAwake.batteryFloor.rawValue
+                return String(localized: "電量低於 \(floor)%% — 暫停中")
+            case .critical:
+                return String(localized: "Mac 過熱 — 暫停中")
+            }
+        }
         if keepAwake.activationFailed {
             return String(localized: "長亮尚未生效，正在重試")
+        }
+        if keepAwake.thermalWarning {
+            return String(localized: "溫度偏高")
         }
         switch keepAwake.mode {
         case .off:

@@ -44,6 +44,7 @@ public enum KeepAwakePlanner {
     ///   - runningAppBundleIDs: 目前執行中的 App bundle ID。
     ///   - agentsWorking: 目前是否有 AI agent 在工作（見 `AgentActivityPlanner`）。
     ///   - systemBusy: 目前系統負載狀態機是否要求持有（見 `SystemLoadActivityPlanner`）。
+    ///   - powerFloorTripped: 電量／溫度底線是否要求暫停（見 `PowerFloorPolicy`）。
     ///
     /// 環境參數都不給預設值：漏傳等於「條件永遠不成立」，
     /// 而長亮失效是使用者最不想默默發生的事。
@@ -54,8 +55,10 @@ public enum KeepAwakePlanner {
         connectedDisplayUUIDs: Set<String>,
         runningAppBundleIDs: Set<String>,
         agentsWorking: Bool,
-        systemBusy: Bool
+        systemBusy: Bool,
+        powerFloorTripped: Bool
     ) -> Bool {
+        if powerFloorTripped { return false }
         switch mode {
         case .off:
             return false
