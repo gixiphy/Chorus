@@ -805,4 +805,17 @@ final class SettingsStore {
     func setLastVolume(_ value: Double, for uid: String) {
         lastVolume[uid] = value
     }
+
+    /// 轉送目標在數位衰減模式下最後的滑桿值（虛擬裝置的音量）。
+    /// 與 `lastVolume` 分開記：同一台螢幕的 DDC／原生刻度和數位衰減的刻度
+    /// 聽感不同，混在一起會在切模式時拿錯值。
+    func lastDigitalVolume(for uid: String) -> Double? {
+        lastVolume[Self.digitalVolumeKey(uid)]
+    }
+
+    func setLastDigitalVolume(_ value: Double, for uid: String) {
+        lastVolume[Self.digitalVolumeKey(uid)] = value
+    }
+
+    private static func digitalVolumeKey(_ uid: String) -> String { "digital:" + uid }
 }

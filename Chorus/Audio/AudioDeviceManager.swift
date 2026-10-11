@@ -456,6 +456,9 @@ final class AudioDeviceManager {
         device.volume = clamped
         recentLocalSets[device.uid] = (clamped, ContinuousClock.now)
         settings.setLastVolume(clamped, for: device.uid)
+        if device.uid == VirtualAudioDriverController.deviceUID {
+            rememberDigitalVolume(clamped)
+        }
 
         // 轉送目標的路徑由**使用者選的音量模式**決定（自動時才照能力挑）。
         // 其他裝置沒有模式可言——它們不是 driver 的下游，照舊依能力挑路。
@@ -605,6 +608,7 @@ final class AudioDeviceManager {
                         // Touch Bar／控制中心動的是虛擬裝置 → 鏡射到螢幕硬體
                         if info.uid == VirtualAudioDriverController.deviceUID {
                             mirrorVirtualVolume(info.volume)
+                            rememberDigitalVolume(info.volume)
                         }
                         if isDefault {
                             coordinator?.localVolumeChanged(info.volume)
@@ -961,12 +965,28 @@ final class AudioDeviceManager {
     /// ——鏡射的語意是「滑桿顯示目標的真實狀態」，與 DDC 路的
     /// `initializeBridgedVolume` 同一件事。不對齊的話，退回內建喇叭時
     /// 會拿螢幕刻度的舊值去壓內建喇叭的音量。
+    ///
+    /// 數位模式的目標沒有「真實狀態」可對齊——音量本體就是虛擬裝置的滑桿。
+    /// 這時改還原**上次在這個目標上**的數位音量：螢幕關掉時轉送會先退到
+    /// 內建喇叭（滑桿被對齊成喇叭的值），不還原的話螢幕開回來就停在喇叭那個值。
     private func syncVirtualVolume(toTargetUID uid: String) {
-        guard let target = devices.first(where: { $0.uid == uid }), target.canSetVolume,
-              let virtualDevice
-        else { return }
+        guard let target = devices.first(where: { $0.uid == uid }), let virtualDevice else { return }
+        if effectiveVolumeMode(for: target) == .digital {
+            guard let remembered = settings.lastDigitalVolume(for: uid) else { return }
+            log.notice("還原數位音量 \(target.name) \(uid) = \(remembered.diag2)")
+            writeVolume(remembered, to: virtualDevice)
+            return
+        }
+        guard target.canSetVolume else { return }
         writeVolume(target.volume, to: virtualDevice)
         if target.hasMute { writeMute(target.muted, to: virtualDevice) }
+    }
+
+    /// 虛擬裝置的音量變了（滑桿、音量鍵、遠端）→ 目標在數位模式時記到該目標名下，
+    /// 供 `syncVirtualVolume` 在目標回來時還原。
+    private func rememberDigitalVolume(_ value: Double) {
+        guard let target = virtualForwardTarget, effectiveVolumeMode(for: target) == .digital else { return }
+        settings.setLastDigitalVolume(value, for: target.uid)
     }
 
     /// 轉送目標的順位計算。規則本身在 `VirtualOutputTarget`（純函式、有測試），
