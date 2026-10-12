@@ -28,8 +28,10 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         /// 第一個事件流開啟（true）／最後一個關閉（false）。沒有訂閱者時不必編碼事件。
         let eventStreamsActive: @Sendable (Bool) -> Void
         /// Keepawake 租約（C09）。預設 503，讓既有建構點不必改。
-        let keepAwakeHold: @Sendable (Data) async -> Response
-        let keepAwakeRelease: @Sendable (Data) async -> Response
+        /// Hold/release are **synchronous** so MainActor validation can run with no
+        /// suspension between the generation check and the lease mutation (V1-5).
+        let keepAwakeHold: @Sendable (Data) -> Response
+        let keepAwakeRelease: @Sendable (Data) -> Response
         let keepAwakeStatus: @Sendable () async -> Response
 
         static let keepAwakeUnavailable = Response(
@@ -43,8 +45,8 @@ final class AutomationHTTPTransport: @unchecked Sendable {
             doctor: @escaping @Sendable () async -> Response,
             execute: @escaping @Sendable (_ requests: [ControlRequest], _ isBatch: Bool) async -> Response,
             eventStreamsActive: @escaping @Sendable (Bool) -> Void,
-            keepAwakeHold: @escaping @Sendable (Data) async -> Response = { _ in Self.keepAwakeUnavailable },
-            keepAwakeRelease: @escaping @Sendable (Data) async -> Response = { _ in Self.keepAwakeUnavailable },
+            keepAwakeHold: @escaping @Sendable (Data) -> Response = { _ in Self.keepAwakeUnavailable },
+            keepAwakeRelease: @escaping @Sendable (Data) -> Response = { _ in Self.keepAwakeUnavailable },
             keepAwakeStatus: @escaping @Sendable () async -> Response = { Self.keepAwakeUnavailable }
         ) {
             self.state = state
@@ -56,6 +58,14 @@ final class AutomationHTTPTransport: @unchecked Sendable {
             self.keepAwakeRelease = keepAwakeRelease
             self.keepAwakeStatus = keepAwakeStatus
         }
+    }
+
+    /// Optional hooks that let tests park between production admission steps (V1-5).
+    struct KeepAwakeMutationTestGates: Sendable {
+        /// After atomic token+generation admission, before the MainActor hop.
+        var afterAdmissionBeforeMainActor: (@Sendable () async -> Void)?
+        /// On MainActor, after enter, before generation revalidation + mutation.
+        var onMainActorBeforeValidate: (@Sendable () -> Void)?
     }
 
     /// 從接受連線到請求讀完的絕對期限——慢慢送一點資料不能無限續命。
@@ -80,9 +90,12 @@ final class AutomationHTTPTransport: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "com.hermes.Chorus.http", qos: .userInitiated)
     private let handlers: Handlers
-    private let token: Mutex<String>
-    /// V1-5: bumped before clearLeases on rotate/stop so late hold/release cannot undo revocation.
-    private let keepAwakeAuthorizationGeneration = Mutex<UInt64>(0)
+    /// Token + keepawake generation share one mutex so admission is atomic (V1-5).
+    private struct AuthorizationState: Sendable {
+        var token: String
+        var keepAwakeGeneration: UInt64
+    }
+    private let authorization: Mutex<AuthorizationState>
     private static let log = ChorusLog(category: "automation")
 
     // 以下只在 queue 上讀寫
@@ -90,20 +103,40 @@ final class AutomationHTTPTransport: @unchecked Sendable {
     private var admission: AutomationAdmission
     private var connections: [ObjectIdentifier: Connection] = [:]
     private var heartbeat: DispatchSourceTimer?
+    /// Test-only gates for production-path race coverage (nil in production).
+    private let keepAwakeMutationGates: KeepAwakeMutationTestGates?
 
-    init(token: String, handlers: Handlers, limits: AutomationAdmission.Limits = .init()) {
-        self.token = Mutex(token)
+    init(
+        token: String,
+        handlers: Handlers,
+        limits: AutomationAdmission.Limits = .init(),
+        keepAwakeMutationGates: KeepAwakeMutationTestGates? = nil
+    ) {
+        self.authorization = Mutex(AuthorizationState(token: token, keepAwakeGeneration: 0))
         self.handlers = handlers
+        self.keepAwakeMutationGates = keepAwakeMutationGates
         admission = AutomationAdmission(limits: limits)
     }
 
-    /// Call before clearing leases on token rotation / automation stop (V1-5).
+    /// Bump generation only (stop path when transport is about to die).
     func invalidateKeepAwakeAuthorization() {
-        keepAwakeAuthorizationGeneration.withLock { $0 &+= 1 }
+        authorization.withLock { $0.keepAwakeGeneration &+= 1 }
+    }
+
+    /// Atomically bump generation and install the new token (closes auth↔generation window).
+    func rotateKeepAwakeAuthorization(token newToken: String) {
+        authorization.withLock {
+            $0.keepAwakeGeneration &+= 1
+            $0.token = newToken
+        }
     }
 
     var keepAwakeAuthorizationGenerationForTesting: UInt64 {
-        keepAwakeAuthorizationGeneration.withLock { $0 }
+        authorization.withLock { $0.keepAwakeGeneration }
+    }
+
+    var tokenForTesting: String {
+        authorization.withLock { $0.token }
     }
 
     /// 建立並啟動 listener。狀態變化在 queue 上回報。
@@ -136,7 +169,7 @@ final class AutomationHTTPTransport: @unchecked Sendable {
     }
 
     func updateToken(_ value: String) {
-        token.withLock { $0 = value }
+        authorization.withLock { $0.token = value }
     }
 
     /// 推一則事件給所有事件流訂閱者。
@@ -224,7 +257,7 @@ final class AutomationHTTPTransport: @unchecked Sendable {
             return
         }
         guard let provided = Self.bearerToken(request.headers["authorization"]),
-              Self.constantTimeEquals(provided, token.withLock { $0 })
+              Self.constantTimeEquals(provided, authorization.withLock { $0.token })
         else {
             respond(id, status: 401, json: Self.errorJSON("unauthorized", "缺少或錯誤的 Bearer token"))
             return
@@ -244,9 +277,9 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         case ("GET", "/v1/events"):
             startEventStream(id)
         case ("POST", "/v1/keepawake/hold"):
-            dispatchKeepAwakeMutation(id, body: request.body, hold: true)
+            dispatchKeepAwakeMutation(id, body: request.body, hold: true, bearer: provided)
         case ("POST", "/v1/keepawake/release"):
-            dispatchKeepAwakeMutation(id, body: request.body, hold: false)
+            dispatchKeepAwakeMutation(id, body: request.body, hold: false, bearer: provided)
         case ("GET", "/v1/keepawake"):
             callMainThread(id) { [handlers] in await handlers.keepAwakeStatus() }
         default:
@@ -266,9 +299,9 @@ final class AutomationHTTPTransport: @unchecked Sendable {
     ) async -> Response? {
         switch (method, path) {
         case ("POST", "/v1/keepawake/hold"):
-            return await handlers.keepAwakeHold(body)
+            return handlers.keepAwakeHold(body)
         case ("POST", "/v1/keepawake/release"):
-            return await handlers.keepAwakeRelease(body)
+            return handlers.keepAwakeRelease(body)
         case ("GET", "/v1/keepawake"):
             return await handlers.keepAwakeStatus()
         default:
@@ -276,14 +309,24 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         }
     }
 
-    /// V1-5／V1-6 test seam：command admission + authorization generation at mutation time.
+    /// Production-path hold/release used by regressions (V1-5): same admission,
+    /// atomic token+generation capture, MainActor revalidation, sync mutation.
+    func executeKeepAwakeMutationProductionPathForTesting(
+        bearer: String,
+        body: Data,
+        hold: Bool
+    ) async -> Response {
+        await performKeepAwakeMutation(bearer: bearer, body: body, hold: hold)
+    }
+
+    /// V1-6 capacity seam (reservation release). Prefer production-path tests for auth races.
     static func executeKeepAwakeMutationForTesting(
         admission: inout AutomationAdmission,
         requestGeneration: UInt64,
         currentGeneration: UInt64,
         body: Data,
-        handler: (Data) async -> Response
-    ) async -> Response {
+        handler: (Data) -> Response
+    ) -> Response {
         switch admission.admitCommands(1) {
         case let .batchTooLarge(limit):
             return Response(
@@ -303,35 +346,66 @@ final class AutomationHTTPTransport: @unchecked Sendable {
                     json: errorJSON("staleAuthorization", "授權已失效，請重試")
                 )
             }
-            return await handler(body)
+            return handler(body)
         }
     }
 
     /// V1-6: reserve one command for hold/release; keep reservation until work completes (incl. after 504).
-    private func dispatchKeepAwakeMutation(_ id: ObjectIdentifier, body: Data, hold: Bool) {
+    private func dispatchKeepAwakeMutation(
+        _ id: ObjectIdentifier,
+        body: Data,
+        hold: Bool,
+        bearer: String
+    ) {
         switch admission.admitCommands(1) {
         case let .batchTooLarge(limit):
             respond(id, status: 413, json: Self.errorJSON("tooManyCommands", "一次最多 \(limit) 筆指令"))
         case .overloaded:
             respond(id, status: 503, json: Self.errorJSON("overloaded", "待處理的指令太多，稍後再試"))
         case nil:
-            let generation = keepAwakeAuthorizationGeneration.withLock { $0 }
-            callMainThread(id, releasingCommands: 1) { [weak self, handlers] in
-                guard let self else {
-                    return Handlers.keepAwakeUnavailable
-                }
-                let current = self.keepAwakeAuthorizationGeneration.withLock { $0 }
-                guard current == generation else {
-                    return Response(
-                        status: 409,
-                        json: Self.errorJSON("staleAuthorization", "授權已失效，請重試")
-                    )
-                }
-                if hold {
-                    return await handlers.keepAwakeHold(body)
-                }
-                return await handlers.keepAwakeRelease(body)
+            callMainThread(id, releasingCommands: 1) { [weak self] in
+                guard let self else { return Handlers.keepAwakeUnavailable }
+                return await self.performKeepAwakeMutation(bearer: bearer, body: body, hold: hold)
             }
+        }
+    }
+
+    /// Shared production mutation path: atomic admit → MainActor validate+mutate (no await between).
+    private func performKeepAwakeMutation(
+        bearer: String,
+        body: Data,
+        hold: Bool
+    ) async -> Response {
+        // Atomic re-check: bearer still matches current token AND capture generation together.
+        let admittedGeneration: UInt64? = authorization.withLock { state in
+            guard Self.constantTimeEquals(bearer, state.token) else { return nil }
+            return state.keepAwakeGeneration
+        }
+        guard let expectedGeneration = admittedGeneration else {
+            return Response(
+                status: 401,
+                json: Self.errorJSON("unauthorized", "缺少或錯誤的 Bearer token")
+            )
+        }
+        if let gate = keepAwakeMutationGates?.afterAdmissionBeforeMainActor {
+            await gate()
+        }
+        let handlers = self.handlers
+        let gates = keepAwakeMutationGates
+        return await MainActor.run { [self] in
+            gates?.onMainActorBeforeValidate?()
+            let current = self.authorization.withLock { $0.keepAwakeGeneration }
+            guard current == expectedGeneration else {
+                return Response(
+                    status: 409,
+                    json: Self.errorJSON("staleAuthorization", "授權已失效，請重試")
+                )
+            }
+            // Sync mutation — no suspension between validation and hold/release.
+            if hold {
+                return handlers.keepAwakeHold(body)
+            }
+            return handlers.keepAwakeRelease(body)
         }
     }
 

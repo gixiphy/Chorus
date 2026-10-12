@@ -585,6 +585,11 @@ final class KeepAwakeController {
         if case .whileSystemBusy = mode {
             systemLoad.resetAfterWake()
         }
+        // V1-7: refresh lease expiry/grace and recompute hub busy *before* assertion/Lid
+        // evaluation so a sleep past TTL+grace cannot keep stale isWorkingNow busy.
+        if case .whileAgentsWorking = mode {
+            sourceHub.tick()
+        }
         // Refresh helper status in the background; assertion reevaluate stays synchronous
         // so existing wake／duration tests keep working.
         Task { @MainActor [weak self] in

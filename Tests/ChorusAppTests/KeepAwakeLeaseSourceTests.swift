@@ -138,6 +138,30 @@ struct KeepAwakeLeaseSourceTests {
         source.stop()
     }
 
+    @Test("V1-7 clock failure freezes last continuous stamp (no systemUptime epoch switch)")
+    func clockFailureFreezesEpoch() {
+        var continuous: Double? = 5_000
+        let source = KeepAwakeLeaseSource(
+            graceSeconds: 300,
+            wallNow: { Date(timeIntervalSince1970: continuous ?? 0) },
+            continuousNow: { continuous }
+        )
+        source.start()
+        _ = source.hold(id: "sticky", ttl: 120)
+        let firstExpiryBudget = source.currentUptime()
+        #expect(firstExpiryBudget == 5_000)
+        continuous = nil // primary clock fails
+        #expect(source.currentUptime() == 5_000)
+        source.refresh()
+        #expect(source.report.contains { $0.id == "lease:sticky" && $0.isWorkingNow })
+        // Recovery resumes the same continuous epoch — not a different base.
+        continuous = 5_030
+        #expect(source.currentUptime() == 5_030)
+        source.refresh()
+        #expect(source.report.contains { $0.id == "lease:sticky" && $0.isWorkingNow })
+        source.stop()
+    }
+
     @Test("V1-9 expired full table accepts new id without intervening tick")
     func expiredCapacityWithoutTick() {
         var continuous = 0.0

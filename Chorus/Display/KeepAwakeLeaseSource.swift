@@ -11,25 +11,59 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
     private var running = false
     private let graceSeconds: Double
     private let wallNow: () -> Date
-    private let uptimeNow: () -> Double
+    /// Optional continuous sample; `nil` means the primary clock failed this read.
+    private let continuousNow: () -> Double?
+    /// Last successful continuous sample — never mix a different epoch on failure (V1-7).
+    private var lastGoodContinuous: Double?
     /// Stable wall conversion for an unchanged heartbeat uptime stamp (V1-2).
     private var wallAnchors: [String: (uptimeStamp: Double, wall: Date)] = [:]
 
     init(
         graceSeconds: Double = KeepAwakeLeaseTable.defaultGraceSeconds,
         wallNow: @escaping () -> Date = Date.init,
-        /// Cross-sleep continuous clock (V1-7); not awake-only `systemUptime`.
-        uptimeNow: @escaping () -> Double = {
-            LidMonotonicTime.seconds() ?? ProcessInfo.processInfo.systemUptime
-        }
+        /// Cross-sleep continuous clock (V1-7). Injected Double clocks are treated as always-available.
+        uptimeNow: @escaping () -> Double
     ) {
         self.graceSeconds = graceSeconds
         self.wallNow = wallNow
-        self.uptimeNow = uptimeNow
+        self.continuousNow = { uptimeNow() }
+    }
+
+    /// Production default: sticky `LidMonotonicTime` — never fall back to `systemUptime` (V1-7).
+    init(
+        graceSeconds: Double = KeepAwakeLeaseTable.defaultGraceSeconds,
+        wallNow: @escaping () -> Date = Date.init
+    ) {
+        self.graceSeconds = graceSeconds
+        self.wallNow = wallNow
+        self.continuousNow = { LidMonotonicTime.seconds() }
+    }
+
+    /// Explicit optional continuous clock (tests for clock-failure freeze).
+    init(
+        graceSeconds: Double = KeepAwakeLeaseTable.defaultGraceSeconds,
+        wallNow: @escaping () -> Date = Date.init,
+        continuousNow: @escaping () -> Double?
+    ) {
+        self.graceSeconds = graceSeconds
+        self.wallNow = wallNow
+        self.continuousNow = continuousNow
     }
 
     /// Shared continuous clock for hold/status wire remaining time (V1-7／V1-11).
-    func currentUptime() -> Double { uptimeNow() }
+    func currentUptime() -> Double { sampleContinuous() }
+
+    /// Sample continuous time; on failure reuse last good stamp (never `systemUptime`).
+    private func sampleContinuous() -> Double {
+        if let sample = continuousNow(), sample.isFinite {
+            lastGoodContinuous = sample
+            return sample
+        }
+        // Conservative: frozen clock neither extends TTL nor invents a new epoch.
+        if let last = lastGoodContinuous { return last }
+        // Never observed — fail closed so nothing appears live.
+        return Double.greatestFiniteMagnitude
+    }
 
     func start() {
         // V1-2: already-running start is a no-op (no fresh wall sample / notify).
@@ -58,14 +92,14 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
     @discardableResult
     func hold(id: String, ttl: Double?) -> KeepAwakeLeaseTable.HoldResult {
         // Table purges at the same `now` before capacity (V1-9).
-        let result = table.hold(id: id, ttl: ttl, now: uptimeNow())
+        let result = table.hold(id: id, ttl: ttl, now: sampleContinuous())
         refreshReports(notify: true)
         return result
     }
 
     @discardableResult
     func release(id: String) -> Bool {
-        let released = table.release(id: id, now: uptimeNow())
+        let released = table.release(id: id, now: sampleContinuous())
         refreshReports(notify: true)
         return released
     }
@@ -76,7 +110,7 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
         tombstones: [KeepAwakeLeaseTable.Tombstone],
         aggregate: KeepAwakeLeaseTable.AggregateGrace?
     ) {
-        let now = uptimeNow()
+        let now = sampleContinuous()
         _ = table.purgeExpired(now: now, graceSeconds: graceSeconds)
         refreshReports(notify: false)
         return (
@@ -94,7 +128,7 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
     // MARK: - Private
 
     private func refreshReports(notify: Bool) {
-        let uptime = uptimeNow()
+        let uptime = sampleContinuous()
         _ = table.purgeExpired(now: uptime, graceSeconds: graceSeconds)
 
         var next: [KeepAwakeSourceReport] = []

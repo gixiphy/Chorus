@@ -1200,4 +1200,142 @@ struct LidSleepGuardControllerTests {
         #expect(box.calls == 1)
         #expect(controller.leftover == nil)
     }
+
+    @Test(
+        "V1-4 stale status failure after generation bump does not publish unknownOwner",
+        .timeLimit(.minutes(1))
+    )
+    func staleStatusFailureGenerationGated() async throws {
+        let helper = FakeHelper()
+        helper.sleepDisabled = true
+        helper.setByHelper = false
+        helper.holderCount = 0
+        helper.callerIsHolder = false
+
+        actor Gate {
+            private var conts: [CheckedContinuation<Void, Never>] = []
+            private var open = false
+            private(set) var hasWaiter = false
+            func wait() async {
+                if open { return }
+                hasWaiter = true
+                await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                    if open { c.resume() }
+                    else { conts.append(c) }
+                }
+            }
+            func release() {
+                open = true
+                let pending = conts
+                conts.removeAll()
+                for c in pending { c.resume() }
+            }
+        }
+        let gate = Gate()
+        helper.statusHandler = {
+            await gate.wait()
+            throw PowerHelperClientError.remote("staleStatus")
+        }
+
+        let (controller, _, _, _) = makeController(helper: helper, probe: { true })
+        defer { controller.shutdown() }
+
+        let detect = Task { await controller.detectLeftover() }
+        let waitDeadline = ContinuousClock.now + .seconds(2)
+        while await !gate.hasWaiter, ContinuousClock.now < waitDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        // Bump setGeneration via acquire path while the stale status is still in flight.
+        let busy = KeepAwakeBusyState(
+            isBusy: true,
+            contributing: [
+                KeepAwakeSourceReport(
+                    id: "lease:g", kind: .lease, displayName: "g",
+                    detail: nil, isWorkingNow: true, lastWorkingAt: Date(), health: .ok
+                ),
+            ],
+            releaseAt: nil
+        )
+        controller.update(
+            agentModeActive: true,
+            busy: busy,
+            power: PowerSnapshot(
+                hasInternalBattery: true, onBattery: false, percent: 80, thermal: .nominal
+            ),
+            existingFloor: .percent30
+        )
+        // Allow requestSet to bump generation.
+        try await Task.sleep(for: .milliseconds(40))
+        await gate.release()
+        await detect.value
+        #expect(controller.leftover != .unknownOwner)
+    }
+
+    @Test(
+        "NEW-2 manual restore success clears leftover; failure retains warning",
+        .timeLimit(.minutes(1))
+    )
+    func manualRestorePresentation() async throws {
+        let helper = FakeHelper()
+        helper.sleepDisabled = true
+        helper.setByHelper = true
+        helper.holderCount = 0
+        helper.callerIsHolder = false
+        helper.failRelease = true
+        let notifier = FakeNotifier()
+        let (controller, _, _, _) = makeController(
+            helper: helper, notifier: notifier, probe: { true }
+        )
+        defer { controller.shutdown() }
+
+        await controller.detectLeftover()
+        #expect(controller.leftover == .ownResidual)
+
+        // Failed manual retry retains residual warning.
+        controller.restoreLeftover()
+        let failDeadline = ContinuousClock.now + .seconds(2)
+        while helper.setCalls.isEmpty, ContinuousClock.now < failDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(controller.leftover == .ownResidual)
+        #expect(notifier.leftoverRestored == 0)
+
+        // Successful manual retry clears presentation.
+        helper.failRelease = false
+        helper.setCalls.removeAll()
+        controller.restoreLeftover()
+        let okDeadline = ContinuousClock.now + .seconds(2)
+        while controller.leftover != nil, ContinuousClock.now < okDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(controller.leftover == nil)
+        #expect(notifier.leftoverRestored == 1)
+    }
+
+    @Test(
+        "V1-4 queued restoreLeftover then shutdown never clears or notifies",
+        .timeLimit(.minutes(1))
+    )
+    func restoreQueuedThenShutdown() async throws {
+        let helper = FakeHelper()
+        helper.sleepDisabled = true
+        helper.setByHelper = true
+        helper.holderCount = 0
+        helper.callerIsHolder = false
+        helper.failRelease = true
+        let notifier = FakeNotifier()
+        let (controller, _, _, _) = makeController(
+            helper: helper, notifier: notifier, probe: { true }
+        )
+        await controller.detectLeftover()
+        #expect(controller.leftover == .ownResidual)
+        helper.failRelease = false
+        helper.setDelay = .milliseconds(250)
+        controller.restoreLeftover()
+        try await Task.sleep(for: .milliseconds(30))
+        controller.shutdown()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(notifier.leftoverRestored == 0)
+    }
 }

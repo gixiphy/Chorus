@@ -587,7 +587,8 @@ enum SleepDisabledProbe {
         }.value
     }
 
-    /// Continuous drain + TERM/KILL + bounded reap/EOF (V1-3). Modeled on helper PMSetRunner.
+    /// Continuous-clock drain + TERM/KILL + bounded reap/EOF (V1-3).
+    /// Wall-clock changes cannot extend any advertised bound.
     static func runSubprocess(
         executableURL: URL,
         arguments: [String],
@@ -604,62 +605,95 @@ enum SleepDisabledProbe {
         try process.launch()
 
         let outFD = pipe.fileHandleForReading.fileDescriptor
-        let flags = fcntl(outFD, F_GETFL)
-        if flags >= 0 {
-            _ = fcntl(outFD, F_SETFL, flags | O_NONBLOCK)
-        }
         let box = ProbeOutputBox(limit: maxStdoutBytes)
         let pid = process.processIdentifier
-        if pid > 0 {
-            _ = setpgid(pid, pid)
+        let groupOK = pid > 0 && setpgid(pid, pid) == 0
+
+        // Nonblocking is mandatory — a blocking read bypasses every outer deadline.
+        let flags = fcntl(outFD, F_GETFL)
+        guard flags >= 0, fcntl(outFD, F_SETFL, flags | O_NONBLOCK) >= 0 else {
+            terminateProcessTree(process: process, pid: pid, groupOK: groupOK, escalate: true)
+            return (exit: -1, stdout: Data(), truncated: true)
         }
 
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning, Date() < deadline {
+        let runDeadline = ContinuousClock.now + .seconds(timeout)
+        while process.isRunning, ContinuousClock.now < runDeadline {
             _ = drainAvailable(fd: outFD, box: box)
             Thread.sleep(forTimeInterval: 0.05)
         }
 
         if process.isRunning {
+            // Timed out while still running — TERM group, then KILL.
+            signalProcessTree(pid: pid, groupOK: groupOK, signal: SIGTERM)
             process.terminate()
-            if pid > 0 { kill(-pid, SIGTERM) }
-            let termDeadline = Date().addingTimeInterval(termGraceSeconds)
-            while process.isRunning, Date() < termDeadline {
+            let termDeadline = ContinuousClock.now + .seconds(termGraceSeconds)
+            while process.isRunning, ContinuousClock.now < termDeadline {
                 _ = drainAvailable(fd: outFD, box: box)
                 Thread.sleep(forTimeInterval: 0.05)
             }
             if process.isRunning {
-                if pid > 0 { kill(-pid, SIGKILL) }
-                kill(pid, SIGKILL)
+                terminateProcessTree(process: process, pid: pid, groupOK: groupOK, escalate: true)
             }
-            boundedReapAndDrain(process: process, outFD: outFD, box: box)
+            boundedReapAndDrain(process: process, outFD: outFD, box: box, pid: pid, groupOK: groupOK)
             return (exit: -1, stdout: box.data, truncated: true)
         }
 
-        boundedReapAndDrain(process: process, outFD: outFD, box: box)
+        // Parent exited. Descendants that still hold stdout must be cleaned up too.
+        boundedReapAndDrain(process: process, outFD: outFD, box: box, pid: pid, groupOK: groupOK)
         return (exit: process.terminationStatus, stdout: box.data, truncated: box.truncated)
     }
 
-    private static func boundedReapAndDrain(process: Process, outFD: Int32, box: ProbeOutputBox) {
-        let reapDeadline = Date().addingTimeInterval(drainGraceSeconds + termGraceSeconds)
-        while process.isRunning, Date() < reapDeadline {
+    private static func boundedReapAndDrain(
+        process: Process,
+        outFD: Int32,
+        box: ProbeOutputBox,
+        pid: Int32,
+        groupOK: Bool
+    ) {
+        let reapDeadline = ContinuousClock.now + .seconds(drainGraceSeconds + termGraceSeconds)
+        while process.isRunning, ContinuousClock.now < reapDeadline {
             Thread.sleep(forTimeInterval: 0.02)
         }
         if process.isRunning {
-            let pid = process.processIdentifier
-            if pid > 0 {
-                kill(-pid, SIGKILL)
-                kill(pid, SIGKILL)
-            }
+            terminateProcessTree(process: process, pid: pid, groupOK: groupOK, escalate: true)
         }
         var sawEOF = false
-        let drainDeadline = Date().addingTimeInterval(drainGraceSeconds)
+        let drainDeadline = ContinuousClock.now + .seconds(drainGraceSeconds)
         repeat {
             sawEOF = drainAvailable(fd: outFD, box: box) || sawEOF
             if sawEOF { break }
             Thread.sleep(forTimeInterval: 0.01)
-        } while Date() < drainDeadline
-        if !sawEOF { box.markTruncated() }
+        } while ContinuousClock.now < drainDeadline
+        if !sawEOF {
+            // Inherited writers (exited parent, live descendant) — kill the group and truncate.
+            signalProcessTree(pid: pid, groupOK: groupOK, signal: SIGKILL)
+            box.markTruncated()
+        }
+    }
+
+    private static func signalProcessTree(pid: Int32, groupOK: Bool, signal: Int32) {
+        guard pid > 0 else { return }
+        if groupOK {
+            kill(-pid, signal)
+        }
+        kill(pid, signal)
+    }
+
+    private static func terminateProcessTree(
+        process: Process,
+        pid: Int32,
+        groupOK: Bool,
+        escalate: Bool
+    ) {
+        signalProcessTree(pid: pid, groupOK: groupOK, signal: escalate ? SIGKILL : SIGTERM)
+        if process.isRunning {
+            if escalate {
+                process.terminate()
+                if pid > 0 { kill(pid, SIGKILL) }
+            } else {
+                process.terminate()
+            }
+        }
     }
 
     @discardableResult

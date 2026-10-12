@@ -771,4 +771,62 @@ struct KeepAwakeControllerTests {
         #expect(decoded.leases.first?.ttl == 90)
         #expect(decoded.leases.first?.id == "reentry")
     }
+
+    @Test(
+        "V1-7 production wake refreshes lease expiry before assertion/Lid evaluation",
+        .timeLimit(.minutes(1))
+    )
+    func wakeRefreshesExpiredLeaseBeforeReevaluate() async throws {
+        var continuous = 10_000.0
+        let leases = KeepAwakeLeaseSource(
+            graceSeconds: 300,
+            wallNow: { Date(timeIntervalSince1970: continuous) },
+            uptimeNow: { continuous }
+        )
+        // Long tick so periodic hub refresh cannot mask the missing wake step.
+        let hub = KeepAwakeSourceHub(
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            leases: leases,
+            tickInterval: .seconds(3_600)
+        )
+        let center = NotificationCenter()
+        let assertions = FakeAssertions()
+        let helper = FakeLidHelper()
+        let notifier = FakeNotifier()
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "wake-lease-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        let lidGuard = makeLidGuard(settings: settings, helper: helper, notifier: notifier)
+        let controller = KeepAwakeController(
+            settings: settings,
+            displayManager: DisplayManager(settings: settings),
+            agentActivity: hub.agentActivity,
+            sourceHub: hub,
+            lidGuard: lidGuard,
+            assertions: assertions,
+            notifier: notifier,
+            now: { continuous },
+            workspaceNotifications: center
+        )
+        defer { controller.shutdown() }
+
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "ttl60", ttl: 60)
+        #expect(controller.isHolding)
+        #expect(controller.sourceHub.isBusy)
+
+        let acquiresBeforeWake = helper.setCalls.filter { $0 }.count
+
+        // Sleep past TTL + 300s grace without a hub tick — report stays stale until wake.
+        continuous += 60 + 300 + 1
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+
+        #expect(!controller.sourceHub.isBusy)
+        #expect(!controller.isHolding)
+        #expect(assertions.active.isEmpty)
+        // Lid must not acquire from expired-only work before the next periodic tick.
+        #expect(helper.setCalls.filter { $0 }.count == acquiresBeforeWake)
+    }
 }

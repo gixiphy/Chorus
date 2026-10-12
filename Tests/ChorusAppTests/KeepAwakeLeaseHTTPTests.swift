@@ -201,13 +201,13 @@ struct KeepAwakeLeaseHTTPTests {
         #expect(AutomationHTTPTransport.maxBodyBytes == 256 * 1024)
     }
 
-    @Test("V1-5／V1-6 stale authorization rejected; overload returns 503; reservation released")
-    func keepAwakeAdmissionAndStaleAuth() async throws {
+    @Test("V1-6 overload returns 503; reservation released after stale reject")
+    func keepAwakeAdmissionCapacity() throws {
         var admission = AutomationAdmission(limits: .init(maxPendingCommands: 1))
         let body = try JSONEncoder().encode(KeepAwakeHoldRequest(id: "race", ttl: 60))
         var handled = 0
 
-        let first = await AutomationHTTPTransport.executeKeepAwakeMutationForTesting(
+        let first = AutomationHTTPTransport.executeKeepAwakeMutationForTesting(
             admission: &admission,
             requestGeneration: 0,
             currentGeneration: 0,
@@ -219,9 +219,8 @@ struct KeepAwakeLeaseHTTPTests {
         #expect(first.status == 200)
         #expect(handled == 1)
 
-        // Capacity full before release would 503 — reserve without completing via direct admit.
         #expect(admission.admitCommands(1) == nil)
-        let overloaded = await AutomationHTTPTransport.executeKeepAwakeMutationForTesting(
+        let overloaded = AutomationHTTPTransport.executeKeepAwakeMutationForTesting(
             admission: &admission,
             requestGeneration: 0,
             currentGeneration: 0,
@@ -234,7 +233,7 @@ struct KeepAwakeLeaseHTTPTests {
         #expect(handled == 1)
         admission.releaseCommands(1)
 
-        let stale = await AutomationHTTPTransport.executeKeepAwakeMutationForTesting(
+        let stale = AutomationHTTPTransport.executeKeepAwakeMutationForTesting(
             admission: &admission,
             requestGeneration: 1,
             currentGeneration: 2,
@@ -245,10 +244,181 @@ struct KeepAwakeLeaseHTTPTests {
         }
         #expect(stale.status == 409)
         #expect(handled == 1)
-        // Reservation released after stale reject — next admit succeeds.
         #expect(admission.admitCommands(1) == nil)
         admission.releaseCommands(1)
     }
+
+    @Test(
+        "V1-5 production path: rotation during check-to-MainActor window rejects stale hold",
+        .timeLimit(.minutes(1))
+    )
+    @MainActor
+    func productionPathRotationDuringActorHop() async throws {
+        let table = Box(KeepAwakeLeaseTable())
+        let body = try JSONEncoder().encode(KeepAwakeHoldRequest(id: "stale-hop", ttl: 60))
+        let gate = AsyncGate()
+        let handlers = AutomationHTTPTransport.Handlers(
+            state: { .init(status: 200, json: "{}") },
+            scenes: { .init(status: 200, json: "[]") },
+            doctor: { .init(status: 200, json: "{}") },
+            execute: { _, _ in .init(status: 200, json: "{}") },
+            eventStreamsActive: { _ in },
+            keepAwakeHold: { body in
+                let request = try! JSONDecoder().decode(KeepAwakeHoldRequest.self, from: body)
+                switch table.value.hold(id: request.id, ttl: request.ttl, now: 1_000) {
+                case .held:
+                    return .init(status: 200, json: #"{"ok":true}"#)
+                default:
+                    return .init(status: 400, json: #"{"ok":false}"#)
+                }
+            }
+        )
+        let transport = AutomationHTTPTransport(
+            token: "token-a",
+            handlers: handlers,
+            keepAwakeMutationGates: .init(
+                afterAdmissionBeforeMainActor: { await gate.wait() },
+                onMainActorBeforeValidate: nil
+            )
+        )
+        let work = Task {
+            await transport.executeKeepAwakeMutationProductionPathForTesting(
+                bearer: "token-a", body: body, hold: true
+            )
+        }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await !gate.hasWaiter, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        transport.rotateKeepAwakeAuthorization(token: "token-b")
+        await gate.release()
+        let response = await work.value
+        #expect(response.status == 409)
+        #expect(table.value.active(now: 1_000).isEmpty)
+    }
+
+    @Test(
+        "V1-5 production path: disable/re-enable revoke rejects hold admitted under old token",
+        .timeLimit(.minutes(1))
+    )
+    @MainActor
+    func productionPathDisableRevokesBearer() async throws {
+        let table = Box(KeepAwakeLeaseTable())
+        let body = try JSONEncoder().encode(KeepAwakeHoldRequest(id: "revoked", ttl: 60))
+        let gate = AsyncGate()
+        let handlers = AutomationHTTPTransport.Handlers(
+            state: { .init(status: 200, json: "{}") },
+            scenes: { .init(status: 200, json: "[]") },
+            doctor: { .init(status: 200, json: "{}") },
+            execute: { _, _ in .init(status: 200, json: "{}") },
+            eventStreamsActive: { _ in },
+            keepAwakeHold: { body in
+                let request = try! JSONDecoder().decode(KeepAwakeHoldRequest.self, from: body)
+                _ = table.value.hold(id: request.id, ttl: request.ttl, now: 1_000)
+                return .init(status: 200, json: #"{"ok":true}"#)
+            }
+        )
+        let transport = AutomationHTTPTransport(
+            token: "token-a",
+            handlers: handlers,
+            keepAwakeMutationGates: .init(
+                afterAdmissionBeforeMainActor: { await gate.wait() },
+                onMainActorBeforeValidate: nil
+            )
+        )
+        let work = Task {
+            await transport.executeKeepAwakeMutationProductionPathForTesting(
+                bearer: "token-a", body: body, hold: true
+            )
+        }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await !gate.hasWaiter, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        // stop()-equivalent: revoke token + generation atomically.
+        transport.rotateKeepAwakeAuthorization(token: "")
+        table.value = KeepAwakeLeaseTable()
+        await gate.release()
+        let response = await work.value
+        #expect(response.status == 409 || response.status == 401)
+        #expect(table.value.active(now: 1_000).isEmpty)
+    }
+
+    @Test(
+        "V1-5 production path: MainActor validate sees rotation before sync mutation",
+        .timeLimit(.minutes(1))
+    )
+    @MainActor
+    func productionPathMainActorValidateBeforeMutate() async throws {
+        let table = Box(KeepAwakeLeaseTable())
+        let body = try JSONEncoder().encode(KeepAwakeHoldRequest(id: "main-race", ttl: 60))
+        final class Rotator: @unchecked Sendable {
+            var transport: AutomationHTTPTransport?
+            var didRotate = false
+            func rotateOnce() {
+                guard !didRotate else { return }
+                didRotate = true
+                transport?.rotateKeepAwakeAuthorization(token: "token-b")
+            }
+        }
+        let rotator = Rotator()
+        let handlers = AutomationHTTPTransport.Handlers(
+            state: { .init(status: 200, json: "{}") },
+            scenes: { .init(status: 200, json: "[]") },
+            doctor: { .init(status: 200, json: "{}") },
+            execute: { _, _ in .init(status: 200, json: "{}") },
+            eventStreamsActive: { _ in },
+            keepAwakeHold: { body in
+                let request = try! JSONDecoder().decode(KeepAwakeHoldRequest.self, from: body)
+                _ = table.value.hold(id: request.id, ttl: request.ttl, now: 1_000)
+                return .init(status: 200, json: #"{"ok":true}"#)
+            }
+        )
+        let transport = AutomationHTTPTransport(
+            token: "token-a",
+            handlers: handlers,
+            keepAwakeMutationGates: .init(
+                afterAdmissionBeforeMainActor: nil,
+                onMainActorBeforeValidate: { rotator.rotateOnce() }
+            )
+        )
+        rotator.transport = transport
+        let response = await transport.executeKeepAwakeMutationProductionPathForTesting(
+            bearer: "token-a", body: body, hold: true
+        )
+        #expect(response.status == 409)
+        #expect(table.value.active(now: 1_000).isEmpty)
+    }
+}
+
+/// Deterministic async gate for production-path race tests.
+private actor AsyncGate {
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    private var opened = false
+    private(set) var hasWaiter = false
+
+    func wait() async {
+        if opened { return }
+        hasWaiter = true
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            if opened {
+                cont.resume()
+            } else {
+                continuations.append(cont)
+            }
+        }
+    }
+
+    func release() {
+        opened = true
+        let pending = continuations
+        continuations.removeAll()
+        for cont in pending { cont.resume() }
+    }
+}
+
+// Re-open suite extension for remaining tests that were below the replaced block.
+extension KeepAwakeLeaseHTTPTests {
 
     @Test("V1-11 status emits clamped TTL from hold/renew")
     func statusTTLMatchesHold() async throws {

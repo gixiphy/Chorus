@@ -203,7 +203,13 @@ final class LidSleepGuardController {
             let generation = setGeneration
             recoveryTask = Task { [weak self] in
                 guard let self else { return }
-                _ = await self.restoreOwnResidual(expectedGeneration: generation)
+                let restored = await self.restoreOwnResidual(expectedGeneration: generation)
+                // NEW-2: clear residual presentation only on current-generation success.
+                guard !self.shutDown, self.setGeneration == generation else { return }
+                if restored {
+                    self.leftover = nil
+                    self.publish()
+                }
             }
         case .foreign, .unknownOwner, .otherUserHolding, .recoveryBlocked, .none:
             // Foreign / recovery / unknown: UI copies manual pmset — no auto override (Fi A2／A8).
@@ -258,9 +264,12 @@ final class LidSleepGuardController {
     func detectLeftover() async {
         guard !e2eNamedInstance, !shutDown else { return }
         helper.refreshAvailability()
+        // V1-4: capture lifecycle/generation before the first await so stale
+        // probe/status completions cannot overwrite newer recovery evidence.
+        let generation = setGeneration
         // V1-3: await off-MainActor probe (default hops via Task.detached).
         let probe = await sleepDisabledProbe()
-        guard !shutDown else { return }
+        guard !shutDown, setGeneration == generation else { return }
         let registered: Bool = {
             switch helper.availability {
             case .notRegistered: return false
@@ -286,7 +295,6 @@ final class LidSleepGuardController {
         }
 
         do {
-            let generation = setGeneration
             let status = try await helper.status()
             guard !shutDown, setGeneration == generation else { return }
             applyHelperStatus(status)
@@ -299,7 +307,7 @@ final class LidSleepGuardController {
                 }
             }
         } catch {
-            guard !shutDown else { return }
+            guard !shutDown, setGeneration == generation else { return }
             leftover = .unknownOwner
         }
         publish()

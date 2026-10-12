@@ -158,6 +158,46 @@ struct PowerHelperXPCTests {
         """) == nil)
     }
 
+    @Test("NEW-1 incomplete annotation / non-annotatable garbage tails fail closed")
+    func annotationTailValidation() {
+        // Incomplete parenthetical — must not parse as a valid sleep row → nil.
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+         Currently on AC Power:
+         sleep 0 (sleep prevented by
+         disksleep         10
+         displaysleep      2
+        """) == nil)
+
+        // Arbitrary garbage on a non-annotatable known key.
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+         Currently on AC Power:
+         disksleep 10 arbitrary garbage
+         sleep             1
+         displaysleep      2
+        """) == nil)
+
+        // Complete balanced annotation still accepted; missing SleepDisabled → false.
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+         Currently on AC Power:
+         sleep             0 (sleep prevented by power assertion)
+         disksleep         10
+         displaysleep      0 (display sleep prevented by power assertion)
+        """) == false)
+
+        // Plain numeric rows without tails remain valid.
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+         Currently on AC Power:
+         disksleep         10
+         sleep             1
+         SleepDisabled     0
+         displaysleep      2
+        """) == false)
+    }
+
     @Test("V-C03-7 / W0-10 ChorusPowerHelperXPC enumerates exactly two required methods")
     func protocolSurface() {
         final class Stub: NSObject, ChorusPowerHelperXPC {

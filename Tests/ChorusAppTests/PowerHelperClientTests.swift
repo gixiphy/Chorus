@@ -1063,4 +1063,73 @@ struct SleepDisabledProbeTests {
         // Host may or may not have readable pmset; either Bool? outcome is fine — must return.
         _ = value
     }
+
+    @Test("V1-3 real saturated-stdout child stays bounded", .timeLimit(.minutes(1)))
+    func hostileSaturatedStdoutSubprocess() throws {
+        let script = try writeProbeFixture(
+            name: "saturate",
+            contents: """
+            #!/bin/sh
+            while true; do dd if=/dev/zero bs=65536 count=1 2>/dev/null; done
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: script) }
+        let started = ContinuousClock.now
+        let result = try SleepDisabledProbe.runSubprocess(
+            executableURL: script, arguments: [], timeout: 0.35
+        )
+        let elapsed = started.duration(to: ContinuousClock.now)
+        #expect(result.truncated || result.exit == -1)
+        #expect(result.stdout.count <= 256 * 1024)
+        #expect(elapsed < .seconds(3))
+    }
+
+    @Test("V1-3 real ignored-TERM child is KILL-reaped within bound", .timeLimit(.minutes(1)))
+    func hostileIgnoredTERMSubprocess() throws {
+        let script = try writeProbeFixture(
+            name: "ignore-term",
+            contents: """
+            #!/bin/sh
+            trap '' TERM
+            while true; do printf x; sleep 0.05; done
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: script) }
+        let started = ContinuousClock.now
+        let result = try SleepDisabledProbe.runSubprocess(
+            executableURL: script, arguments: [], timeout: 0.3
+        )
+        let elapsed = started.duration(to: ContinuousClock.now)
+        #expect(result.exit == -1 || result.truncated)
+        #expect(elapsed < .seconds(3))
+    }
+
+    @Test("V1-3 exited parent with inherited writer truncates and cleans up", .timeLimit(.minutes(1)))
+    func hostileInheritedWriterSubprocess() throws {
+        let script = try writeProbeFixture(
+            name: "inherit-writer",
+            contents: """
+            #!/bin/sh
+            # Background descendant keeps the pipe write-end alive after parent exits.
+            ( while true; do printf flood; sleep 0.01; done ) &
+            exit 0
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: script) }
+        let started = ContinuousClock.now
+        let result = try SleepDisabledProbe.runSubprocess(
+            executableURL: script, arguments: [], timeout: 0.5
+        )
+        let elapsed = started.duration(to: ContinuousClock.now)
+        #expect(result.truncated || result.exit == 0)
+        #expect(elapsed < .seconds(3))
+    }
+
+    private func writeProbeFixture(name: String, contents: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-probe-\(name)-\(UUID().uuidString).sh")
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url
+    }
 }

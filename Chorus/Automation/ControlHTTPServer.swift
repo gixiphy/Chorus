@@ -101,15 +101,14 @@ final class ControlHTTPServer {
 
     @discardableResult
     func regenerateToken() -> String {
-        // V1-5: invalidate queued keepawake work before clearing leases.
-        transport?.invalidateKeepAwakeAuthorization()
-        // Fi A4：token rotation 立即清除租約、不延長 grace。
-        keepAwakeClearLeases?()
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         let token = Data(bytes).base64EncodedString()
         keychain.set(Data(token.utf8), forAccount: Self.tokenAccount)
-        transport?.updateToken(token)
+        // V1-5: bump generation + install new token atomically so a revoked bearer
+        // cannot admit against the post-rotate generation, then clear leases (Fi A4).
+        transport?.rotateKeepAwakeAuthorization(token: token)
+        keepAwakeClearLeases?()
         if isRunning { writeConfigFile() }
         return token
     }
@@ -176,11 +175,15 @@ final class ControlHTTPServer {
             eventStreamsActive: { [weak self] active in
                 Task { @MainActor in self?.setEventStreamsActive(active) }
             },
-            keepAwakeHold: { @MainActor [weak self] body in
-                self?.keepAwakeHold?(body) ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
+            keepAwakeHold: { [weak self] body in
+                MainActor.assumeIsolated {
+                    self?.keepAwakeHold?(body) ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
+                }
             },
-            keepAwakeRelease: { @MainActor [weak self] body in
-                self?.keepAwakeRelease?(body) ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
+            keepAwakeRelease: { [weak self] body in
+                MainActor.assumeIsolated {
+                    self?.keepAwakeRelease?(body) ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
+                }
             },
             keepAwakeStatus: { @MainActor [weak self] in
                 self?.keepAwakeStatus?() ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
@@ -229,8 +232,8 @@ final class ControlHTTPServer {
     }
 
     private func stop() {
-        // V1-5: invalidate before clear so disable/re-enable cannot admit stale holds.
-        transport?.invalidateKeepAwakeAuthorization()
+        // V1-5: atomically revoke token + bump generation before clear (disable/re-enable).
+        transport?.rotateKeepAwakeAuthorization(token: "")
         // Fi A4：停用 automation 立即清除租約。
         keepAwakeClearLeases?()
         setEventStreamsActive(false)

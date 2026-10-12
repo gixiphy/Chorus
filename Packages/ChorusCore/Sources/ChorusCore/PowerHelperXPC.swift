@@ -250,6 +250,11 @@ public enum PMSetOutputParser {
         case other
     }
 
+    /// Keys where Apple may append a balanced `(…)` assertion annotation after the value.
+    private static let annotatableSettingKeys: Set<String> = [
+        "sleep", "displaysleep",
+    ]
+
     private static func classifySettingLine(_ line: String) -> LineClass {
         let parts = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         guard let key = parts.first, !key.isEmpty else { return .other }
@@ -270,15 +275,38 @@ public enum PMSetOutputParser {
             return knownSettingKeys.contains(key) ? .malformedKnownKey : .other
         }
 
+        // NEW-1: only sleep/displaysleep may carry a balanced parenthetical annotation;
+        // every other setting (known or unknown) must be exactly key + value.
+        if !isSupportedSettingTail(key: key, parts: parts) {
+            return knownSettingKeys.contains(key) ? .malformedKnownKey : .other
+        }
+
         if knownSettingKeys.contains(key) {
-            // sleep／displaysleep 等可帶 assertion 註解 token；只取第一個值欄。
             return .valid(SettingRow(key: key, value: value))
         }
-        // 未知鍵但文法像設定列（含可選註解）→ 標頭模式可忽略。
+        // 未知鍵但文法像設定列（無垃圾尾）→ 標頭模式可忽略。
         if looksLikeSettingKey(key) {
             return .ignorableUnknownSetting
         }
         return .other
+    }
+
+    /// Accept only empty tails, or a single balanced `(…)` annotation on annotatable keys.
+    private static func isSupportedSettingTail(key: String, parts: [String]) -> Bool {
+        guard parts.count > 2 else { return true }
+        guard annotatableSettingKeys.contains(key) else { return false }
+        let tail = parts[2...].joined(separator: " ")
+        guard tail.first == "(", tail.last == ")", tail.count >= 2 else { return false }
+        var depth = 0
+        for character in tail {
+            if character == "(" {
+                depth += 1
+            } else if character == ")" {
+                depth -= 1
+                if depth < 0 { return false }
+            }
+        }
+        return depth == 0
     }
 
     private static func looksLikeSettingKey(_ key: String) -> Bool {
