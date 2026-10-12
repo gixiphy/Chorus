@@ -35,6 +35,9 @@ final class AgentActivityMonitor {
     /// assertion 只看有沒有，多一個少一個不影響。
     @ObservationIgnored var onWorkingChanged: (() -> Void)?
 
+    /// 第二層 TTY／行程偵測是否啟用（C7-7 hub 同步 Orca fallback 用）。
+    var isProcessDetectionEnabled: Bool { processDetectionEnabled }
+
     @ObservationIgnored private let sources: [ResolvedAgentLogSource]
     @ObservationIgnored private let processSampler: (any AgentProcessSampling)?
     @ObservationIgnored private let graceSeconds: Double
@@ -44,6 +47,8 @@ final class AgentActivityMonitor {
     @ObservationIgnored private var processState = AgentProcessActivityPlanner.State()
     @ObservationIgnored private var matcher = AgentProcessMatcher()
     @ObservationIgnored private var processDetectionEnabled = true
+    /// §14.3／C7-2：stop／configure 後丟棄尚未完成的掃描。
+    @ObservationIgnored private var scanGeneration: UInt64 = 0
     /// §14.3：未來 mtime 第一次觀察穩定 clamp（sourceReport）。
     @ObservationIgnored private var mtimeClamp = KeepAwakeMtimeClampCache()
     /// 測試縫：非 nil 時略過真掃描，直接用這個值。
@@ -87,6 +92,7 @@ final class AgentActivityMonitor {
     /// （切出 Agent 模式、App 收攤）本來就會接著重新評估，
     /// 從這裡回呼只會多一次可有可無的重入。
     func stop() {
+        scanGeneration &+= 1
         pollTask?.cancel()
         pollTask = nil
         working = []
@@ -135,6 +141,7 @@ final class AgentActivityMonitor {
         processDetectionEnabled = enabled
         matcher = next
         if !enabled { processState = AgentProcessActivityPlanner.State() }
+        if changed { scanGeneration &+= 1 }
         // 輪詢中才立刻補一輪：沒在輪詢時 `working` 本來就是空的。
         guard changed, pollTask != nil else { return }
         Task { await refresh() }
@@ -142,6 +149,7 @@ final class AgentActivityMonitor {
 
     /// 掃一輪並套用。測試直接呼叫這支，不必等輪詢。
     func refresh() async {
+        let gen = scanGeneration
         let sampler = processDetectionEnabled ? processSampler : nil
         let matcher = matcher
         // 兩層互不相干：目錄 IO 與 syscall 同時跑，一輪的長度是慢的那一半。
@@ -152,6 +160,8 @@ final class AgentActivityMonitor {
             override: chromiumThrottleWarningOverride
         )
         let (logs, processes, warn) = await (logScan, processScan, chromiumWarn)
+        // C7-2／§14.3：stop／configure 後丟棄晚到的結果（generation 已作廢）。
+        guard scanGeneration == gen else { return }
         chromiumThrottleWarning = warn
 
         var processSamples: [AgentSessionSample] = []

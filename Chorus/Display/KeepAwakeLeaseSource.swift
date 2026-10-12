@@ -34,10 +34,13 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
     }
 
     /// Fi A4：模式／automation／token 變更時立即清除，不建立 grace tombstone。
+    /// 來源仍在跑時通知 hub 立刻 recompute（C7-9）；`hub.stop` 先 `stop()` 再清 → 靜默。
     func clearImmediately() {
         table = KeepAwakeLeaseTable()
         report = []
-        // 不觸發 onChange：呼叫端（hub.stop／C08／C09）會自行 recompute 或已停止。
+        if running {
+            onChange?()
+        }
     }
 
     @discardableResult
@@ -54,7 +57,7 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
         return released
     }
 
-    /// 供 C09／C08 組裝 status；會先 purge 過期項。
+    /// 供 C09／C08 組裝 status；會先 purge 過期項並同步 report。
     func snapshot() -> (
         active: [KeepAwakeLeaseTable.Lease],
         tombstones: [KeepAwakeLeaseTable.Tombstone],
@@ -62,6 +65,7 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
     ) {
         let now = uptimeNow()
         _ = table.purgeExpired(now: now, graceSeconds: graceSeconds)
+        refreshReports(notify: false)
         return (
             table.active(now: now),
             table.graceTombstones(now: now, graceSeconds: graceSeconds),
@@ -69,7 +73,7 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
         )
     }
 
-    /// 測試／tick：依目前 uptime 重算 report。
+    /// 測試／hub tick：依目前 uptime 重算 report（不通知，由呼叫端 recompute）。
     func refresh() {
         refreshReports(notify: false)
     }

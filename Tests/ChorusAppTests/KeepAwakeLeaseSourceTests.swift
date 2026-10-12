@@ -44,21 +44,45 @@ struct KeepAwakeLeaseSourceTests {
         source.stop()
     }
 
-    @Test("clearImmediately drops leases without grace")
+    @Test("clearImmediately drops leases without grace and notifies when running")
     func clearImmediate() {
         var clock = Date(timeIntervalSince1970: 8_200_000)
         let source = KeepAwakeLeaseSource(
             wallNow: { clock },
             uptimeNow: { clock.timeIntervalSince1970 }
         )
+        var changes = 0
+        source.onChange = { changes += 1 }
         source.start()
         _ = source.hold(id: "a", ttl: 600)
         #expect(!source.report.isEmpty)
+        let before = changes
         source.clearImmediately()
         #expect(source.report.isEmpty)
+        #expect(changes == before + 1)
         let snap = source.snapshot()
         #expect(snap.active.isEmpty)
         #expect(snap.tombstones.isEmpty)
+
+        source.stop()
+        let afterStop = changes
+        source.clearImmediately()
+        #expect(changes == afterStop) // stopped → silent
+    }
+
+    @Test("snapshot refreshes report after expiry")
+    func snapshotRefreshesReport() {
+        var clock = Date(timeIntervalSince1970: 8_300_000)
+        let source = KeepAwakeLeaseSource(
+            graceSeconds: 300,
+            wallNow: { clock },
+            uptimeNow: { clock.timeIntervalSince1970 }
+        )
+        source.start()
+        _ = source.hold(id: "s", ttl: 30)
+        clock = clock.addingTimeInterval(31)
+        _ = source.snapshot()
+        #expect(source.report.first?.isWorkingNow == false)
         source.stop()
     }
 }

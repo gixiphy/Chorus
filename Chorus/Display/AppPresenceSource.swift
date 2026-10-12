@@ -41,7 +41,8 @@ final class AppPresenceSource: KeepAwakeSource {
 
     private var enabled = false
     private var running = false
-    private var lastSeenAt: Date?
+    /// 第一次 present→absent 的觀察時刻；重複 absent 不得延長（C7-5）。
+    private var exitedAt: Date?
     private var wasPresent = false
     private let checker: any AppPresenceChecking
     private let now: () -> Date
@@ -93,7 +94,7 @@ final class AppPresenceSource: KeepAwakeSource {
     /// Opt-out：立即移除跡證（V-C07-5）。
     func clearEvidence() {
         wasPresent = false
-        lastSeenAt = nil
+        exitedAt = nil
         report = []
     }
 
@@ -109,7 +110,7 @@ final class AppPresenceSource: KeepAwakeSource {
         let instant = now()
         if present {
             wasPresent = true
-            lastSeenAt = instant
+            exitedAt = nil
             report = [
                 KeepAwakeSourceReport(
                     id: "app:grok-bot",
@@ -121,7 +122,12 @@ final class AppPresenceSource: KeepAwakeSource {
                     health: .ok
                 ),
             ]
-        } else if wasPresent, let last = lastSeenAt {
+        } else if wasPresent {
+            // C7-5：結束時刻記一次，不是上次 presence refresh。
+            if exitedAt == nil {
+                exitedAt = instant
+            }
+            let exit = exitedAt ?? instant
             report = [
                 KeepAwakeSourceReport(
                     id: "app:grok-bot",
@@ -129,7 +135,7 @@ final class AppPresenceSource: KeepAwakeSource {
                     displayName: GrokBotPresence.displayName,
                     detail: nil,
                     isWorkingNow: false,
-                    lastWorkingAt: last,
+                    lastWorkingAt: exit,
                     health: .ok
                 ),
             ]

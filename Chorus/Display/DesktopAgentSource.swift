@@ -8,30 +8,36 @@ struct DesktopAgentProcess: Sendable, Equatable {
     var comm: String
     var executablePath: String?
     var arguments: [String]
-    /// 行程啟動時間（快取 key；來自 kinfo 或測試注入）。
-    var startTime: Double
+    /// 行程啟動時間；查詢失敗為 nil（不得用 0 當快取 key，C7-4）。
+    var startTime: Double?
+    /// 行程 uid；必須等於目前使用者（§14.3）。
+    var uid: uid_t?
 }
 
 protocol DesktopAgentProcessListing: Sendable {
     func listDesktopCandidates() -> [DesktopAgentProcess]
 }
 
-/// 真實掃描：`listProcesses` + argv + `proc_pidpath`；start time 在本檔讀取（不改 Scanner）。
+/// 真實掃描：`listProcesses` + argv + `proc_pidpath`；start time／uid 在本檔讀取（不改 Scanner）。
 struct SystemDesktopAgentProcessLister: DesktopAgentProcessListing {
     func listDesktopCandidates() -> [DesktopAgentProcess] {
         let records = AgentProcessScanner.listProcesses()
+        let currentUID = getuid()
         var result: [DesktopAgentProcess] = []
         for record in records where record.comm == "codex" || record.comm == "claude" {
+            let identity = Self.identity(pid: record.pid)
+            // C7-4：未知身分或非本使用者一律丟棄。
+            guard let identity, identity.uid == currentUID else { continue }
             let argv = AgentProcessScanner.arguments(pid: record.pid) ?? []
             let path = Self.pidPath(record.pid)
-            let start = Self.startTime(pid: record.pid) ?? 0
             result.append(
                 DesktopAgentProcess(
                     pid: record.pid,
                     comm: record.comm,
                     executablePath: path,
                     arguments: argv,
-                    startTime: start
+                    startTime: identity.startTime,
+                    uid: identity.uid
                 )
             )
         }
@@ -45,15 +51,23 @@ struct SystemDesktopAgentProcessLister: DesktopAgentProcessListing {
         return String(cString: buffer)
     }
 
-    /// `kinfo_proc.kp_proc.p_starttime`（秒 + 微秒）。
-    static func startTime(pid: Int32) -> Double? {
+    /// `kinfo_proc` 的 start time 與 uid；任一失敗回 nil。
+    static func identity(pid: Int32) -> (startTime: Double, uid: uid_t)? {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         let code = sysctl(&mib, 4, &info, &size, nil, 0)
         guard code == 0, size >= MemoryLayout<kinfo_proc>.stride else { return nil }
         let tv = info.kp_proc.p_starttime
-        return Double(tv.tv_sec) + Double(tv.tv_usec) / 1_000_000
+        let start = Double(tv.tv_sec) + Double(tv.tv_usec) / 1_000_000
+        guard start > 0 else { return nil }
+        let uid = info.kp_eproc.e_ucred.cr_uid
+        return (start, uid)
+    }
+
+    /// `kinfo_proc.kp_proc.p_starttime`（秒 + 微秒）。
+    static func startTime(pid: Int32) -> Double? {
+        identity(pid: pid)?.startTime
     }
 }
 
@@ -152,9 +166,15 @@ final class DesktopAgentSource: KeepAwakeSource {
     private(set) var report: [KeepAwakeSourceReport] = []
     var onChange: (() -> Void)?
 
+    /// 測試縫：覆寫「目前使用者」uid。
+    var currentUID: () -> uid_t = { getuid() }
+    /// 測試可見：簽章快取大小。
+    var signatureCacheCount: Int { signatureCache.count }
+
     private var enabled = true
     private var running = false
     private var pollTask: Task<Void, Never>?
+    private var generation: UInt64 = 0
     private var signatureCache: [String: Bool] = [:]
     private var mtimeClamp = KeepAwakeMtimeClampCache()
 
@@ -182,12 +202,21 @@ final class DesktopAgentSource: KeepAwakeSource {
     }
 
     func configure(enabled: Bool) {
+        if self.enabled != enabled {
+            generation &+= 1
+        }
         self.enabled = enabled
     }
 
     func start() {
+        start(schedulePolling: true)
+    }
+
+    /// 測試手動 `refresh` 時傳 `schedulePolling: false`，避免與輪詢疊加。
+    func start(schedulePolling: Bool) {
         guard !running else { return }
         running = true
+        guard schedulePolling else { return }
         pollTask = Task { [weak self, pollInterval] in
             while !Task.isCancelled {
                 guard let self else { return }
@@ -198,13 +227,16 @@ final class DesktopAgentSource: KeepAwakeSource {
     }
 
     func stop() {
+        generation &+= 1
         running = false
         pollTask?.cancel()
         pollTask = nil
         report = []
+        signatureCache.removeAll()
     }
 
     func clearEvidence() {
+        generation &+= 1
         report = []
         mtimeClamp.removeAll()
         signatureCache.removeAll()
@@ -215,37 +247,58 @@ final class DesktopAgentSource: KeepAwakeSource {
     }
 
     func refresh() async {
+        let gen = generation
         guard enabled, running else {
             report = []
             return
         }
         let instant = now()
+        let expectedUID = currentUID()
         let processes = await Task.detached(priority: .utility) { [lister] in
             lister.listDesktopCandidates()
         }.value
+        guard generation == gen, enabled, running else { return }
+
+        let accepted = processes.filter { process in
+            guard let start = process.startTime, start > 0,
+                  let uid = process.uid, uid == expectedUID
+            else { return false }
+            return true
+        }
 
         var next: [KeepAwakeSourceReport] = []
-        let kindsPresent = classifiedKinds(from: processes)
+        var liveCacheKeys = Set<String>()
+        let kindsPresent = classifiedKinds(from: accepted)
         for kind in kindsPresent {
             // Fi A4：Claude Team 未確認 → 停用桌面 Claude 來源。
             if kind == .claudeApp, !DesktopAgentMatcher.claudeDesktopSourceEnabled {
                 continue
             }
             guard let teamID = teamID(for: kind) else { continue }
-            let matching = processes.filter {
+            let matching = accepted.filter {
                 DesktopAgentMatcher.classify(
                     executablePath: $0.executablePath,
                     arguments: $0.arguments
                 ) == kind
             }
-            let signed = matching.filter { process in
-                cachedSignature(process: process, teamID: teamID)
+
+            var signed: [DesktopAgentProcess] = []
+            for process in matching {
+                let ok = await verifySignature(process: process, teamID: teamID, generation: gen)
+                guard generation == gen, enabled, running else { return }
+                if ok {
+                    signed.append(process)
+                    if let start = process.startTime {
+                        liveCacheKeys.insert(cacheKey(pid: process.pid, start: start, teamID: teamID))
+                    }
+                }
             }
             guard !signed.isEmpty else { continue }
 
             let mtimes = await Task.detached(priority: .utility) { [transcripts] in
                 transcripts.latestMtimes(kind: kind)
             }.value
+            guard generation == gen, enabled, running else { return }
             guard let latest = mtimes.max(by: { $0.mtime < $1.mtime }) else { continue }
             let clamped = mtimeClamp.stabilize(id: latest.id, raw: latest.mtime, now: instant)
             // 行程在且驗簽通過，但 mtime 必須在寬限內才算（report 用 isWorkingNow=false）。
@@ -263,6 +316,9 @@ final class DesktopAgentSource: KeepAwakeSource {
                 )
             )
         }
+
+        // C7-4：只保留仍存活且通過的身分；終止行程的快取清掉。
+        signatureCache = signatureCache.filter { liveCacheKeys.contains($0.key) }
 
         let previous = report
         report = next
@@ -297,11 +353,45 @@ final class DesktopAgentSource: KeepAwakeSource {
         }
     }
 
-    private func cachedSignature(process: DesktopAgentProcess, teamID: String) -> Bool {
-        let key = "\(process.pid):\(process.startTime):\(teamID)"
+    private func cacheKey(pid: Int32, start: Double, teamID: String) -> String {
+        "\(pid):\(start):\(teamID)"
+    }
+
+    private func verifySignature(
+        process: DesktopAgentProcess,
+        teamID: String,
+        generation gen: UInt64
+    ) async -> Bool {
+        guard let start = process.startTime, start > 0,
+              let uid = process.uid, uid == currentUID()
+        else { return false }
+
+        let key = cacheKey(pid: process.pid, start: start, teamID: teamID)
         if let cached = signatureCache[key] { return cached }
-        let ok = verifier.teamIdentifierMatches(pid: process.pid, teamID: teamID)
-        signatureCache[key] = ok
-        return ok
+
+        let pid = process.pid
+        let verifier = verifier
+        let ok = await Task.detached(priority: .utility) {
+            verifier.teamIdentifierMatches(pid: pid, teamID: teamID)
+        }.value
+        guard generation == gen else { return false }
+
+        // 驗簽後再對身分：PID 重用／uid 變化則作廢（C7-4）。
+        let stillValid = await Task.detached(priority: .utility) { [lister] in
+            let current = lister.listDesktopCandidates().first { $0.pid == pid }
+            guard let current,
+                  current.startTime == start,
+                  current.uid == uid
+            else { return false }
+            return true
+        }.value
+        guard generation == gen else { return false }
+
+        let accepted = ok && stillValid
+        if accepted {
+            signatureCache[key] = true
+        }
+        // 失敗不快取成功，避免短暫失敗鎖死；也不快取失敗以免 PID 重用誤判。
+        return accepted
     }
 }

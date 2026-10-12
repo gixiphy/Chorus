@@ -45,7 +45,8 @@ struct KeepAwakeSourceHubTests {
     private func makeHub(
         now: @escaping () -> Date,
         leases: KeepAwakeLeaseSource? = nil,
-        tickInterval: Duration = .seconds(30)
+        tickInterval: Duration = .seconds(30),
+        appPresence: AppPresenceSource? = nil
     ) -> (KeepAwakeSourceHub, KeepAwakeLeaseSource) {
         let leaseSource = leases ?? KeepAwakeLeaseSource(
             wallNow: now,
@@ -67,7 +68,7 @@ struct KeepAwakeSourceHubTests {
                 now: now
             ),
             leases: leaseSource,
-            appPresence: AppPresenceSource(checker: FakeAppChecker(), now: now),
+            appPresence: appPresence ?? AppPresenceSource(checker: FakeAppChecker(), now: now),
             tickInterval: tickInterval,
             now: now
         )
@@ -95,9 +96,42 @@ struct KeepAwakeSourceHubTests {
         #expect(hub.busy.contributing.contains { $0.id == "lease:bot" })
     }
 
+    @Test("C7-1 lease TTL advances on hub tick without manual refresh")
+    func leaseTTLViaTick() async throws {
+        var clock = Date(timeIntervalSince1970: 3_000_000)
+        let t0 = clock
+        let (hub, leases) = makeHub(now: { clock }, tickInterval: .milliseconds(15))
+        hub.start()
+        _ = leases.hold(id: "short", ttl: 30)
+        #expect(hub.isBusy)
+
+        // t=30：剛好到期邊界；tick 必須自己 refresh leases。
+        clock = t0.addingTimeInterval(30)
+        try await Task.sleep(for: .milliseconds(40))
+        hub.tick()
+        let atExpiry = hub.reports.first { $0.id == "lease:short" }
+        #expect(atExpiry?.isWorkingNow == false)
+        #expect(atExpiry?.lastWorkingAt == t0.addingTimeInterval(30))
+        #expect(hub.isBusy) // 仍在 300s grace
+
+        clock = t0.addingTimeInterval(329)
+        hub.tick()
+        #expect(hub.isBusy)
+
+        clock = t0.addingTimeInterval(330)
+        hub.tick()
+        #expect(!hub.isBusy)
+        #expect(!hub.reports.contains { $0.id == "lease:short" })
+
+        let snap = leases.snapshot()
+        #expect(snap.active.isEmpty)
+        #expect(snap.tombstones.isEmpty)
+        hub.stop()
+    }
+
     @Test("V-C07-1 grace expiry via tick flips isBusy")
     func graceTick() async throws {
-        var clock = Date(timeIntervalSince1970: 3_000_000)
+        var clock = Date(timeIntervalSince1970: 3_100_000)
         let (hub, leases) = makeHub(now: { clock }, tickInterval: .milliseconds(20))
         var flips: [Bool] = []
         hub.onBusyChanged = { flips.append(hub.isBusy) }
@@ -105,14 +139,12 @@ struct KeepAwakeSourceHubTests {
         _ = leases.hold(id: "short", ttl: 30)
         #expect(hub.isBusy)
 
-        // Expire lease (uptime == wall epoch in this fixture) then advance past grace.
         clock = clock.addingTimeInterval(31)
-        leases.refresh()
-        hub.recompute()
-        #expect(hub.isBusy) // still in 300s grace
+        hub.tick()
+        #expect(hub.isBusy)
 
         clock = clock.addingTimeInterval(300)
-        hub.recompute()
+        hub.tick()
         #expect(!hub.isBusy)
         #expect(flips.contains(false))
         hub.stop()
@@ -131,6 +163,83 @@ struct KeepAwakeSourceHubTests {
         #expect(calls == before)
         #expect(!hub.isBusy)
         #expect(hub.reports.isEmpty)
+    }
+
+    @Test("C7-6 notify when contributing/details change while busy stays true")
+    func notifyWhileBusyRemains() {
+        var clock = Date(timeIntervalSince1970: 4_500_000)
+        let (hub, leases) = makeHub(now: { clock })
+        var calls = 0
+        hub.onBusyChanged = { calls += 1 }
+        hub.start()
+        _ = leases.hold(id: "a", ttl: 600)
+        let afterFirst = calls
+        #expect(hub.isBusy)
+        _ = leases.hold(id: "b", ttl: 600)
+        #expect(hub.isBusy)
+        #expect(calls > afterFirst)
+        #expect(hub.busy.contributing.contains { $0.id == "lease:b" })
+        hub.stop()
+    }
+
+    @Test("C7-9 clearImmediately while running clears hub busy synchronously")
+    func clearLeasesHookImmediate() {
+        var clock = Date(timeIntervalSince1970: 4_600_000)
+        let (hub, leases) = makeHub(now: { clock })
+        hub.start()
+        _ = leases.hold(id: "only", ttl: 600)
+        #expect(hub.isBusy)
+
+        // 模擬 C09 clearLeases → leases.clearImmediately（automation disable／token rotation）。
+        leases.clearImmediately()
+        #expect(leases.report.isEmpty)
+        #expect(!hub.isBusy)
+        #expect(!hub.busy.contributing.contains { $0.kind == .lease })
+        #expect(leases.snapshot().tombstones.isEmpty)
+
+        var calls = 0
+        hub.onBusyChanged = { calls += 1 }
+        hub.stop()
+        #expect(calls == 0)
+    }
+
+    @Test("C7-5 Grok exit grace from exit time; tick self-corrects")
+    func grokExitGrace() {
+        var clock = Date(timeIntervalSince1970: 6_500_000)
+        let checker = FakeAppChecker()
+        checker.present = true
+        let presence = AppPresenceSource(checker: checker, now: { clock })
+        let (hub, _) = makeHub(now: { clock }, appPresence: presence)
+        hub.configure(
+            KeepAwakeSourceSettings(orcaEnabled: false, desktopAgentsEnabled: false, grokBotEnabled: true)
+        )
+        hub.start()
+        presence.refresh(notify: true)
+        #expect(hub.isBusy)
+
+        // 模擬錯過 terminate：仍顯示 present 快取；下一 tick 校正。
+        checker.present = false
+        clock = clock.addingTimeInterval(600)
+        hub.tick()
+        #expect(hub.isBusy)
+        let exitReport = hub.reports.first { $0.id == "app:grok-bot" }
+        #expect(exitReport?.isWorkingNow == false)
+        #expect(exitReport?.lastWorkingAt == clock)
+
+        // 重複 absent 不延長
+        let exitAt = clock
+        clock = clock.addingTimeInterval(10)
+        hub.tick()
+        #expect(hub.reports.first { $0.id == "app:grok-bot" }?.lastWorkingAt == exitAt)
+
+        clock = exitAt.addingTimeInterval(299)
+        hub.tick()
+        #expect(hub.isBusy)
+
+        clock = exitAt.addingTimeInterval(300)
+        hub.tick()
+        #expect(!hub.isBusy)
+        hub.stop()
     }
 
     @Test("V-C07-4 agents sourceReport does not double grace (300 not 600)")
@@ -213,6 +322,12 @@ struct KeepAwakeSourceHubTests {
         #expect(!hub.reports.contains { $0.id == "app:grok-bot" })
         hub.stop()
     }
+
+    @Test("Grok default off and bundle id com.anysphere.sand")
+    func grokDefaults() {
+        #expect(KeepAwakeSourceSettings.default.grokBotEnabled == false)
+        #expect(GrokBotPresence.bundleIDs == ["com.anysphere.sand"])
+    }
 }
 
 // MARK: - Shared fakes for C07 tests
@@ -223,9 +338,25 @@ struct StaticDesktopLister: DesktopAgentProcessListing {
     func listDesktopCandidates() -> [DesktopAgentProcess] { processes }
 }
 
+final class MutableDesktopLister: DesktopAgentProcessListing, @unchecked Sendable {
+    var processes: [DesktopAgentProcess]
+    init(_ processes: [DesktopAgentProcess]) { self.processes = processes }
+    func listDesktopCandidates() -> [DesktopAgentProcess] { processes }
+}
+
 struct FakeVerifier: CodeSignatureVerifying {
     var ok: Bool
     func teamIdentifierMatches(pid: Int32, teamID: String) -> Bool { ok }
+}
+
+final class CountingVerifier: CodeSignatureVerifying, @unchecked Sendable {
+    var ok: Bool
+    private(set) var calls = 0
+    init(ok: Bool) { self.ok = ok }
+    func teamIdentifierMatches(pid: Int32, teamID: String) -> Bool {
+        calls += 1
+        return ok
+    }
 }
 
 struct StaticTranscriptScanner: DesktopTranscriptScanning {

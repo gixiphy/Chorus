@@ -25,6 +25,12 @@ struct KeepAwakeSourceSettings: Equatable, Sendable {
 /// §14.3：未來 mtime 在第一次觀察時 clamp；同一份未變 raw 不可每 tick 重送「剛剛」。
 struct KeepAwakeMtimeClampCache: Sendable {
     private var entries: [String: (raw: Date, clamped: Date)] = [:]
+    /// 有界：避免長期檔案 churn 無界成長；保留仍在 liveKeys 內的條目。
+    private let maxEntries: Int
+
+    init(maxEntries: Int = 256) {
+        self.maxEntries = maxEntries
+    }
 
     mutating func stabilize(id: String, raw: Date, now: Date) -> Date {
         if let existing = entries[id], existing.raw == raw {
@@ -32,7 +38,18 @@ struct KeepAwakeMtimeClampCache: Sendable {
         }
         let clamped = KeepAwakeBusyAggregator.normalizedLastWorkingAt(raw, now: now)
         entries[id] = (raw, clamped)
+        if entries.count > maxEntries {
+            // 丟掉任意多餘項；未變 raw 的 live 條目若被誤刪，下次觀察會重建 clamp（可接受）。
+            let overflow = entries.count - maxEntries
+            for key in entries.keys.prefix(overflow) {
+                entries.removeValue(forKey: key)
+            }
+        }
         return clamped
+    }
+
+    mutating func retainIds(_ ids: Set<String>) {
+        entries = entries.filter { ids.contains($0.key) }
     }
 
     mutating func removeAll() {
@@ -88,6 +105,7 @@ final class KeepAwakeSourceHub {
     func start() {
         guard !running else { return }
         running = true
+        syncOrcaFallbackCapability()
         applySourceLifecycle()
         recompute()
         tickTask?.cancel()
@@ -95,7 +113,7 @@ final class KeepAwakeSourceHub {
             while !Task.isCancelled {
                 try? await Task.sleep(for: tickInterval)
                 guard let self, !Task.isCancelled else { return }
-                self.recompute()
+                self.tick()
             }
         }
     }
@@ -110,7 +128,7 @@ final class KeepAwakeSourceHub {
         desktop.stop()
         leases.stop()
         appPresence.stop()
-        // Fi A4：離開 Agent 立即清租約、不延長 grace。
+        // Fi A4：離開 Agent 立即清租約、不延長 grace。leases 已 stop → clear 不通知。
         leases.clearImmediately()
         agentActivity.clearMtimeClamp()
         desktop.clearMtimeClamp()
@@ -128,6 +146,7 @@ final class KeepAwakeSourceHub {
         )
         desktop.configure(enabled: settings.desktopAgentsEnabled)
         appPresence.configure(enabled: settings.grokBotEnabled)
+        syncOrcaFallbackCapability()
 
         guard running else { return }
         applySourceLifecycle()
@@ -140,6 +159,15 @@ final class KeepAwakeSourceHub {
         if previous.desktopAgentsEnabled, !settings.desktopAgentsEnabled {
             desktop.clearEvidence()
         }
+        recompute()
+    }
+
+    /// 30 秒 tick：刷新時間敏感來源後再聚合（C7-1／C7-5；不經來源 onChange 遞迴）。
+    func tick() {
+        guard running else { return }
+        leases.refresh()
+        appPresence.refresh(notify: false)
+        orca.refreshAbsenceGraceIfNeeded()
         recompute()
     }
 
@@ -156,10 +184,12 @@ final class KeepAwakeSourceHub {
         next.append(contentsOf: leases.report)
         next.append(contentsOf: appPresence.report)
 
+        let previousReports = reports
+        let previousBusy = busy
         reports = next
-        let previousBusy = busy.isBusy
         busy = KeepAwakeBusyAggregator.evaluate(next, now: instant, graceSeconds: graceSeconds)
-        if previousBusy != busy.isBusy {
+        // §14.3／C7-6：busy 布林不變但來源／細節／releaseAt 變了也要通知。
+        if previousBusy != busy || previousReports != reports {
             onBusyChanged?()
         }
     }
@@ -181,5 +211,12 @@ final class KeepAwakeSourceHub {
         if settings.desktopAgentsEnabled { desktop.start() } else { desktop.stop() }
         leases.start()
         if settings.grokBotEnabled { appPresence.start() } else { appPresence.stop() }
+    }
+
+    /// C7-7：TTY／行程偵測開關決定是否可宣稱「改用行程偵測」（M-6 未驗證 → unverified）。
+    private func syncOrcaFallbackCapability() {
+        orca.fallbackCapability = agentActivity.isProcessDetectionEnabled
+            ? .unverified
+            : .unavailable
     }
 }
