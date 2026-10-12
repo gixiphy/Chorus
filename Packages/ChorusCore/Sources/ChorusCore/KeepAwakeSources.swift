@@ -101,7 +101,7 @@ public struct KeepAwakeBusyState: Sendable, Equatable {
     }
 }
 
-/// 多來源 OR ＋ 寬限的純聚合器（spec §4.1）。
+/// 多來源 OR ＋ 寬限的純聚合器（spec §4.1、§14.3）。
 public enum KeepAwakeBusyAggregator {
     public static let defaultGraceSeconds: Double = AgentActivityPlanner.defaultGraceSeconds
 
@@ -111,7 +111,9 @@ public enum KeepAwakeBusyAggregator {
         graceSeconds: Double = defaultGraceSeconds
     ) -> KeepAwakeBusyState {
         let grace = Self.normalizedGrace(graceSeconds)
-        let contributing = reports.filter { Self.isContributing($0, now: now, graceSeconds: grace) }
+        // §14.3／W0-8：contributing／sorting／releaseAt 使用同一正規化證據（未來時刻 clamp 到 now）。
+        let normalizedReports = reports.map { Self.normalizedReport($0, now: now) }
+        let contributing = normalizedReports.filter { Self.isContributing($0, now: now, graceSeconds: grace) }
             .sorted(by: Self.contributeSort)
 
         let isBusy = !contributing.isEmpty
@@ -127,11 +129,22 @@ public enum KeepAwakeBusyAggregator {
         return KeepAwakeBusyState(isBusy: isBusy, contributing: contributing, releaseAt: releaseAt)
     }
 
-    /// 一份 report 算 contributing：`isWorkingNow`，或 `lastWorkingAt` 在寬限內。
-    /// 未來時間戳當成剛剛發生（與 `AgentActivityPlanner` 相同）。
+    /// 未來時間戳 clamp 到 `now`（與 `isContributing`／`releaseAt` 同一值）。
     ///
-    /// 注意：同一份未變動的未來 mtime 不應每 tick 重設寬限——那是來源層（C07）
-    /// 第一次觀察時 clamp 的責任；此處只看傳入的值。
+    /// C07 來源層仍應在**第一次觀察**時做穩定 clamp，避免同一份未變動的未來 mtime
+    /// 每 tick 都被當成「剛剛」而永久延長 busy；本聚合器保證單次 evaluate 內部一致。
+    public static func normalizedLastWorkingAt(_ last: Date, now: Date) -> Date {
+        min(last, now)
+    }
+
+    private static func normalizedReport(_ report: KeepAwakeSourceReport, now: Date) -> KeepAwakeSourceReport {
+        guard let last = report.lastWorkingAt else { return report }
+        var copy = report
+        copy.lastWorkingAt = normalizedLastWorkingAt(last, now: now)
+        return copy
+    }
+
+    /// 一份 report 算 contributing：`isWorkingNow`，或正規化後的 `lastWorkingAt` 在寬限內。
     private static func isContributing(
         _ report: KeepAwakeSourceReport,
         now: Date,

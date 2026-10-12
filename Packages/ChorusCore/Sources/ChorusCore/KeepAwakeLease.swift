@@ -47,6 +47,18 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
         }
     }
 
+    /// 個別 tombstone 槽滿時，多餘的已接受 grace 跡證摺疊於此（W0-7）。
+    /// 保留 `lastWorkingAt` 最大值，使 busy／releaseAt 證據不因有界儲存而提早消失。
+    public struct AggregateGrace: Sendable, Equatable {
+        public var foldedCount: Int
+        public var lastWorkingAt: Double
+
+        public init(foldedCount: Int, lastWorkingAt: Double) {
+            self.foldedCount = foldedCount
+            self.lastWorkingAt = lastWorkingAt
+        }
+    }
+
     public enum HoldResult: Equatable, Sendable {
         case held(expiresAt: Double, clampedTTL: Double)
         case invalidID
@@ -56,6 +68,8 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
 
     public private(set) var leases: [String: Lease] = [:]
     public private(set) var tombstones: [String: Tombstone] = [:]
+    /// 超出個別 tombstone 上限後的有界彙總；nil 表示沒有摺疊證據。
+    public private(set) var aggregateGrace: AggregateGrace?
 
     public init() {}
 
@@ -103,12 +117,14 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
             return false
         }
         let lastWorkingAt = min(existing.expiresAt, now)
-        tombstones[id] = Tombstone(id: id, lastWorkingAt: lastWorkingAt)
+        admitTombstone(id: id, lastWorkingAt: lastWorkingAt)
         return true
     }
 
     /// 將已到期的 active 租約轉成 tombstone；移除 grace 已過的 tombstone。
     /// 回傳本次新轉成 tombstone 或被清掉的 id（測試用）。
+    ///
+    /// 不會提早刪掉仍在 grace 的個別報告（§14.3／W0-7）；超出容量時摺入 `aggregateGrace`。
     @discardableResult
     public mutating func purgeExpired(
         now: Double,
@@ -121,7 +137,7 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
             leases.removeValue(forKey: id)
             // 到期時刻作為 lastWorkingAt；已有 tombstone 不延長（不覆寫較早的時刻）。
             if tombstones[id] == nil {
-                tombstones[id] = Tombstone(id: id, lastWorkingAt: lease.expiresAt)
+                admitTombstone(id: id, lastWorkingAt: lease.expiresAt)
             }
             changed.append(id)
         }
@@ -133,8 +149,9 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
             }
         }
 
-        // 總儲存有界：tombstone 過多時丟最舊的。
-        Self.trimTombstones(&tombstones, maxCount: Self.maxLeases)
+        if let aggregate = aggregateGrace, now >= aggregate.lastWorkingAt + grace {
+            aggregateGrace = nil
+        }
 
         return changed.sorted()
     }
@@ -145,7 +162,7 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
             .sorted { $0.id < $1.id }
     }
 
-    /// 仍在 grace 內的 tombstone（供來源層產生 report）。
+    /// 仍在 grace 內的個別 tombstone（供來源層產生 per-id report）。
     public func graceTombstones(
         now: Double,
         graceSeconds: Double = defaultGraceSeconds
@@ -156,9 +173,56 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
             .sorted { $0.id < $1.id }
     }
 
-    /// 活躍租約＋grace tombstone 的總數（bounded 檢查用）。
+    /// 彙總 grace 是否仍有效（有界摺疊後的最新證據）。
+    public func aggregateGraceContribution(
+        now: Double,
+        graceSeconds: Double = defaultGraceSeconds
+    ) -> AggregateGrace? {
+        let grace = Self.normalizedGrace(graceSeconds)
+        guard let aggregate = aggregateGrace, now < aggregate.lastWorkingAt + grace else {
+            return nil
+        }
+        return aggregate
+    }
+
+    /// 活躍租約＋個別 tombstone＋（若有）彙總槽。恆 ≤ `maxLeases * 2 + 1`。
     public var storageCount: Int {
-        leases.count + tombstones.count
+        leases.count + tombstones.count + (aggregateGrace == nil ? 0 : 1)
+    }
+
+    /// 所有仍在 grace 的 lastWorkingAt（個別＋彙總），供 busy 聚合。
+    public func graceEvidenceTimes(
+        now: Double,
+        graceSeconds: Double = defaultGraceSeconds
+    ) -> [Double] {
+        let grace = Self.normalizedGrace(graceSeconds)
+        var times = tombstones.values
+            .map(\.lastWorkingAt)
+            .filter { now < $0 + grace }
+        if let aggregate = aggregateGrace, now < aggregate.lastWorkingAt + grace {
+            times.append(aggregate.lastWorkingAt)
+        }
+        return times
+    }
+
+    private mutating func admitTombstone(id: String, lastWorkingAt: Double) {
+        if tombstones[id] != nil {
+            // 不延長既有 grace
+            return
+        }
+        if tombstones.count < Self.maxLeases {
+            tombstones[id] = Tombstone(id: id, lastWorkingAt: lastWorkingAt)
+            return
+        }
+        // 個別槽滿：摺入彙總，保留最新證據，不丟棄已接受的 grace（W0-7）。
+        if let existing = aggregateGrace {
+            aggregateGrace = AggregateGrace(
+                foldedCount: existing.foldedCount + 1,
+                lastWorkingAt: max(existing.lastWorkingAt, lastWorkingAt)
+            )
+        } else {
+            aggregateGrace = AggregateGrace(foldedCount: 1, lastWorkingAt: lastWorkingAt)
+        }
     }
 
     private static func normalizedGrace(_ graceSeconds: Double) -> Double {
@@ -166,19 +230,5 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
             return defaultGraceSeconds
         }
         return graceSeconds
-    }
-
-    private static func trimTombstones(_ stones: inout [String: Tombstone], maxCount: Int) {
-        guard stones.count > maxCount else { return }
-        let sorted = stones.values.sorted { lhs, rhs in
-            if lhs.lastWorkingAt != rhs.lastWorkingAt {
-                return lhs.lastWorkingAt < rhs.lastWorkingAt
-            }
-            return lhs.id < rhs.id
-        }
-        let dropCount = stones.count - maxCount
-        for stone in sorted.prefix(dropCount) {
-            stones.removeValue(forKey: stone.id)
-        }
     }
 }

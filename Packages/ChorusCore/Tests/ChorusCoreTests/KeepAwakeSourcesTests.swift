@@ -60,7 +60,7 @@ struct KeepAwakeSourcesTests {
         #expect(idle.contributing.isEmpty)
     }
 
-    @Test("V-C01-1 future timestamp treated as just happened")
+    @Test("V-C01-1 / W0-8 future timestamp clamped: releaseAt = now+grace")
     func futureTimestamp() {
         let future = now.addingTimeInterval(600)
         let state = KeepAwakeBusyAggregator.evaluate(
@@ -69,6 +69,37 @@ struct KeepAwakeSourcesTests {
         )
         #expect(state.isBusy)
         #expect(state.contributing.map(\.id) == ["skew"])
+        #expect(state.contributing.first?.lastWorkingAt == now)
+        #expect(state.releaseAt == now.addingTimeInterval(300))
+    }
+
+    @Test("W0-8 normalized unchanged future evidence is idle at exactly 300s")
+    func normalizedFutureIdleAtGrace() {
+        // C07 第一次觀察時 clamp 並固定；此處模擬已正規化證據（不再帶未來值重送）
+        let observedClamped = now
+        let atBoundary = KeepAwakeBusyAggregator.evaluate(
+            [report(id: "skew", last: observedClamped)],
+            now: now.addingTimeInterval(300)
+        )
+        #expect(!atBoundary.isBusy)
+        #expect(atBoundary.releaseAt == nil)
+    }
+
+    @Test("W0-8 mixed future/past reports have consistent deadlines and ordering")
+    func mixedFuturePastConsistent() {
+        let past = now.addingTimeInterval(-50)
+        let future = now.addingTimeInterval(100)
+        let state = KeepAwakeBusyAggregator.evaluate(
+            [
+                report(id: "past", last: past),
+                report(id: "future", last: future),
+            ],
+            now: now
+        )
+        #expect(state.isBusy)
+        // future clamped to now → newest; past older
+        #expect(state.contributing.map(\.id) == ["future", "past"])
+        #expect(state.releaseAt == now.addingTimeInterval(300))
     }
 
     @Test("V-C01-1 degraded source can still report working")
@@ -126,14 +157,15 @@ struct KeepAwakeSourcesTests {
         #expect(!state.isBusy)
     }
 
-    @Test("V-C07-6 / note: same future mtime stays busy for one evaluate (clamp is source-layer)")
+    @Test("V-C07-6 / W0-8: aggregator clamps future; C07 must still clamp on first observe")
     func futureMtimeStillContributesWithinGraceSemantics() {
-        // Aggregator itself treats future as recent; C07 must clamp on first observe.
+        // 單次 evaluate 已正規化；C07 須對同一份未變動 mtime 做穩定 first-observation clamp。
         let future = now.addingTimeInterval(1)
         let state = KeepAwakeBusyAggregator.evaluate(
             [report(id: "mtime", last: future)],
             now: now
         )
         #expect(state.isBusy)
+        #expect(state.releaseAt == now.addingTimeInterval(300))
     }
 }

@@ -144,7 +144,54 @@ struct KeepAwakeLeaseTests {
             _ = table.hold(id: "a-\(i % 32)", ttl: 30, now: Double(i + 2))
             _ = table.purgeExpired(now: Double(i + 2), graceSeconds: 300)
         }
-        #expect(table.storageCount <= KeepAwakeLeaseTable.maxLeases * 2)
+        #expect(table.storageCount <= KeepAwakeLeaseTable.maxLeases * 2 + 1)
+    }
+
+    @Test("W0-7 thousands of distinct IDs stay bounded; grace evidence survives")
+    func distinctIDChurnBoundedWithGrace() {
+        var table = KeepAwakeLeaseTable()
+        let grace = 300.0
+        var latestRelease: Double = 0
+        for i in 0..<1000 {
+            let id = "uniq-\(i)"
+            let t = Double(i)
+            let held = table.hold(id: id, ttl: 60, now: t)
+            #expect(held == .held(expiresAt: t + 60, clampedTTL: 60))
+            let released = table.release(id: id, now: t + 1)
+            #expect(released)
+            latestRelease = t + 1
+            #expect(table.storageCount <= KeepAwakeLeaseTable.maxLeases + 1)
+        }
+        // 未 purge：個別 tombstone ≤ 32，其餘在 aggregate；最新證據仍在 grace 內
+        #expect(table.tombstones.count <= KeepAwakeLeaseTable.maxLeases)
+        #expect(table.aggregateGrace != nil)
+        let evidence = table.graceEvidenceTimes(now: latestRelease, graceSeconds: grace)
+        #expect(!evidence.isEmpty)
+        #expect(evidence.max() == latestRelease)
+
+        // purge 不得提早刪仍在 grace 的證據
+        _ = table.purgeExpired(now: latestRelease + 1, graceSeconds: grace)
+        #expect(table.graceEvidenceTimes(now: latestRelease + 1, graceSeconds: grace).max() == latestRelease)
+
+        // 32 live → 全 release → 32 tombstone；再 churn 摺入 aggregate，grace 證據仍在
+        var live = KeepAwakeLeaseTable()
+        for i in 0..<32 {
+            _ = live.hold(id: "live-\(i)", ttl: 600, now: 0)
+        }
+        for i in 0..<32 {
+            _ = live.release(id: "live-\(i)", now: 10)
+        }
+        #expect(live.tombstones.count == 32)
+        #expect(live.storageCount == 32)
+        for i in 0..<10 {
+            let id = "more-\(i)"
+            _ = live.hold(id: id, ttl: 60, now: 20)
+            _ = live.release(id: id, now: 21)
+        }
+        #expect(live.storageCount <= KeepAwakeLeaseTable.maxLeases + 1)
+        #expect(live.aggregateGrace?.lastWorkingAt == 21)
+        _ = live.purgeExpired(now: 21 + 299, graceSeconds: grace)
+        #expect(live.graceEvidenceTimes(now: 21 + 299, graceSeconds: grace).max() == 21)
     }
 
     @Test("V-C01-2 invalid id on hold")
@@ -208,7 +255,7 @@ struct KeepAwakeLeaseCodableTests {
         #expect(try decoder.decode(KeepAwakeReleaseResponse.self, from: resData) == res)
     }
 
-    @Test("V-C01-3 StatusResponse round-trip and fixed JSON")
+    @Test("V-C01-3 / W0-10 StatusResponse full canonical JSON round-trip")
     func statusResponse() throws {
         let value = KeepAwakeStatusResponse(
             mode: "whileAgentsWorking",
@@ -231,7 +278,9 @@ struct KeepAwakeLeaseCodableTests {
                 sleepDisabled: true,
                 setByHelper: true,
                 holderCount: 1,
-                callerIsHolder: true
+                callerIsHolder: true,
+                otherUsersHolding: false,
+                lastForcedOffReason: nil
             ),
             assertionEffective: true,
             lidEffective: true
@@ -241,13 +290,31 @@ struct KeepAwakeLeaseCodableTests {
         let round = try decoder.decode(KeepAwakeStatusResponse.self, from: data)
         #expect(round == value)
 
-        // 固定欄位存在，供 C09 對照（不鎖死整個 JSON 因 Date 編碼）。
         let obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         #expect(obj["mode"] as? String == "whileAgentsWorking")
+        #expect(obj["isHolding"] as? Bool == true)
         #expect(obj["assertionEffective"] as? Bool == true)
         #expect(obj["lidEffective"] as? Bool == true)
         #expect(obj["lidPhase"] as? String == "armed")
         #expect((obj["leases"] as? [[String: Any]])?.first?["id"] as? String == "build-bot")
+        #expect((obj["leases"] as? [[String: Any]])?.first?["expiresIn"] as? Double == 600)
+        #expect((obj["leases"] as? [[String: Any]])?.first?["ttl"] as? Double == 600)
+        let helper = obj["helper"] as? [String: Any]
+        #expect(helper?["availability"] as? String == "ready")
+        #expect(helper?["sleepDisabled"] as? Bool == true)
+        #expect(helper?["setByHelper"] as? Bool == true)
+        #expect(helper?["holderCount"] as? Int == 1)
+        #expect(helper?["callerIsHolder"] as? Bool == true)
+        #expect(helper?["otherUsersHolding"] as? Bool == false)
+        #expect((obj["contributing"] as? [[String: Any]])?.first?["id"] as? String == "lease:build-bot")
+    }
+
+    @Test("W0-10 ReleaseRequest round-trip is explicit")
+    func releaseRequestRoundTrip() throws {
+        let req = KeepAwakeReleaseRequest(id: "build-bot")
+        let data = try encoder.encode(req)
+        #expect(String(data: data, encoding: .utf8) == #"{"id":"build-bot"}"#)
+        #expect(try decoder.decode(KeepAwakeReleaseRequest.self, from: data) == req)
     }
 
     @Test("V-C01-3 KeepAwakeSourceHealth Codable round-trip")
@@ -263,9 +330,9 @@ struct KeepAwakeLeaseCodableTests {
         }
     }
 
-    @Test("V-C01-3 old HoldResponse without new fields still decodes via defaults not required — encode includes them")
-    func holdResponseHasFiFields() throws {
-        // Fi A4: assertionEffective / lidEffective must be on the wire type.
+    @Test("W0-10 HoldResponse wire requires Fi A4 fields; old JSON without them fails")
+    func holdResponseWireContract() throws {
+        // Fi A4：assertionEffective／lidEffective 為必填 wire 欄位；不支援舊版缺欄解碼。
         let mirror = Mirror(reflecting: KeepAwakeHoldResponse(
             id: "x", expiresIn: 1, ttl: 1,
             assertionEffective: false, lidEffective: false
@@ -274,5 +341,12 @@ struct KeepAwakeLeaseCodableTests {
         #expect(labels.contains("assertionEffective"))
         #expect(labels.contains("lidEffective"))
         #expect(labels.contains("effective"))
+
+        let legacy = """
+        {"id":"build-bot","expiresIn":600,"ttl":600,"effective":true}
+        """.data(using: .utf8)!
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(KeepAwakeHoldResponse.self, from: legacy)
+        }
     }
 }
