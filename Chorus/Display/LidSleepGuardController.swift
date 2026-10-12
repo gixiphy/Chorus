@@ -183,6 +183,13 @@ final class LidSleepGuardController {
         scheduleReevaluate()
     }
 
+    /// Clears a user pause early (U02 "resume" button). Still subject to all policy gates.
+    func resumeAfterPause() {
+        guard state.userPausedUntil != nil else { return }
+        state.userPausedUntil = nil
+        scheduleReevaluate()
+    }
+
     func restoreLeftover() {
         switch leftover {
         case .ownResidual:
