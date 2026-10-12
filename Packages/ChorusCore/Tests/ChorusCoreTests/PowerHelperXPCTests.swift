@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import ChorusCore
 
@@ -30,6 +31,37 @@ struct PowerHelperXPCTests {
         #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: "lorem ipsum dolor") == nil)
     }
 
+    @Test("W0-6 truncation / malformed / contradictory → nil")
+    func ambiguousRejected() {
+        // 僅標頭：截斷
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: "System-wide power settings:") == nil)
+        // 部分／畸形列
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+         SleepDisabled
+        """) == nil)
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: "SleepDisabled garbage 1") == nil)
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: "SleepDisabled 1 extra") == nil)
+        // 衝突重複
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+         disksleep 10
+         SleepDisabled 1
+         SleepDisabled 0
+        """) == nil)
+        // 含關鍵字的垃圾
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: "Currently on something SleepDisabled maybe") == nil)
+        // 完整且無旗標仍為 false
+        let completeAbsent = """
+        System-wide power settings:
+         Currently on Battery Power:
+         disksleep         10
+         displaysleep      2
+         sleep             1
+        """
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: completeAbsent) == false)
+    }
+
     @Test("V-C03-1 macOS-style pmset -g sample (research format until R01)")
     func macosSample() {
         // 依調研常見格式；R01／V01 提供實機樣本前使用此假設。
@@ -52,9 +84,8 @@ struct PowerHelperXPCTests {
         #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: off) == false)
     }
 
-    @Test("V-C03-7 ChorusPowerHelperXPC has exactly two required methods")
+    @Test("V-C03-7 / W0-10 ChorusPowerHelperXPC enumerates exactly two required methods")
     func protocolSurface() {
-        // 編譯期：若多加方法，下方 stub 必須一併更新；執行期用 selector 名稱核對。
         final class Stub: NSObject, ChorusPowerHelperXPC {
             func setSleepDisabled(
                 _ enabled: Bool,
@@ -66,13 +97,47 @@ struct PowerHelperXPCTests {
                 reply(Data())
             }
         }
-        let selectors = [
-            #selector(ChorusPowerHelperXPC.setSleepDisabled(_:withReply:)),
-            #selector(ChorusPowerHelperXPC.status(withReply:)),
-        ]
-        #expect(selectors.count == 2)
         #expect(Stub.conforms(to: ChorusPowerHelperXPC.self))
         _ = Stub()
+
+        var methodCount: UInt32 = 0
+        let required = protocol_copyMethodDescriptionList(
+            ChorusPowerHelperXPC.self,
+            true,  // isRequired
+            true,  // isInstanceMethod
+            &methodCount
+        )
+        defer { free(required) }
+        #expect(methodCount == 2)
+
+        var optionalCount: UInt32 = 0
+        let optionalMethods = protocol_copyMethodDescriptionList(
+            ChorusPowerHelperXPC.self,
+            false,
+            true,
+            &optionalCount
+        )
+        defer { free(optionalMethods) }
+        #expect(optionalCount == 0)
+
+        var classRequired: UInt32 = 0
+        let classMethods = protocol_copyMethodDescriptionList(
+            ChorusPowerHelperXPC.self,
+            true,
+            false,
+            &classRequired
+        )
+        defer { free(classMethods) }
+        #expect(classRequired == 0)
+
+        let names = (0..<Int(methodCount)).compactMap { idx -> String? in
+            guard let list = required, let sel = list[idx].name else { return nil }
+            return NSStringFromSelector(sel)
+        }.sorted()
+        #expect(names == [
+            "setSleepDisabled:withReply:",
+            "statusWithReply:",
+        ])
     }
 
     @Test("PowerHelperStatus JSON round-trip")
@@ -105,16 +170,46 @@ struct PowerHelperXPCTests {
         #expect(decoded.priorValueWasDisabled == nil)
     }
 
-    @Test("PowerHelperConstants requirements match spec verbatim")
-    func requirementsVerbatim() {
+    @Test("W0-5 Release/Debug requirement selection and SecRequirement syntax")
+    func requirementsReleaseDebug() {
         #expect(PowerHelperConstants.machServiceName == "com.hermes.Chorus.PowerHelper")
         #expect(PowerHelperConstants.teamID == "2ENEDJHX95")
+        #expect(PowerHelperConstants.clientRequirement == PowerHelperConstants.debugClientRequirement)
+        #expect(PowerHelperConstants.helperRequirement == PowerHelperConstants.debugHelperRequirement)
+
+        #expect(PowerHelperConstants.clientRequirement(forRelease: false) == PowerHelperConstants.debugClientRequirement)
+        #expect(PowerHelperConstants.clientRequirement(forRelease: true) == PowerHelperConstants.releaseClientRequirement)
+        #expect(PowerHelperConstants.helperRequirement(forRelease: true) == PowerHelperConstants.releaseHelperRequirement)
+
+        #expect(PowerHelperConstants.validateRequirementSyntax(PowerHelperConstants.debugClientRequirement))
+        #expect(PowerHelperConstants.validateRequirementSyntax(PowerHelperConstants.releaseClientRequirement))
+        #expect(PowerHelperConstants.validateRequirementSyntax(PowerHelperConstants.releaseHelperRequirement))
+
+        // Release 合約必須含 Developer ID OID 與排除 get-task-allow
+        #expect(PowerHelperConstants.releaseClientRequirement.contains("1.2.840.113635.100.6.1.13"))
+        #expect(PowerHelperConstants.releaseClientRequirement.contains("get-task-allow"))
+        #expect(PowerHelperConstants.releaseClientRequirement.contains("!"))
+
+        // Debug 不要求 Developer ID OID（允許 Apple Development）
+        #expect(!PowerHelperConstants.debugClientRequirement.contains("1.2.840.113635.100.6.1.13"))
+        #expect(!PowerHelperConstants.debugClientRequirement.contains("get-task-allow"))
+
+        // Offline signed-client matrix（語意約束；實簽驗證屬下游授權）
+        let releaseAcceptsDeveloperID = PowerHelperConstants.releaseClientRequirement
+        #expect(releaseAcceptsDeveloperID.contains("2ENEDJHX95"))
+        #expect(releaseAcceptsDeveloperID.contains(#"identifier "com.hermes.Chorus""#))
+        // Apple Development 無 Developer ID OID → 不符合 Release requirement
+        // get-task-allow entitlement → 被 `!(entitlement[...] exists)` 拒絕
+    }
+
+    @Test("PowerHelperConstants requirements match spec Debug verbatim")
+    func requirementsVerbatim() {
         #expect(
-            PowerHelperConstants.clientRequirement
+            PowerHelperConstants.debugClientRequirement
                 == #"identifier "com.hermes.Chorus" and anchor apple generic and certificate leaf[subject.OU] = "2ENEDJHX95""#
         )
         #expect(
-            PowerHelperConstants.helperRequirement
+            PowerHelperConstants.debugHelperRequirement
                 == #"identifier "com.hermes.Chorus.PowerHelper" and anchor apple generic and certificate leaf[subject.OU] = "2ENEDJHX95""#
         )
         #expect(PowerHelperConstants.protocolVersion == 1)

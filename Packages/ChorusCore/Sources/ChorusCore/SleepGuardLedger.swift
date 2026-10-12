@@ -1,6 +1,6 @@
 import Foundation
 
-/// Helper 帳本純邏輯（spec §6.3、§14.1；Fi A2 覆寫 E11）。
+/// Helper 帳本純邏輯（spec §6.3、§14.1；Fi A2／A8 覆寫 E11）。
 ///
 /// `Action` 是待執行意圖，不能先當成功。寫 0 確認前不清除 ownership
 /// （呼叫 `acknowledgeWrite(false)` 之後才清）。
@@ -26,10 +26,19 @@ public struct SleepGuardLedger: Codable, Sendable, Equatable {
     public var setByHelper = false
     /// 寫 0 意圖已發出、尚未讀回確認（§14.1 crash window）。
     public var pendingRestore = false
+    /// Fi A8：missing／corrupt ledger＋system 1（或無法證明 ownership）時阻擋新 acquire。
+    public var recoveryBlocked = false
 
     public enum Action: Equatable, Sendable {
         case none
         case write(Bool)
+        /// Fi A2：持有期間觀察到外部 SleepDisabled=0。holders 已清空。
+        /// `shouldRestore` 時 C05 必須 write(false) 並通知 App；不可再 write(true)。
+        case externalInterference(shouldRestore: Bool)
+        /// Fi A8：未知 ownership／損毀帳本；拒絕新 acquire，直到核准的 recovery 路徑解除。
+        case recoveryBlocked
+        /// §14.1：`currentSystemValue == nil`，拒絕新 acquire。
+        case systemValueUnknown
     }
 
     public init() {}
@@ -38,12 +47,19 @@ public struct SleepGuardLedger: Codable, Sendable, Equatable {
         holders: [UInt64: Holder] = [:],
         priorValueWasDisabled: Bool? = nil,
         setByHelper: Bool = false,
-        pendingRestore: Bool = false
+        pendingRestore: Bool = false,
+        recoveryBlocked: Bool = false
     ) {
         self.holders = holders
         self.priorValueWasDisabled = priorValueWasDisabled
         self.setByHelper = setByHelper
         self.pendingRestore = pendingRestore
+        self.recoveryBlocked = recoveryBlocked
+    }
+
+    /// C05 在人工／核准 recovery 確認系統已安全後呼叫，解除 acquire 封鎖。
+    public mutating func clearRecoveryBlock() {
+        recoveryBlocked = false
     }
 
     /// 首次／續約。`currentSystemValue == nil` 時拒絕**新** acquire（§14.1）。
@@ -54,14 +70,19 @@ public struct SleepGuardLedger: Codable, Sendable, Equatable {
         now: Double,
         currentSystemValue: Bool?
     ) -> Action {
+        if recoveryBlocked {
+            return .recoveryBlocked
+        }
+
         let isRenewal = holders[connectionID] != nil
 
+        // Fi A2 / W0-1：既有持有 session 期間看到外部 0 → 全域干擾，清空所有 holder，不寫 true
+        if hasOwnedHoldingSession, currentSystemValue == false {
+            return invalidateForExternalInterference()
+        }
+
         if isRenewal {
-            // Fi A2：持有期間系統被外部改成 0 → 釋放、不重寫競爭
-            if currentSystemValue == false {
-                return release(connectionID: connectionID, currentSystemValue: currentSystemValue)
-            }
-            // 心跳看到 1：更新 heartbeat，不可把 setByHelper 清成 false（§14.1）
+            // 心跳看到 1（或無法讀）：更新 heartbeat，不可把 setByHelper 清成 false（§14.1）
             holders[connectionID]?.lastHeartbeat = now
             holders[connectionID]?.pid = pid
             return .none
@@ -69,8 +90,7 @@ public struct SleepGuardLedger: Codable, Sendable, Equatable {
 
         // 新連線
         if currentSystemValue == nil {
-            // 拒絕首次 acquire，保留 recovery 狀態
-            return .none
+            return .systemValueUnknown
         }
 
         if holders.isEmpty {
@@ -97,11 +117,7 @@ public struct SleepGuardLedger: Codable, Sendable, Equatable {
         if currentSystemValue == true {
             return .none
         }
-        // holders 原本非空、系統為 0（異常）：重申寫 1 僅在仍有其他 holder 且 setByHelper 時
-        // 新 holder 加入非空表且系統 0：Fi A2 不競爭重寫；視為需要寫回若我們擁有
-        if setByHelper {
-            return .write(true)
-        }
+        // holders 原本非空且系統 0：不應走到這裡（已在上方干擾處理）；保守不寫 true
         return .none
     }
 
@@ -158,6 +174,9 @@ public struct SleepGuardLedger: Codable, Sendable, Equatable {
         // ownership／pendingRestore 不變
     }
 
+    /// - `persisted == nil`：missing／corrupt／version-invalid（由 C05 判定後傳入）。
+    ///   若系統不是明確的 0，進入 `recoveryBlocked`，不猜 ownership（Fi A8／W0-4）。
+    /// - 已知 foreign（`setByHelper == false`）維持原行為。
     public static func reconcileOnLaunch(
         persisted: SleepGuardLedger?,
         currentSystemValue: Bool?
@@ -168,6 +187,15 @@ public struct SleepGuardLedger: Codable, Sendable, Equatable {
             ledger.setByHelper = persisted.setByHelper
             ledger.priorValueWasDisabled = persisted.priorValueWasDisabled
             ledger.pendingRestore = persisted.pendingRestore || persisted.setByHelper
+            ledger.recoveryBlocked = persisted.recoveryBlocked
+        } else if currentSystemValue != false {
+            // missing ledger + system 1 或 nil → 無法證明 ownership
+            ledger.recoveryBlocked = true
+            return (ledger, .recoveryBlocked)
+        }
+
+        if ledger.recoveryBlocked {
+            return (ledger, .recoveryBlocked)
         }
 
         if ledger.setByHelper, currentSystemValue == true {
@@ -178,6 +206,20 @@ public struct SleepGuardLedger: Codable, Sendable, Equatable {
     }
 
     // MARK: - Private
+
+    /// 我們擁有的持有 session：setByHelper 且尚有 holder（或 pending 還原中仍算 session 結束後的恢復）。
+    private var hasOwnedHoldingSession: Bool {
+        setByHelper && !holders.isEmpty
+    }
+
+    private mutating func invalidateForExternalInterference() -> Action {
+        holders.removeAll()
+        let shouldRestore = setByHelper
+        if shouldRestore {
+            pendingRestore = true
+        }
+        return .externalInterference(shouldRestore: shouldRestore)
+    }
 
     private mutating func addHolder(connectionID: UInt64, uid: UInt32, pid: Int32, now: Double) {
         holders[connectionID] = Holder(

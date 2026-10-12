@@ -38,15 +38,18 @@ struct SleepGuardLedgerTests {
         #expect(!ledger.setByHelper)
     }
 
-    @Test("V-C03-5 same-uid holders cannot release each other")
+    @Test("V-C03-5 / W0-10 same-uid: release one real connection; other survives")
     func sameUIDIndependent() {
         var ledger = SleepGuardLedger()
         _ = ledger.acquire(connectionID: 1, uid: 501, pid: 1, now: 0, currentSystemValue: false)
         ledger.acknowledgeWrite(true)
         _ = ledger.acquire(connectionID: 2, uid: 501, pid: 2, now: 1, currentSystemValue: true)
-        let other = ledger.release(connectionID: 99, currentSystemValue: true)
-        #expect(other == .none)
-        #expect(ledger.holders.count == 2)
+        let released = ledger.release(connectionID: 1, currentSystemValue: true)
+        #expect(released == .none)
+        #expect(ledger.holders.keys.sorted() == [2])
+        #expect(ledger.setByHelper)
+        let last = ledger.release(connectionID: 2, currentSystemValue: true)
+        #expect(last == .write(false))
     }
 
     @Test("dropConnection equivalent to release")
@@ -126,24 +129,57 @@ struct SleepGuardLedgerTests {
         #expect(ledger.release(connectionID: 1, currentSystemValue: true) == .write(false))
     }
 
-    @Test("Fi A2: renew when system forced to 0 → release, do not rewrite true")
-    func externalZeroReleases() {
-        var ledger = SleepGuardLedger()
-        _ = ledger.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false)
-        ledger.acknowledgeWrite(true)
-        let action = ledger.acquire(
-            connectionID: 1, uid: 1, pid: 1, now: 20, currentSystemValue: false
-        )
-        #expect(action == .write(false))
-        #expect(ledger.holders.isEmpty)
-        #expect(ledger.setByHelper) // pending restore until ack
+    @Test("Fi A2 / W0-1: external 0 during owned session → interference, no write(true), no stale holders")
+    func externalZeroInterference() {
+        // 單連線續約
+        var one = SleepGuardLedger()
+        _ = one.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false)
+        one.acknowledgeWrite(true)
+        let renew = one.acquire(connectionID: 1, uid: 1, pid: 1, now: 20, currentSystemValue: false)
+        #expect(renew == .externalInterference(shouldRestore: true))
+        #expect(one.holders.isEmpty)
+        #expect(one.pendingRestore)
+        #expect(one.setByHelper)
+
+        // 兩 holder（同／異 uid）：續約或新連線見 0 → 全域清掉，不寫 true
+        for secondUID: UInt32 in [501, 502] {
+            var ledger = SleepGuardLedger()
+            _ = ledger.acquire(connectionID: 1, uid: 501, pid: 1, now: 0, currentSystemValue: false)
+            ledger.acknowledgeWrite(true)
+            _ = ledger.acquire(connectionID: 2, uid: secondUID, pid: 2, now: 1, currentSystemValue: true)
+            #expect(ledger.holders.count == 2)
+
+            let viaRenew = ledger.acquire(
+                connectionID: 1, uid: 501, pid: 1, now: 20, currentSystemValue: false
+            )
+            #expect(viaRenew == .externalInterference(shouldRestore: true))
+            #expect(ledger.holders.isEmpty)
+
+            var ledger2 = SleepGuardLedger()
+            _ = ledger2.acquire(connectionID: 1, uid: 501, pid: 1, now: 0, currentSystemValue: false)
+            ledger2.acknowledgeWrite(true)
+            _ = ledger2.acquire(connectionID: 2, uid: secondUID, pid: 2, now: 1, currentSystemValue: true)
+            let viaNew = ledger2.acquire(
+                connectionID: 3, uid: 503, pid: 3, now: 30, currentSystemValue: false
+            )
+            #expect(viaNew == .externalInterference(shouldRestore: true))
+            #expect(ledger2.holders.isEmpty)
+            #expect(ledger2.pendingRestore)
+        }
+
+        // foreign session（未擁有）：系統 0 的新 acquire 可正常寫 true
+        var foreign = SleepGuardLedger()
+        _ = foreign.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: true)
+        #expect(!foreign.setByHelper)
+        // foreign 持有中系統變 0：非 owned session，不走干擾；release 不寫
+        let rel = foreign.release(connectionID: 1, currentSystemValue: false)
+        #expect(rel == .none)
     }
 
     @Test("V-C03-6 reconcileOnLaunch four combinations")
     func reconcileMatrix() {
         let cases: [(SleepGuardLedger?, Bool?, SleepGuardLedger.Action, Bool)] = [
             (nil, false, .none, false),
-            (nil, true, .none, false),
             (SleepGuardLedger(setByHelper: false), false, .none, false),
             (SleepGuardLedger(setByHelper: false), true, .none, false),
             (SleepGuardLedger(setByHelper: true), false, .none, true),
@@ -157,7 +193,49 @@ struct SleepGuardLedgerTests {
             #expect(action == expectedAction)
             #expect(ledger.setByHelper == expectSetByHelper)
             #expect(ledger.holders.isEmpty)
+            #expect(!ledger.recoveryBlocked)
         }
+    }
+
+    @Test("W0-4 / Fi A8 missing ledger + system 1 → recoveryBlocked; acquire refused")
+    func recoveryBlockedMissingLedger() {
+        let (blocked, action) = SleepGuardLedger.reconcileOnLaunch(persisted: nil, currentSystemValue: true)
+        #expect(action == .recoveryBlocked)
+        #expect(blocked.recoveryBlocked)
+
+        var ledger = blocked
+        for _ in 0..<3 {
+            let acq = ledger.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false)
+            #expect(acq == .recoveryBlocked)
+            #expect(ledger.holders.isEmpty)
+        }
+
+        // nil system + missing ledger 同樣封鎖
+        let (blockedNil, actionNil) = SleepGuardLedger.reconcileOnLaunch(persisted: nil, currentSystemValue: nil)
+        #expect(actionNil == .recoveryBlocked)
+        #expect(blockedNil.recoveryBlocked)
+
+        // 已知 foreign 帳本保持原行為
+        let (foreign, foreignAction) = SleepGuardLedger.reconcileOnLaunch(
+            persisted: SleepGuardLedger(priorValueWasDisabled: true, setByHelper: false),
+            currentSystemValue: true
+        )
+        #expect(foreignAction == .none)
+        #expect(!foreign.recoveryBlocked)
+        #expect(!foreign.setByHelper)
+
+        // nil read 保留既有 recovery 封鎖
+        let (retained, retainedAction) = SleepGuardLedger.reconcileOnLaunch(
+            persisted: SleepGuardLedger(recoveryBlocked: true),
+            currentSystemValue: nil
+        )
+        #expect(retainedAction == .recoveryBlocked)
+        #expect(retained.recoveryBlocked)
+
+        ledger.clearRecoveryBlock()
+        #expect(!ledger.recoveryBlocked)
+        let after = ledger.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false)
+        #expect(after == .write(true))
     }
 
     @Test("§14.1 nil system value refuses first acquire")
@@ -165,15 +243,48 @@ struct SleepGuardLedgerTests {
         var ledger = SleepGuardLedger()
         #expect(
             ledger.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: nil)
-                == .none
+                == .systemValueUnknown
         )
         #expect(ledger.holders.isEmpty)
     }
 
+    @Test("W0-10 failed write/read/ack and restore-retry preserve pendingRestore")
+    func writeAckRestoreRetry() {
+        var ledger = SleepGuardLedger()
+        #expect(ledger.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false) == .write(true))
+        // 寫入失敗：不得把 staged setByHelper 當確認成功清掉
+        ledger.noteWriteFailure()
+        #expect(ledger.setByHelper)
+        #expect(!ledger.pendingRestore)
+        ledger.acknowledgeWrite(true)
+        #expect(ledger.setByHelper)
+
+        #expect(ledger.release(connectionID: 1, currentSystemValue: true) == .write(false))
+        #expect(ledger.pendingRestore)
+        #expect(ledger.setByHelper)
+        ledger.noteWriteFailure()
+        #expect(ledger.pendingRestore)
+        #expect(ledger.setByHelper)
+        // 重試仍可再 write(false) 路徑：forceOff 或空表 finalize 已發過；ack 後才清
+        ledger.acknowledgeWrite(false)
+        #expect(!ledger.setByHelper)
+        #expect(!ledger.pendingRestore)
+    }
+
     @Test("Codable round-trip")
     func codableRoundTrip() throws {
-        var ledger = SleepGuardLedger(priorValueWasDisabled: false, setByHelper: true)
+        var ledger = SleepGuardLedger(priorValueWasDisabled: false, setByHelper: true, recoveryBlocked: true)
         _ = ledger.acquire(connectionID: 9, uid: 501, pid: 42, now: 12.5, currentSystemValue: true)
+        // recoveryBlocked 擋住 acquire；改為直接塞 holder 測 round-trip
+        ledger = SleepGuardLedger(
+            holders: [
+                9: .init(connectionID: 9, uid: 501, pid: 42, since: 12.5, lastHeartbeat: 12.5)
+            ],
+            priorValueWasDisabled: false,
+            setByHelper: true,
+            pendingRestore: true,
+            recoveryBlocked: false
+        )
         let data = try JSONEncoder().encode(ledger)
         let decoded = try JSONDecoder().decode(SleepGuardLedger.self, from: data)
         #expect(decoded == ledger)
