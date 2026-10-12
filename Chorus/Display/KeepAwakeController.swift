@@ -414,7 +414,7 @@ final class KeepAwakeController {
             assertionEffective: assertionEffectiveForLease(),
             lidEffective: lidEffectiveForLease()
         )
-        return encodeOK(response)
+        return encodeOK(KeepAwakeStatusRecoveryWire(response: response, evidence: lidGuard.helperStatus))
     }
 
     func reevaluate() {
@@ -679,7 +679,9 @@ final class KeepAwakeController {
             }
             // Partial: explain the ineffective side (lid fallback when enabled but not holding).
             if !lidEffective {
-                return explicitLidReason ?? "lidGuardOff"
+                if let explicitLidReason { return explicitLidReason }
+                if case .unavailable = lidGuard.phase { return "blocked:helperUnavailable" }
+                return "blocked:lidPending"
             }
             return assertionReason
         }
@@ -727,4 +729,37 @@ final class KeepAwakeController {
         }
     }
 
+}
+
+/// C08's additive HTTP allowlist. Keep C01's existing DTO decodable while its
+/// owner adds optional recovery fields; encode only these three health booleans.
+private struct KeepAwakeStatusRecoveryWire: Encodable {
+    let response: KeepAwakeStatusResponse
+    let evidence: PowerHelperStatus?
+
+    private enum CodingKeys: String, CodingKey { case helper }
+
+    func encode(to encoder: Encoder) throws {
+        try response.encode(to: encoder)
+        guard let cached = response.helper, let evidence else { return }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(HelperRecoveryWire(cached: cached, evidence: evidence), forKey: .helper)
+    }
+
+    private struct HelperRecoveryWire: Encodable {
+        let cached: KeepAwakeHelperStatusDTO
+        let evidence: PowerHelperStatus
+
+        private enum CodingKeys: String, CodingKey {
+            case recoveryBlocked, pendingRestore, persistRetryNeeded
+        }
+
+        func encode(to encoder: Encoder) throws {
+            try cached.encode(to: encoder)
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(evidence.recoveryBlocked, forKey: .recoveryBlocked)
+            try container.encode(evidence.pendingRestore, forKey: .pendingRestore)
+            try container.encode(evidence.persistRetryNeeded, forKey: .persistRetryNeeded)
+        }
+    }
 }

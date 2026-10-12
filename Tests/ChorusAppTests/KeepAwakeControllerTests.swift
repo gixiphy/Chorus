@@ -55,6 +55,9 @@ struct KeepAwakeControllerTests {
         var onAvailabilityChange: (() -> Void)?
         private(set) var setCalls: [Bool] = []
         private(set) var syncCalls = 0
+        var recoveryBlocked = false
+        var pendingRestore = false
+        var persistRetryNeeded = false
 
         func refreshAvailability() {}
         func register() async throws {}
@@ -68,7 +71,10 @@ struct KeepAwakeControllerTests {
             )
         }
         func status() async throws -> PowerHelperStatus {
-            PowerHelperStatus(helperBuild: "1")
+            PowerHelperStatus(
+                helperBuild: "1", recoveryBlocked: recoveryBlocked,
+                pendingRestore: pendingRestore, persistRetryNeeded: persistRetryNeeded
+            )
         }
         func setSleepDisabledSynchronously(_ on: Bool, timeout: TimeInterval) -> Bool {
             syncCalls += 1
@@ -592,6 +598,50 @@ struct KeepAwakeControllerTests {
         let held = try decodeHold(controller.handleKeepAwakeHold(body: holdBody(id: "r-mode")))
         #expect(!held.effective)
         #expect(held.reason == "agentModeOff")
+    }
+
+    @Test("C8-4 HTTP cached status exposes all recovery flags without a helper call")
+    func statusExposesRecoveryEvidence() async throws {
+        for flag in [0, 1, 2] {
+            let settings = SettingsStore(defaults: UserDefaults(suiteName: "status-recovery-\(UUID().uuidString)")!)
+            settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+            let helper = FakeLidHelper()
+            helper.recoveryBlocked = flag == 0
+            helper.pendingRestore = flag == 1
+            helper.persistRetryNeeded = flag == 2
+            let controller = makeController(assertions: FakeAssertions(), settings: settings, lidHelper: helper)
+            defer { controller.shutdown() }
+            controller.activate(.whileAgentsWorking)
+            await controller.lidGuard.refreshFromHelper()
+            _ = controller.handleKeepAwakeHold(body: holdBody(id: "recovery"))
+            let response = controller.handleKeepAwakeStatus()
+            let responseData = Data(response.json.utf8)
+            let json = try #require(JSONSerialization.jsonObject(with: responseData) as? [String: Any])
+            let cached = try #require(json["helper"] as? [String: Any])
+            #expect(cached["recoveryBlocked"] as? Bool == (flag == 0))
+            #expect(cached["pendingRestore"] as? Bool == (flag == 1))
+            #expect(cached["persistRetryNeeded"] as? Bool == (flag == 2))
+            #expect(json["lidPhase"] as? String == "unavailable")
+            #expect(json["lidEffective"] as? Bool == false)
+            #expect(helper.setCalls.isEmpty)
+            // C01's current DTO must still decode the additive wire fields.
+            _ = try JSONDecoder().decode(KeepAwakeStatusResponse.self, from: responseData)
+        }
+    }
+
+    @Test("C8-7 partial: enabled but unavailable helper is explained without claiming option off")
+    func holdReasonPartialHelperUnavailable() throws {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "hold-unavailable-r3-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let helper = FakeLidHelper()
+        helper.availability = .notRegistered
+        let controller = makeController(assertions: FakeAssertions(), settings: settings, lidHelper: helper)
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        let held = try decodeHold(controller.handleKeepAwakeHold(body: holdBody(id: "unavailable")))
+        #expect(held.assertionEffective)
+        #expect(!held.lidEffective)
+        #expect(held.reason == "blocked:helperUnavailable")
     }
 
     @Test("C8-7 partial: assertion works + lidGuardOff → reason lidGuardOff")

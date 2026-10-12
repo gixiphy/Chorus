@@ -46,7 +46,6 @@ final class LidSleepGuardController {
             let approved = SettingsStore.approvedLidGuardSettings(settings)
             if approved != settings {
                 settings = approved
-                return
             }
             persistSettings()
             scheduleReevaluate()
@@ -100,6 +99,8 @@ final class LidSleepGuardController {
     @ObservationIgnored private var externalInterferenceLatched = false
     /// C8-2: after a failed holding set, block reacquire until status evidence is obtained.
     @ObservationIgnored private var awaitingForcedOffEvidence = false
+    /// Failed reads revoke confirmation, but cannot erase an already observed recovery block.
+    @ObservationIgnored private var recoveryHealthBlocked = false
     /// Local override so a failed set(true) surfaces as unavailable(.error) until retry.
     @ObservationIgnored private var transientHelperError: String?
     @ObservationIgnored private var handshakeTask: Task<Void, Never>?
@@ -263,7 +264,9 @@ final class LidSleepGuardController {
         }
 
         do {
+            let generation = setGeneration
             let status = try await helper.status()
+            guard !shutDown, setGeneration == generation else { return }
             applyHelperStatus(status)
             classifyLeftover(from: status)
             if leftover == .ownResidual {
@@ -287,17 +290,23 @@ final class LidSleepGuardController {
         default:
             return
         }
+        let generation = setGeneration
         do {
             let status = try await helper.status()
+            guard !shutDown, setGeneration == generation else { return }
             applyHelperStatus(status)
             handleForcedOffIfNeeded(status)
             considerExternalInterference(from: status)
             considerRecoveryHealth(from: status)
             if awaitingForcedOffEvidence {
                 awaitingForcedOffEvidence = false
+                if !externalInterferenceLatched, !hasRecoveryHealthBlock {
+                    transientHelperError = nil
+                }
             }
             scheduleReevaluate()
         } catch {
+            guard !shutDown, setGeneration == generation else { return }
             helperStatus = nil
             publish()
         }
@@ -477,8 +486,7 @@ final class LidSleepGuardController {
 
     /// C8-4: recovery health from any cached status forbids ordinary acquire.
     private var hasRecoveryHealthBlock: Bool {
-        guard let status = helperStatus else { return false }
-        return status.recoveryBlocked || status.pendingRestore || status.persistRetryNeeded
+        recoveryHealthBlocked
     }
 
     private func updateBusyPeriodTracking() {
@@ -607,13 +615,28 @@ final class LidSleepGuardController {
 
     /// C8-2 / Fi A2: after failed holding set, require status evidence before retry.
     private func gatherEvidenceAfterFailedAcquire() async {
+        let generation = setGeneration
         awaitingForcedOffEvidence = true
         wantsSleepDisabled = false
+        awaitingArmedConfirm = false
         stopHeartbeat()
-        retryTask?.cancel()
-        retryTask = nil
+        // A failed/lost acquire reply can still leave our holder alive. Release before
+        // probing, serially, so the client's generation does not invalidate either call.
+        do {
+            let released = try await helper.setSleepDisabled(false)
+            guard !shutDown, setGeneration == generation else { return }
+            applyHelperStatus(released)
+            handleForcedOffIfNeeded(released)
+            considerExternalInterference(from: released)
+            considerRecoveryHealth(from: released)
+        } catch {
+            guard !shutDown, setGeneration == generation else { return }
+            Self.log.notice("Lid Guard release after failed acquire failed: \(String(describing: error))")
+        }
+        guard !shutDown, setGeneration == generation else { return }
         do {
             let status = try await helper.status()
+            guard !shutDown, setGeneration == generation else { return }
             applyHelperStatus(status)
             handleForcedOffIfNeeded(status)
             considerExternalInterference(from: status)
@@ -622,8 +645,9 @@ final class LidSleepGuardController {
             if externalInterferenceLatched || hasRecoveryHealthBlock {
                 return
             }
-            // Evidence obtained and clear — release path may still run; allow bounded retry.
+            // Fresh evidence is clear; a bounded retry may acquire again.
         } catch {
+            guard !shutDown, setGeneration == generation else { return }
             // No evidence → remain nonholding; do not clear error or reacquire.
             Self.log.notice(
                 "Lid Guard failed to obtain forced-off evidence: \(String(describing: error))"
@@ -679,6 +703,7 @@ final class LidSleepGuardController {
 
     private func applyHelperStatus(_ status: PowerHelperStatus) {
         helperStatus = status
+        recoveryHealthBlocked = status.recoveryBlocked || status.pendingRestore || status.persistRetryNeeded
         // Stale/disconnected: drop hold badge immediately (§14.2).
         if status.sleepDisabled != true || !status.callerIsHolder {
             // Keep status for UI; isActuallyHoldingSleepDisabled becomes false.
@@ -733,8 +758,10 @@ final class LidSleepGuardController {
                 notifier.notifyLeftoverRecoveryNeeded()
             }
             awaitingArmedConfirm = false
+            let shouldRelease = wantsSleepDisabled
             wantsSleepDisabled = false
             stopHeartbeat()
+            if shouldRelease { requestSet(false) }
             return
         }
         if leftover == .recoveryBlocked {

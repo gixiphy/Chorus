@@ -33,6 +33,8 @@ struct LidSleepGuardControllerTests {
         var failStatus = false
         /// C8-2: next status() surfaces externalInterference without a successful set reply.
         var injectInterferenceOnStatus = false
+        var statusHandler: (() async throws -> PowerHelperStatus)?
+        var failRelease = false
 
         func refreshAvailability() {}
         func register() async throws {}
@@ -41,6 +43,7 @@ struct LidSleepGuardControllerTests {
 
         func setSleepDisabled(_ on: Bool) async throws -> PowerHelperStatus {
             setCalls.append(on)
+            if !on, failRelease { throw PowerHelperClientError.remote("restoreFailed") }
             if hangSet {
                 try await Task.sleep(for: .seconds(30))
             }
@@ -70,6 +73,7 @@ struct LidSleepGuardControllerTests {
 
         func status() async throws -> PowerHelperStatus {
             statusCalls += 1
+            if let statusHandler { return try await statusHandler() }
             if failStatus {
                 throw PowerHelperClientError.remote("statusLost")
             }
@@ -621,6 +625,175 @@ struct LidSleepGuardControllerTests {
         } else {
             Issue.record("expected unavailable while awaiting evidence, got \(controller.phase)")
         }
+    }
+
+    @Test("C8-2 lost acquire reply releases before probing and resumes only after fresh evidence")
+    func lostReplyReleasesAndFreshEvidenceResumes() async throws {
+        let helper = FakeHelper()
+        helper.failNextSet = true
+        helper.failRelease = true
+        let (controller, _, _, _) = makeController(helper: helper, heartbeat: 60)
+        defer { controller.shutdown() }
+        let started = AsyncStream<Void>.makeStream()
+        let published = AsyncStream<Void>.makeStream()
+        var reply: CheckedContinuation<PowerHelperStatus, Error>?
+        helper.statusHandler = {
+            try await withCheckedThrowingContinuation { continuation in
+                reply = continuation
+                started.continuation.yield(())
+            }
+        }
+        controller.onChange = { published.continuation.yield(()) }
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        var startIterator = started.stream.makeAsyncIterator()
+        _ = await startIterator.next()
+        #expect(helper.setCalls == [true, false], "release must be attempted even if its reply fails")
+        #expect(!controller.wantsSleepDisabled)
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        #expect(!controller.wantsSleepDisabled, "no acquire while evidence is outstanding")
+        reply?.resume(throwing: PowerHelperClientError.remote("statusLost"))
+        var publishIterator = published.stream.makeAsyncIterator()
+        _ = await publishIterator.next()
+        #expect(!controller.wantsSleepDisabled)
+        helper.statusHandler = nil
+        helper.failRelease = false
+        await controller.refreshFromHelper()
+        #expect(controller.wantsSleepDisabled, "fresh safe status must clear the transient error")
+    }
+
+    @Test("C8-2 evidence arriving after shutdown cannot restore status or publish")
+    func staleFailureEvidenceAfterShutdown() async throws {
+        let helper = FakeHelper()
+        helper.failNextSet = true
+        let (controller, _, _, _) = makeController(helper: helper, heartbeat: 60)
+        let started = AsyncStream<Void>.makeStream()
+        let completed = AsyncStream<Void>.makeStream()
+        var reply: CheckedContinuation<PowerHelperStatus, Error>?
+        helper.statusHandler = {
+            let status: PowerHelperStatus = try await withCheckedThrowingContinuation { continuation in
+                reply = continuation
+                started.continuation.yield(())
+            }
+            // Queue a MainActor barrier after the awaiting evidence task resumes.
+            Task { @MainActor in completed.continuation.yield(()) }
+            return status
+        }
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        var iterator = started.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        controller.shutdown()
+        let statusAtShutdown = controller.helperStatus
+        var publishes = 0
+        controller.onChange = { publishes += 1 }
+        reply?.resume(returning: PowerHelperStatus(
+            helperBuild: "late", sleepDisabled: true, setByHelper: true,
+            holderCount: 1, callerIsHolder: true, lastForcedOffReason: "externalInterference"
+        ))
+        var completionIterator = completed.stream.makeAsyncIterator()
+        _ = await completionIterator.next()
+        #expect(controller.helperStatus == statusAtShutdown)
+        #expect(publishes == 0)
+        #expect(controller.phase == .off)
+    }
+
+    @Test("C8-4 failed refresh preserves known recovery block until fresh healthy evidence")
+    func recoveryBlockSurvivesLostRefresh() async throws {
+        for flag in [0, 1, 2] {
+            let helper = FakeHelper()
+            helper.recoveryBlocked = flag == 0
+            helper.pendingRestore = flag == 1
+            helper.persistRetryNeeded = flag == 2
+            let (controller, _, _, notifier) = makeController(helper: helper, heartbeat: 60)
+            defer { controller.shutdown() }
+            await controller.refreshFromHelper()
+            helper.failStatus = true
+            await controller.refreshFromHelper()
+            controller.update(
+                agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+            )
+            #expect(!controller.wantsSleepDisabled)
+            #expect(controller.phase == .unavailable(.error("recoveryBlocked")))
+            #expect(controller.leftover == .recoveryBlocked)
+            #expect(notifier.leftoverRecovery == 1)
+            helper.failStatus = false
+            helper.recoveryBlocked = false
+            helper.pendingRestore = false
+            helper.persistRetryNeeded = false
+            await controller.refreshFromHelper()
+            #expect(controller.wantsSleepDisabled)
+        }
+    }
+
+    @Test("C8-4 fresh recovery evidence releases our existing holder", .timeLimit(.minutes(1)))
+    func recoveryEvidenceReleasesExistingHolder() async throws {
+        let helper = FakeHelper()
+        let (controller, _, _, _) = makeController(helper: helper, heartbeat: 60)
+        defer { controller.shutdown() }
+        let changes = AsyncStream<Void>.makeStream()
+        controller.onChange = { changes.continuation.yield(()) }
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        var iterator = changes.stream.makeAsyncIterator()
+        while !controller.isActuallyHoldingSleepDisabled { _ = await iterator.next() }
+        helper.pendingRestore = true
+        await controller.refreshFromHelper()
+        while !helper.setCalls.contains(false) { _ = await iterator.next() }
+        #expect(!controller.wantsSleepDisabled)
+        #expect(!controller.isActuallyHoldingSleepDisabled)
+        #expect(helper.setCalls == [true, false])
+        #expect(controller.leftover == .recoveryBlocked)
+    }
+
+    @Test("C8-4 refresh completing after shutdown is ignored")
+    func staleRefreshAfterShutdown() async throws {
+        let helper = FakeHelper()
+        let (controller, _, _, notifier) = makeController(helper: helper, heartbeat: 60)
+        let started = AsyncStream<Void>.makeStream()
+        var reply: CheckedContinuation<PowerHelperStatus, Error>?
+        helper.statusHandler = {
+            try await withCheckedThrowingContinuation { continuation in
+                reply = continuation
+                started.continuation.yield(())
+            }
+        }
+        let refreshing = Task { await controller.refreshFromHelper() }
+        var iterator = started.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        controller.shutdown()
+        reply?.resume(returning: PowerHelperStatus(helperBuild: "late", recoveryBlocked: true))
+        await refreshing.value
+        #expect(controller.helperStatus == nil)
+        #expect(controller.leftover == nil)
+        #expect(notifier.leftoverRecovery == 0)
+        #expect(controller.phase == .off)
+    }
+
+    @Test("R2 NEW-1 clamp-changing settings persist and reevaluate immediately")
+    func clampedAssignmentPersistsAndReevaluates() {
+        let defaults = UserDefaults(suiteName: "lid-clamp-r3-\(UUID().uuidString)")!
+        let store = SettingsStore(defaults: defaults)
+        let (controller, _, _, _) = makeController(settings: store, heartbeat: 60)
+        defer { controller.shutdown() }
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        #expect(controller.phase == .off)
+        controller.settings = LidSleepSettings(enabled: true, maxLidClosedSeconds: 4 * 3600, limitDurationOnAC: false)
+        #expect(controller.wantsSleepDisabled)
+        let restored = SettingsStore(defaults: defaults).keepAwakeLidGuard
+        #expect(restored.enabled)
+        #expect(restored.maxLidClosedSeconds == 3 * 3600)
+        #expect(restored.limitDurationOnAC)
+        // Also exercise a direct SettingsStore assignment, independently of the controller clamp.
+        store.keepAwakeLidGuard = LidSleepSettings(enabled: false, maxLidClosedSeconds: 4 * 3600, limitDurationOnAC: false)
+        #expect(!SettingsStore(defaults: defaults).keepAwakeLidGuard.enabled)
     }
 
     @Test("C8-3 saved 4h + AC exemption clamped; releases at 3h on AC")

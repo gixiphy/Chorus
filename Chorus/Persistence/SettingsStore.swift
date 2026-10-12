@@ -570,7 +570,6 @@ final class SettingsStore {
             let approved = Self.approvedLidGuardSettings(keepAwakeLidGuard)
             if approved != keepAwakeLidGuard {
                 keepAwakeLidGuard = approved
-                return
             }
             if let data = try? JSONEncoder().encode(approved) {
                 defaults.set(data, forKey: Key.keepAwakeLidGuard)
