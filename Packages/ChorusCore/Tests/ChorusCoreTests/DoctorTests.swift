@@ -204,6 +204,43 @@ struct DoctorTests {
         #expect(!report.hasErrors)
     }
 
+    @Test("V-C10-1 lid keep-awake leftover is warning; clean is ok")
+    func lidKeepAwakeCheck() {
+        var inputs = healthy()
+        inputs.lidKeepAwake = .init(
+            helperAvailability: "ready",
+            sleepDisabled: true,
+            setByHelper: false,
+            leftover: "foreign",
+            sources: [.init(id: "orca", health: "degraded", reason: "CLI 失敗")]
+        )
+        let warned = check("keepawake.lid", in: DoctorRules.evaluate(inputs))
+        #expect(warned?.status == .warning)
+        #expect(warned?.title == "闔蓋防睡")
+        #expect(warned?.detail?.contains("SleepDisabled=1") == true)
+        #expect(warned?.detail?.contains("orca=degraded") == true)
+        #expect(warned?.remedy != nil)
+
+        inputs.lidKeepAwake = .init(
+            helperAvailability: "ready",
+            sleepDisabled: false,
+            setByHelper: false,
+            leftover: nil,
+            sources: [.init(id: "agents", health: "ok")]
+        )
+        let ok = check("keepawake.lid", in: DoctorRules.evaluate(inputs))
+        #expect(ok?.status == .ok)
+        #expect(ok?.detail?.contains("殘留=無") == true)
+        #expect(ok?.remedy == nil)
+    }
+
+    @Test("V-C10-2 omitting lidKeepAwake keeps old evaluate shape")
+    func lidKeepAwakeOptionalCompatibility() {
+        let checks = DoctorRules.evaluate(healthy())
+        #expect(check("keepawake.lid", in: checks) == nil)
+        #expect(check("app.mainLoop", in: checks)?.status == .ok)
+    }
+
     @Test("Formatter shows symbol, title, detail and remedy")
     func formatter() {
         let report = DoctorReport(generatedAt: .now, checks: [

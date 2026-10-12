@@ -40,6 +40,9 @@ public enum DoctorRules {
                 ))
             }
         }
+        if let lid = inputs.lidKeepAwake {
+            checks.append(lidKeepAwake(lid))
+        }
         return checks
     }
 
@@ -148,6 +151,75 @@ public enum DoctorRules {
             detail: inputs.listenerState.isEmpty ? "尚未啟動。" : inputs.listenerState,
             remedy: "通常幾秒內會就緒；若一直如此，重新開啟 Chorus。"
         )
+    }
+
+    /// 闔蓋防睡（spec §8.4）：有殘留 → warning；否則 ok。detail 含 availability／SleepDisabled／setByHelper／來源 health。
+    private static func lidKeepAwake(_ snap: DoctorInputs.LidKeepAwake) -> DoctorCheck {
+        let id = "keepawake.lid"
+        let title = "闔蓋防睡"
+        var parts: [String] = ["helper=\(snap.helperAvailability)"]
+        if let sleepDisabled = snap.sleepDisabled {
+            parts.append("SleepDisabled=\(sleepDisabled ? 1 : 0)")
+        } else {
+            parts.append("SleepDisabled=未知")
+        }
+        if let setByHelper = snap.setByHelper {
+            parts.append("setByHelper=\(setByHelper)")
+        } else {
+            parts.append("setByHelper=未知")
+        }
+        if let leftover = snap.leftover {
+            parts.append("殘留=\(leftoverDisplayName(leftover))")
+        } else {
+            parts.append("殘留=無")
+        }
+        if snap.sources.isEmpty {
+            parts.append("來源=無")
+        } else {
+            let listed = snap.sources.map { source -> String in
+                if let reason = source.reason, !reason.isEmpty {
+                    return "\(source.id)=\(source.health)(\(reason))"
+                }
+                return "\(source.id)=\(source.health)"
+            }.joined(separator: "、")
+            parts.append("來源：\(listed)")
+        }
+        let detail = parts.joined(separator: "；")
+        if let leftover = snap.leftover {
+            return DoctorCheck(
+                id: id, status: .warning, title: title, detail: detail,
+                remedy: leftoverRemedy(leftover)
+            )
+        }
+        return DoctorCheck(id: id, status: .ok, title: title, detail: detail)
+    }
+
+    private static func leftoverDisplayName(_ leftover: String) -> String {
+        switch leftover {
+        case "ownResidual": return "自身殘留"
+        case "foreign": return "外部設定"
+        case "otherUserHolding": return "其他使用者持有"
+        case "unknownOwner": return "無法確認擁有者"
+        case "recoveryBlocked": return "帳本復原封鎖"
+        default: return leftover
+        }
+    }
+
+    private static func leftoverRemedy(_ leftover: String) -> String {
+        switch leftover {
+        case "ownResidual":
+            return "到設定頁或選單列按「還原」；若無效，執行 sudo pmset -a disablesleep 0。"
+        case "foreign":
+            return "SleepDisabled=1 不是 Chorus 設的。確認其他工具後，必要時執行 sudo pmset -a disablesleep 0。"
+        case "otherUserHolding":
+            return "另一位使用者的 Chorus 正持有 SleepDisabled；請該使用者結束或暫停闔蓋防睡。"
+        case "recoveryBlocked":
+            return "helper 帳本無法安全復原。到設定頁查看說明，必要時執行 sudo pmset -a disablesleep 0。"
+        case "unknownOwner":
+            return "helper 無法連線且 SleepDisabled=1。到系統設定允許 Chorus 登入項目，或執行 sudo pmset -a disablesleep 0。"
+        default:
+            return "到設定頁查看闔蓋防睡狀態；必要時執行 sudo pmset -a disablesleep 0。"
+        }
     }
 
     private static func connection(_ peer: DoctorInputs.Peer) -> DoctorCheck {

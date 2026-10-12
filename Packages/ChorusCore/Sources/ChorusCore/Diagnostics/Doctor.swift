@@ -118,11 +118,53 @@ public struct DoctorInputs: Sendable, Equatable {
     public var mainLoopResponsive: Bool
     public var lastExitWasCrash: Bool
     public var peers: [Peer]
+    /// 闔蓋防睡快照（spec §8.4）。nil = 舊呼叫端未提供，規則略過此檢查（舊 JSON／舊 App 相容）。
+    public var lidKeepAwake: LidKeepAwake?
+
+    /// 闔蓋防睡診斷輸入。欄位皆 optional／字串化，避免綁死 C02／C03 具體型別。
+    public struct LidKeepAwake: Sendable, Equatable {
+        /// helper availability 的穩定字串（如 `ready`、`notRegistered`、`requiresApproval`）。
+        public var helperAvailability: String
+        /// 目前 SleepDisabled；nil 表示讀不到。
+        public var sleepDisabled: Bool?
+        public var setByHelper: Bool?
+        /// 殘留分類 wire 值；nil = 無殘留。
+        public var leftover: String?
+        /// 各來源 health（已消毒，不含 path／uid／pid／token）。
+        public var sources: [SourceHealth]
+
+        public struct SourceHealth: Sendable, Equatable {
+            public var id: String
+            public var health: String
+            public var reason: String?
+
+            public init(id: String, health: String, reason: String? = nil) {
+                self.id = id
+                self.health = health
+                self.reason = reason
+            }
+        }
+
+        public init(
+            helperAvailability: String,
+            sleepDisabled: Bool? = nil,
+            setByHelper: Bool? = nil,
+            leftover: String? = nil,
+            sources: [SourceHealth] = []
+        ) {
+            self.helperAvailability = helperAvailability
+            self.sleepDisabled = sleepDisabled
+            self.setByHelper = setByHelper
+            self.leftover = leftover
+            self.sources = sources
+        }
+    }
 
     public init(
         browserState: String, listenerState: String, accessibilityTrusted: Bool,
         tapState: TapState, tapError: String?, mainLoopResponsive: Bool,
-        lastExitWasCrash: Bool, peers: [Peer]
+        lastExitWasCrash: Bool, peers: [Peer],
+        lidKeepAwake: LidKeepAwake? = nil
     ) {
         self.browserState = browserState
         self.listenerState = listenerState
@@ -132,6 +174,7 @@ public struct DoctorInputs: Sendable, Equatable {
         self.mainLoopResponsive = mainLoopResponsive
         self.lastExitWasCrash = lastExitWasCrash
         self.peers = peers
+        self.lidKeepAwake = lidKeepAwake
     }
 }
 
