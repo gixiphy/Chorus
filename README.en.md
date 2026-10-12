@@ -208,6 +208,19 @@ do not use this path; they ship signed with the app.
   never contents). A process sitting at a prompt does not count. This blocks
   **system** sleep, not display sleep: overnight runs need the machine up;
   a dark screen is fine.
+- **Lid-closed keep-awake (Agent mode, off by default)**:
+  In Agent mode, keep the Mac awake when working sources are active even if the laptop lid is closed.
+  - **Safety and hardware limits**:
+    - **Off by default** (must be manually enabled in Settings).
+    - **Hardware support**: supported only on MacBook models with a built-in display lid; models without a lid (such as Mac mini, Mac Studio, Mac Pro) are unsupported and the controls are hidden and barred from arming.
+    - **Battery floor**: on battery power, keep-awake releases immediately if battery falls below 30% (configurable between 30%–50%, floor at least 30%); also releases conservatively if battery state cannot be read.
+    - **Thermal safety**: releases immediately when system thermal pressure reaches serious (`.serious`) or critical, avoiding dangerous heat buildup with the lid shut. **Never place a MacBook in a bag or enclosed space while lid-closed keep-awake is active!**
+    - **Lid duration limit**: capped at 3 hours max per lid-closed session (the 3-hour limit applies on AC power as well); latches off when reached until the lid is opened again.
+  - **Privileged helper (ChorusPowerHelper)**:
+    This feature requires a privileged LaunchDaemon running as root (`ChorusPowerHelper`, registered via `SMAppService.daemon`).
+    - **Installation & approval**: turning on the toggle prompts an explanation sheet before registration; requires approval once in System Settings › General › Login Items & Extensions.
+    - **Removal**: an inline confirmation in Settings › Advanced lets you remove the helper; Chorus verifies that all holds are safely released and reads back the system state before unregistering.
+    - **Automatic restoration**: normally, the helper automatically restores system sleep when all active sources finish, on disconnection (Chorus quits or crashes), after a 60-second heartbeat timeout, or during boot reconciliation. However, **if the helper daemon itself crashes or experiences an abnormal failure**, the disabled-sleep state may remain leftover in the system and require manual command restoration as described in Troubleshooting below.
 - **High-load mode**: keep the display awake only after CPU / GPU / network
   stay above threshold (default 15 s); clear after 120 s under the sustain
   floor. Thresholds are adjustable in Settings; when GPU is unreadable the
@@ -267,6 +280,36 @@ chorus scene 工作 --for 25m # timed scene: auto-restore when time is up
 chorus scene --end          # end early and restore
 chorus listen | jq          # event stream of state changes
 chorus doctor               # check permissions, discovery, peer connections and audio, with fixes
+
+# Heartbeat leases (keep awake during long background jobs or custom agent wrappers):
+chorus keepawake hold --id my-task --ttl 600   # acquire or renew lease (default 600s, range 30–3600s)
+chorus keepawake status                        # inspect current keep-awake and lease state
+chorus keepawake release --id my-task          # release lease on completion
+```
+
+**Heartbeat lease wrapper script example (heartbeat loop)**:
+```bash
+# Example wrapper for a long-running background command
+LEASE_ID="backup-job-$$"
+TTL=600
+
+# Start background heartbeat (renew every ttl/3 seconds)
+(
+  while true; do
+    chorus keepawake hold --id "$LEASE_ID" --ttl "$TTL" >/dev/null 2>&1
+    sleep 200
+  done
+) &
+HEARTBEAT_PID=$!
+
+cleanup() {
+  kill "$HEARTBEAT_PID" 2>/dev/null
+  chorus keepawake release --id "$LEASE_ID" >/dev/null 2>&1
+}
+trap cleanup EXIT INT TERM
+
+# Run actual workload
+./run-heavy-task.sh
 ```
 
 **Scenes**: named action sets ("電影" = all displays 30% + output volume 20%).
@@ -278,6 +321,24 @@ the same restore path. Scope follows scene contents, so only what we moved is
 restored; manual tweaks elsewhere in those 25 minutes stay put. Input-source
 switches cannot read back (action-style VCP) and are listed honestly under
 "will not auto-restore."
+
+---
+
+## Troubleshooting: lid-closed keep-awake leftover
+
+When lid-closed keep-awake is active, the privileged helper modifies macOS system power settings as root (`pmset -a disablesleep 1`). Under normal circumstances, the helper restores system sleep automatically when Chorus quits, on disconnection, when heartbeats time out, or during boot reconciliation. However, **if the helper crashes or is terminated unexpectedly, the disabled-sleep setting may remain leftover in macOS**, in which case you must restore it manually:
+
+1. **Check if sleep is currently disabled**:
+   ```bash
+   pmset -g | grep SleepDisabled
+   ```
+   If the output shows `SleepDisabled 1`, system-wide sleep is currently disabled.
+
+2. **Manually restore system sleep**:
+   ```bash
+   sudo pmset -a disablesleep 0
+   ```
+   Running this command immediately restores macOS default sleep behavior. You can also inspect helper status in the Chorus menu bar or Settings; if an own residual is detected, clicking "Restore" attempts an automatic release.
 
 ---
 
