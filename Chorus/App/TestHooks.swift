@@ -484,6 +484,29 @@ final class TestHooks {
                     appState.keepAwake.activate(KeepAwakePlanner.decode(value))
                 }
             }
+        case "lidGuardMaxSeconds":
+            // M-5：Debug 覆寫闔蓋時限（秒）。Release 無此路徑。
+            if let raw = info["value"], let seconds = Double(raw), seconds.isFinite, seconds > 0 {
+                appState.keepAwake.lidGuard.debugMaxLidClosedSeconds = seconds
+            }
+        case "lidGuardBatteryFloor":
+            // M-12：Debug 覆寫電量底線。
+            if let raw = info["value"], let floor = Int(raw) {
+                appState.keepAwake.lidGuard.debugBatteryFloorPercent = floor
+            }
+        case "lidGuardPower":
+            // M-12／M-13：注入電量／thermal。value = "battery:PERCENT:THERMAL" 或 "ac:THERMAL"
+            // THERMAL = nominal|fair|serious|critical
+            if let raw = info["value"] {
+                appState.keepAwake.lidGuard.debugPowerOverride = Self.parseLidPowerOverride(raw)
+            }
+        case "lidGuardPauseSeconds":
+            // M-13：覆寫「暫停 1 小時」時長。
+            if let raw = info["value"], let seconds = Double(raw), seconds.isFinite, seconds > 0 {
+                appState.keepAwake.lidGuard.debugPauseDurationSeconds = seconds
+            }
+        case "lidGuardPause":
+            appState.keepAwake.lidGuard.pauseForOneHour()
         case "focusStart":
             // value = "場景名|秒數"。走與選單、CLI 完全同一條路（B7-1）
             if let raw = info["value"] {
@@ -819,6 +842,9 @@ final class TestHooks {
                 "preventsSystemSleep": appState.keepAwake.alsoPreventSystemSleep,
                 "agents": appState.keepAwake.agentActivity.working.map(\.id),
                 "agentEngines": appState.keepAwake.agentActivity.engines,
+                "hubBusy": appState.keepAwake.sourceHub.isBusy,
+                "lidPhase": String(describing: appState.keepAwake.lidGuard.phase),
+                "lidActuallyHolding": appState.keepAwake.lidGuard.isActuallyHoldingSleepDisabled,
                 "systemLoad": Self.describeSystemLoad(appState.keepAwake.systemLoad),
             ] as [String: Any],
             "focus": [
@@ -943,5 +969,35 @@ enum TestSupport {
     static var hooks: TestHooks?
     /// --fake-taps 時的 backend，TestHooks 靠它切換 audio/zeros 模式。
     static var fakeTapBackend: FakeTapBackend?
+}
+
+extension TestHooks {
+    fileprivate static func parseLidPowerOverride(_ raw: String) -> PowerSnapshot? {
+        let parts = raw.split(separator: ":").map(String.init)
+        func thermal(_ name: String) -> ProcessInfo.ThermalState {
+            switch name {
+            case "fair": return .fair
+            case "serious": return .serious
+            case "critical": return .critical
+            default: return .nominal
+            }
+        }
+        if parts.first == "ac", parts.count >= 2 {
+            return PowerSnapshot(
+                hasInternalBattery: true, onBattery: false, percent: 80, thermal: thermal(parts[1])
+            )
+        }
+        if parts.first == "battery", parts.count >= 3, let percent = Int(parts[1]) {
+            return PowerSnapshot(
+                hasInternalBattery: true, onBattery: true, percent: percent, thermal: thermal(parts[2])
+            )
+        }
+        if parts.first == "unknown" {
+            return PowerSnapshot(
+                hasInternalBattery: true, onBattery: nil, percent: nil, thermal: .nominal
+            )
+        }
+        return nil
+    }
 }
 #endif

@@ -50,21 +50,85 @@ struct KeepAwakeControllerTests {
         func notifyPowerFloorPaused(_ state: PowerFloorState) { paused.append(state) }
     }
 
+    final class FakeLidHelper: PowerHelperClienting {
+        var availability: LidHelperAvailability = .ready
+        var onAvailabilityChange: (() -> Void)?
+        private(set) var setCalls: [Bool] = []
+        private(set) var syncCalls = 0
+
+        func refreshAvailability() {}
+        func register() async throws {}
+        func unregister() async throws {}
+        func openApprovalSettings() {}
+        func setSleepDisabled(_ on: Bool) async throws -> PowerHelperStatus {
+            setCalls.append(on)
+            return PowerHelperStatus(
+                helperBuild: "1", sleepDisabled: on, setByHelper: on,
+                holderCount: on ? 1 : 0, callerIsHolder: on
+            )
+        }
+        func status() async throws -> PowerHelperStatus {
+            PowerHelperStatus(helperBuild: "1")
+        }
+        func setSleepDisabledSynchronously(_ on: Bool, timeout: TimeInterval) -> Bool {
+            syncCalls += 1
+            setCalls.append(on)
+            return true
+        }
+    }
+
+    final class FakeLidObserver: LidStateObserving {
+        var isClosed: Bool? = false
+        var reading: LidClosedReading = .open
+        var onChange: (() -> Void)?
+        func start() {}
+        func stop() {}
+        func setPollingEnabled(_ enabled: Bool) {}
+    }
+
+    private func makeLidGuard(
+        settings: SettingsStore,
+        helper: FakeLidHelper = FakeLidHelper(),
+        notifier: FakeNotifier
+    ) -> LidSleepGuardController {
+        LidSleepGuardController(
+            settings: settings,
+            helper: helper,
+            lid: FakeLidObserver(),
+            notifier: notifier,
+            now: { 1_000 },
+            e2eNamedInstance: false,
+            sessionStore: LidClosedSessionStore(suiteName: "ka-lid-\(UUID().uuidString)"),
+            sleepDisabledProbe: { nil },
+            heartbeatInterval: 60
+        )
+    }
+
     private func makeController(
         assertions: FakeAssertions,
         settings: SettingsStore? = nil,
         powerSource: FakePowerSource? = nil,
         notifier: FakeNotifier? = nil,
-        now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }
+        now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
+        agentActivity: AgentActivityMonitor? = nil,
+        lidHelper: FakeLidHelper? = nil
     ) -> KeepAwakeController {
         let settings = settings
             ?? SettingsStore(defaults: UserDefaults(suiteName: "keep-awake-\(UUID().uuidString)")!)
+        let notifier = notifier ?? FakeNotifier()
+        let helper = lidHelper ?? FakeLidHelper()
+        let monitor = agentActivity ?? AgentActivityMonitor(sources: [], processSampler: nil)
+        // Disable optional sources so Agent-mode tests stay deterministic.
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
         return KeepAwakeController(
             settings: settings, displayManager: DisplayManager(settings: settings),
-            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            agentActivity: monitor,
+            lidGuard: makeLidGuard(settings: settings, helper: helper, notifier: notifier),
             powerSource: powerSource ?? FakePowerSource(),
             assertions: assertions,
-            notifier: notifier ?? FakeNotifier(),
+            notifier: notifier,
             now: now
         )
     }
@@ -305,9 +369,16 @@ struct KeepAwakeControllerTests {
         let assertions = FakeAssertions()
         assertions.failingTypes = [kIOPMAssertionTypePreventUserIdleDisplaySleep]
         let settings = SettingsStore(defaults: UserDefaults(suiteName: "agent-display-\(UUID().uuidString)")!)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        let notifier = FakeNotifier()
         let controller = KeepAwakeController(
             settings: settings, displayManager: DisplayManager(settings: settings),
-            agentActivity: monitor, assertions: assertions,
+            agentActivity: monitor,
+            lidGuard: makeLidGuard(settings: settings, notifier: notifier),
+            assertions: assertions,
+            notifier: notifier,
             workspaceNotifications: NotificationCenter()
         )
         defer { controller.shutdown() }
@@ -333,5 +404,91 @@ struct KeepAwakeControllerTests {
         await monitor.refresh()
         #expect(!controller.isHolding)
         #expect(assertions.active.isEmpty)
+    }
+
+    @Test("Agent mode: hub busy (lease) drives IOPMAssertion (V-C08 / A4)")
+    func hubBusyDrivesAssertion() async throws {
+        let assertions = FakeAssertions()
+        let controller = makeController(assertions: assertions)
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        #expect(!controller.isHolding)
+
+        let result = controller.sourceHub.leases.hold(id: "lease-bot", ttl: 600)
+        guard case .held = result else {
+            Issue.record("expected held lease")
+            return
+        }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !controller.isHolding, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(controller.isHolding)
+        #expect(controller.sourceHub.isBusy)
+    }
+
+    @Test("Non-agent mode keeps lidGuard off (V-C08)")
+    func nonAgentLidOff() async throws {
+        let helper = FakeLidHelper()
+        let controller = makeController(assertions: FakeAssertions(), lidHelper: helper)
+        defer { controller.shutdown() }
+        controller.lidGuard.settings = LidSleepSettings(enabled: true)
+        controller.activate(.indefinite)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(controller.lidGuard.phase == .off)
+        #expect(helper.setCalls.filter { $0 }.isEmpty)
+    }
+
+    @Test("shutdown calls lidGuard before deactivate (V-C08)")
+    func shutdownOrdersLidFirst() async throws {
+        let helper = FakeLidHelper()
+        let controller = makeController(assertions: FakeAssertions(), lidHelper: helper)
+        controller.lidGuard.settings = LidSleepSettings(enabled: true)
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "shutdown-order", ttl: 600)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while helper.setCalls.filter({ $0 }).isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(!helper.setCalls.filter({ $0 }).isEmpty)
+        controller.shutdown()
+        #expect(helper.syncCalls >= 1)
+        #expect(controller.mode == .off)
+        #expect(!controller.isHolding)
+    }
+
+    @Test("Option off never set(true); leftover probe still allowed (V-C08-5 / V-C08-7)")
+    func optionOffNoSetTrue() async throws {
+        let helper = FakeLidHelper()
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "opt-off-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: false)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        let notifier = FakeNotifier()
+        let lidGuard = LidSleepGuardController(
+            settings: settings,
+            helper: helper,
+            lid: FakeLidObserver(),
+            notifier: notifier,
+            now: { 1_000 },
+            e2eNamedInstance: false,
+            sessionStore: LidClosedSessionStore(suiteName: "opt-off-sess-\(UUID().uuidString)"),
+            sleepDisabledProbe: { false },
+            heartbeatInterval: 60
+        )
+        let controller = KeepAwakeController(
+            settings: settings, displayManager: DisplayManager(settings: settings),
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            lidGuard: lidGuard,
+            assertions: FakeAssertions(),
+            notifier: notifier
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "x", ttl: 60)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(helper.setCalls.filter { $0 }.isEmpty)
+        await lidGuard.detectLeftover()
+        #expect(helper.setCalls.filter { $0 }.isEmpty)
     }
 }

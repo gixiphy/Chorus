@@ -319,7 +319,110 @@ final class KeepAwakeController {
         deactivate()
     }
 
+    /// Fi A4：automation／token 清除租約（C09 掛鉤；離開 Agent 由 hub.stop 處理）。
+    func clearKeepAwakeLeases() {
+        sourceHub.leases.clearImmediately()
+    }
+
+    /// C09 HTTP hold — 組裝 assertionEffective／lidEffective（Fi A4）。
+    func handleKeepAwakeHold(body: Data) -> AutomationHTTPTransport.Response {
+        let decoder = JSONDecoder()
+        let request: KeepAwakeHoldRequest
+        do {
+            request = try decoder.decode(KeepAwakeHoldRequest.self, from: body)
+        } catch {
+            return .init(
+                status: 400,
+                json: AutomationHTTPTransport.errorJSON("badRequest", "無法解析 hold 請求")
+            )
+        }
+        let result = sourceHub.leases.hold(id: request.id, ttl: request.ttl)
+        switch result {
+        case let .held(expiresAt, clampedTTL):
+            let uptime = ProcessInfo.processInfo.systemUptime
+            let assertion = assertionEffectiveForLease()
+            let lid = lidEffectiveForLease()
+            let reason: String? = {
+                if case .whileAgentsWorking = mode { return nil }
+                return "agentModeOff"
+            }()
+            let response = KeepAwakeHoldResponse(
+                id: request.id,
+                expiresIn: max(0, expiresAt - uptime),
+                ttl: clampedTTL,
+                assertionEffective: assertion,
+                lidEffective: lid,
+                reason: reason
+            )
+            return encodeOK(response)
+        case .invalidID, .invalidTTL:
+            return .init(
+                status: 400,
+                json: AutomationHTTPTransport.errorJSON("badRequest", "id 或 ttl 不合法")
+            )
+        case .tooMany:
+            return .init(
+                status: 429,
+                json: AutomationHTTPTransport.errorJSON("tooManyLeases", "租約數已達上限")
+            )
+        }
+    }
+
+    func handleKeepAwakeRelease(body: Data) -> AutomationHTTPTransport.Response {
+        let decoder = JSONDecoder()
+        let request: KeepAwakeReleaseRequest
+        do {
+            request = try decoder.decode(KeepAwakeReleaseRequest.self, from: body)
+        } catch {
+            return .init(
+                status: 400,
+                json: AutomationHTTPTransport.errorJSON("badRequest", "無法解析 release 請求")
+            )
+        }
+        let released = sourceHub.leases.release(id: request.id)
+        return encodeOK(KeepAwakeReleaseResponse(id: request.id, released: released))
+    }
+
+    /// GET status：helper 用快取，不阻塞 main actor 打 XPC（§14.3）。
+    func handleKeepAwakeStatus() -> AutomationHTTPTransport.Response {
+        let snap = sourceHub.leases.snapshot()
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let leases = snap.active.map {
+            KeepAwakeLeaseStatusDTO(
+                id: $0.id,
+                expiresIn: max(0, $0.expiresAt - uptime),
+                ttl: KeepAwakeLeaseTable.defaultTTL
+            )
+        }
+        let helperDTO: KeepAwakeHelperStatusDTO? = {
+            guard let status = lidGuard.helperStatus else { return nil }
+            return KeepAwakeHelperStatusDTO(
+                availability: "cached",
+                sleepDisabled: status.sleepDisabled,
+                setByHelper: status.setByHelper,
+                holderCount: status.holderCount,
+                callerIsHolder: status.callerIsHolder,
+                otherUsersHolding: status.otherUsersHolding,
+                lastForcedOffReason: status.lastForcedOffReason
+            )
+        }()
+        let response = KeepAwakeStatusResponse(
+            mode: modeWire(mode),
+            isHolding: isHolding,
+            lidPhase: lidPhaseWire(lidGuard.phase),
+            contributing: sourceHub.busy.contributing,
+            leases: leases,
+            helper: helperDTO,
+            assertionEffective: assertionEffectiveForLease(),
+            lidEffective: lidEffectiveForLease()
+        )
+        return encodeOK(response)
+    }
+
     func reevaluate() {
+        if case .whileAgentsWorking = mode {
+            sourceHub.configure(settings.keepAwakeSourceSettings)
+        }
         let currentTime = now()
         remainingSeconds = KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: startedAt, now: currentTime)
         let connected = Set(displayManager?.displays.map(\.uuid) ?? [])
@@ -466,10 +569,12 @@ final class KeepAwakeController {
         if case .whileSystemBusy = mode {
             systemLoad.resetAfterWake()
         }
+        // Refresh helper status in the background; assertion reevaluate stays synchronous
+        // so existing wake／duration tests keep working.
         Task { @MainActor [weak self] in
             await self?.lidGuard.refreshFromHelper()
-            self?.reevaluate()
         }
+        reevaluate()
     }
 
     /// Agent 模式進出時開／關來源 hub（含既有 agents＋新來源）。
@@ -541,4 +646,43 @@ final class KeepAwakeController {
         assertions.release(existing)
         id = nil
     }
+
+    private func assertionEffectiveForLease() -> Bool {
+        guard case .whileAgentsWorking = mode, !shutDown else { return false }
+        return isHolding
+    }
+
+    private func lidEffectiveForLease() -> Bool {
+        guard case .whileAgentsWorking = mode, !shutDown else { return false }
+        return lidGuard.isActuallyHoldingSleepDisabled
+    }
+
+    private func encodeOK<T: Encodable>(_ value: T) -> AutomationHTTPTransport.Response {
+        let data = (try? JSONEncoder().encode(value)) ?? Data("{}".utf8)
+        return .init(status: 200, json: String(decoding: data, as: UTF8.self))
+    }
+
+    private func modeWire(_ mode: KeepAwakeMode) -> String {
+        switch mode {
+        case .off: return "off"
+        case .indefinite: return "indefinite"
+        case .duration: return "duration"
+        case .whileDisplayConnected: return "whileDisplayConnected"
+        case .whileAppRunning: return "whileAppRunning"
+        case .whileAgentsWorking: return "whileAgentsWorking"
+        case .whileSystemBusy: return "whileSystemBusy"
+        }
+    }
+
+    private func lidPhaseWire(_ phase: LidSleepGuardPhase) -> String {
+        switch phase {
+        case .off: return "off"
+        case .unavailable: return "unavailable"
+        case .idle: return "idle"
+        case .armed: return "armed"
+        case .holdingLidClosed: return "holdingLidClosed"
+        case .blocked: return "blocked"
+        }
+    }
+
 }

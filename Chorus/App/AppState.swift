@@ -263,8 +263,35 @@ final class AppState {
         focus.events = automationEvents
 
         timeline.mark("automationServer")
+        // C09 keepawake handlers — C08 接上租約與 Fi A4 clearLeases。
+        let keepAwakeController = keepAwake
+        automationServer.setKeepAwakeHandlers(
+            hold: { [weak keepAwakeController] body in
+                keepAwakeController?.handleKeepAwakeHold(body: body)
+                    ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
+            },
+            release: { [weak keepAwakeController] body in
+                keepAwakeController?.handleKeepAwakeRelease(body: body)
+                    ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
+            },
+            status: { [weak keepAwakeController] in
+                keepAwakeController?.handleKeepAwakeStatus()
+                    ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
+            },
+            clearLeases: { [weak keepAwakeController] in
+                keepAwakeController?.clearKeepAwakeLeases()
+            }
+        )
         // 綁定型模式跨重啟保留：螢幕 > App > Agent > 負載
         keepAwake.restoreSavedMode()
+        // §6.6：殘留偵測在 restore 之後；選項關閉仍允許只讀 probe。
+        // XCTest host 不跑：避免對未註冊 helper 打真 XPC（C06 isolation crash）。
+        let underXCTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        if !underXCTest {
+            Task { @MainActor [weak keepAwakeController] in
+                await keepAwakeController?.lidGuard.detectLeftover()
+            }
+        }
 
         timeline.mark("keepAwakeRestore")
         displayManager.start()

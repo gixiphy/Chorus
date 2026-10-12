@@ -50,16 +50,73 @@ final class KeepAwakeNotifier: KeepAwakeNotifying {
         deliver(content, prefix: "keep-awake-power-floor")
     }
 
-    // Skeleton stubs — full copy + authorization in integration commit.
-    func notifyLidGuardArmed(sources: [KeepAwakeSourceReport]) { _ = sources }
-    func notifyLidGuardReleased(reason: LidBlockReason?, lidClosed: Bool) {
-        _ = reason
-        _ = lidClosed
+    func notifyLidGuardArmed(sources: [KeepAwakeSourceReport]) {
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "闔上螢幕也不會睡")
+        let names = sources.prefix(3).map(\.displayName).joined(separator: "、")
+        let extra = sources.count > 3 ? String(localized: "等 \(sources.count - 3) 個") : ""
+        let list = extra.isEmpty ? names : "\(names)、\(extra)"
+        content.body = String(
+            localized: "讓 Mac 保持清醒：\(list)。電量低於 30% 或過熱時會自動解除。"
+        )
+        deliver(content, prefix: "lid-guard-armed")
     }
-    func notifyLidGuardHelperNeedsApproval() {}
-    func notifyLeftoverRestored() {}
-    func notifyLeftoverForeign() {}
-    func notifyHelperForcedOff(reason: String) { _ = reason }
+
+    func notifyLidGuardReleased(reason: LidBlockReason?, lidClosed: Bool) {
+        let content = UNMutableNotificationContent()
+        switch reason {
+        case let .maxDuration(limitSeconds):
+            let hours = Int((limitSeconds / 3600).rounded())
+            content.title = String(localized: "闔蓋已達 \(hours) 小時上限")
+            content.body = String(localized: "Mac 即將睡眠；打開螢幕後會重新計算。")
+        case let .lowBattery(percent, floor):
+            content.title = String(localized: "闔蓋防睡已解除")
+            if let percent {
+                content.body = String(localized: "電量 \(percent)%，低於 \(floor)%，Mac 即將睡眠。")
+            } else {
+                content.body = String(localized: "電量低於 \(floor)%，Mac 即將睡眠。")
+            }
+        case .thermal:
+            content.title = String(localized: "闔蓋防睡已解除")
+            content.body = String(localized: "溫度過高，Mac 即將睡眠。")
+        case .unknownPower, .lidUnknown, .noLid, .userPaused:
+            content.title = String(localized: "闔蓋防睡已解除")
+            content.body = String(localized: "安全條件不成立，Mac 即將睡眠。")
+        case .none:
+            guard lidClosed else { return }
+            content.title = String(localized: "闔蓋防睡已解除")
+            content.body = String(localized: "工作已結束，Mac 即將睡眠。")
+        }
+        deliver(content, prefix: "lid-guard-released")
+    }
+
+    func notifyLidGuardHelperNeedsApproval() {
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "需要允許 Chorus 輔助程序")
+        content.body = String(localized: "到「登入項目與延伸功能」允許後，闔蓋防睡才會生效。")
+        deliver(content, prefix: "lid-guard-helper-approval")
+    }
+
+    func notifyLeftoverRestored() {
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "已還原系統睡眠設定")
+        content.body = String(localized: "上次 Chorus 未正常結束，闔蓋睡眠已恢復。")
+        deliver(content, prefix: "lid-guard-leftover-restored")
+    }
+
+    func notifyLeftoverForeign() {
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "系統目前不會睡眠")
+        content.body = String(localized: "SleepDisabled=1 不是 Chorus 設的，可能來自其他工具。")
+        deliver(content, prefix: "lid-guard-leftover-foreign")
+    }
+
+    func notifyHelperForcedOff(reason: String) {
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "闔蓋防睡已被強制解除")
+        content.body = String(localized: "原因：\(reason)")
+        deliver(content, prefix: "lid-guard-forced-off")
+    }
 
     private func deliver(_ content: UNMutableNotificationContent, prefix: String) {
         requestAuthorizationIfNeeded()
