@@ -285,4 +285,61 @@ struct AgentActivityMonitorTests {
         monitor.stop()
         #expect(!monitor.chromiumThrottleWarning)
     }
+
+    // MARK: - C07 sourceReport()
+
+    @Test("sourceReport returns nil when working is empty")
+    func sourceReportNilWhenIdle() {
+        let monitor = monitor([])
+        #expect(monitor.sourceReport() == nil)
+    }
+
+    @Test("sourceReport isWorkingNow false; lastWorkingAt is max lastWrite")
+    func sourceReportMaxLastWrite() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try write("old.jsonl", in: root, agoSeconds: 60)
+        try write("new.jsonl", in: root, agoSeconds: 5)
+
+        let monitor = monitor([ResolvedAgentLogSource(engine: "Codex", root: root)])
+        await monitor.refresh()
+        let report = monitor.sourceReport()
+        #expect(report != nil)
+        #expect(report?.id == "agents")
+        #expect(report?.isWorkingNow == false)
+        #expect(report?.kind == .agentActivity)
+        let newest = monitor.working.map(\.lastWrite).max()
+        #expect(report?.lastWorkingAt == newest)
+    }
+
+    @Test("sourceReport stable-clamps identical future mtime across calls")
+    func sourceReportFutureClampStable() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "future.jsonl")
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try Data("{}\n".utf8).write(to: file)
+        let now = Date()
+        let future = now.addingTimeInterval(3_600)
+        try FileManager.default.setAttributes(
+            [.modificationDate: future], ofItemAtPath: file.path
+        )
+
+        var clock = now
+        let monitor = AgentActivityMonitor(
+            sources: [ResolvedAgentLogSource(engine: "Codex", root: root)],
+            processSampler: nil,
+            now: { clock }
+        )
+        monitor.chromiumThrottleWarningOverride = false
+        await monitor.refresh()
+        let first = monitor.sourceReport(now: clock)?.lastWorkingAt
+        #expect(first == now)
+
+        clock = now.addingTimeInterval(30)
+        let second = monitor.sourceReport(now: clock)?.lastWorkingAt
+        #expect(second == first)
+    }
 }

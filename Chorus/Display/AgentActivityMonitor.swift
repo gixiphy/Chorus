@@ -44,6 +44,8 @@ final class AgentActivityMonitor {
     @ObservationIgnored private var processState = AgentProcessActivityPlanner.State()
     @ObservationIgnored private var matcher = AgentProcessMatcher()
     @ObservationIgnored private var processDetectionEnabled = true
+    /// §14.3：未來 mtime 第一次觀察穩定 clamp（sourceReport）。
+    @ObservationIgnored private var mtimeClamp = KeepAwakeMtimeClampCache()
     /// 測試縫：非 nil 時略過真掃描，直接用這個值。
     @ObservationIgnored var chromiumThrottleWarningOverride: Bool?
 
@@ -90,6 +92,37 @@ final class AgentActivityMonitor {
         working = []
         chromiumThrottleWarning = false
         processState = AgentProcessActivityPlanner.State()
+        mtimeClamp.removeAll()
+    }
+
+    func clearMtimeClamp() {
+        mtimeClamp.removeAll()
+    }
+
+    /// Hub 轉接（spec §4.2）：`isWorkingNow` 固定 false，避免與聚合器重複套用寬限。
+    /// working 為空時回 nil；有樣本時 `lastWorkingAt` 是（穩定 clamp 後）最大的 lastWrite。
+    func sourceReport(now: Date? = nil) -> KeepAwakeSourceReport? {
+        guard !working.isEmpty else { return nil }
+        let instant = now ?? self.now()
+        var latest: Date?
+        for sample in working {
+            let clamped = mtimeClamp.stabilize(id: sample.id, raw: sample.lastWrite, now: instant)
+            if let current = latest {
+                latest = max(current, clamped)
+            } else {
+                latest = clamped
+            }
+        }
+        let enginesLabel = engines.joined(separator: "、")
+        return KeepAwakeSourceReport(
+            id: "agents",
+            kind: .agentActivity,
+            displayName: enginesLabel.isEmpty ? "Agents" : enginesLabel,
+            detail: nil,
+            isWorkingNow: false,
+            lastWorkingAt: latest,
+            health: .ok
+        )
     }
 
     /// 設定頁改了第二層的開關或自訂行程名。
