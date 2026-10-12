@@ -222,6 +222,84 @@ struct LidSleepGuardControllerTests {
         PowerSnapshot(hasInternalBattery: true, onBattery: false, percent: 80, thermal: thermal)
     }
 
+    @Test("V01 resumeAfterPause clears pause and reacquires after reevaluation", .timeLimit(.minutes(1)))
+    func resumeAfterPauseReevaluates() async throws {
+        let (controller, helper, _, _) = makeController(now: { 1_000 }, heartbeat: 3_600)
+        defer { controller.shutdown() }
+        let changes = AsyncStream<Void>.makeStream()
+        defer { changes.continuation.finish() }
+        controller.onChange = { changes.continuation.yield(()) }
+        var iterator = changes.stream.makeAsyncIterator()
+
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        while !controller.isActuallyHoldingSleepDisabled {
+            let event = await iterator.next()
+            _ = try #require(event)
+        }
+
+        controller.pauseForOneHour()
+        #expect(controller.state.userPausedUntil == 4_600)
+        #expect(controller.phase == .blocked(.userPaused(untilUptime: 4_600)))
+        #expect(!controller.wantsSleepDisabled)
+        while controller.helperStatus?.callerIsHolder != false {
+            let event = await iterator.next()
+            _ = try #require(event)
+        }
+        #expect(helper.setCalls == [true, false])
+
+        controller.resumeAfterPause()
+        #expect(controller.state.userPausedUntil == nil)
+        try #require(controller.phase == .armed)
+        try #require(controller.wantsSleepDisabled)
+        while !controller.isActuallyHoldingSleepDisabled {
+            let event = await iterator.next()
+            _ = try #require(event)
+        }
+        #expect(helper.setCalls == [true, false, true])
+    }
+
+    @Test("V01 resumeAfterPause reevaluates thermal safety instead of bypassing it")
+    func resumeAfterPausePreservesSafetyGates() {
+        let (controller, helper, _, _) = makeController(now: { 1_000 }, heartbeat: 3_600)
+        defer { controller.shutdown() }
+        controller.pauseForOneHour()
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(thermal: .serious), existingFloor: .percent20
+        )
+        #expect(controller.phase == .blocked(.userPaused(untilUptime: 4_600)))
+
+        controller.resumeAfterPause()
+        #expect(controller.state.userPausedUntil == nil)
+        #expect(controller.phase == .blocked(.thermal))
+        #expect(!controller.wantsSleepDisabled)
+        #expect(helper.setCalls.isEmpty)
+    }
+
+    @Test("V01 resumeAfterPause without a pause does not reevaluate or publish")
+    func resumeAfterPauseWithoutPauseIsNoOp() {
+        let (controller, helper, _, _) = makeController(now: { 1_000 }, heartbeat: 3_600)
+        defer { controller.shutdown() }
+        controller.update(
+            agentModeActive: true, busy: .init(isBusy: false, contributing: [], releaseAt: nil),
+            power: acPower(), existingFloor: .percent20
+        )
+        #expect(controller.phase == .idle)
+        #expect(controller.state.userPausedUntil == nil)
+        var publications = 0
+        controller.onChange = { publications += 1 }
+        let stateBefore = controller.state
+        let statusCallsBefore = helper.statusCalls
+
+        controller.resumeAfterPause()
+        #expect(controller.state == stateBefore)
+        #expect(!controller.wantsSleepDisabled)
+        #expect(publications == 0)
+        #expect(helper.setCalls.isEmpty)
+        #expect(helper.statusCalls == statusCallsBefore)
+    }
+
     @Test("idle→armed calls set(true) once and heartbeats (V-C08-1)")
     func armsAndHeartbeats() async throws {
         let (controller, helper, _, _) = makeController(heartbeat: 0.12)
