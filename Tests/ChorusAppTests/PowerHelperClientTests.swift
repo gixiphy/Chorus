@@ -315,6 +315,98 @@ struct PowerHelperClientConnectionTests {
         #expect(client.availability == .ready)
         #expect(proxy2.invalidateCount == 0)
     }
+
+    @Test("C8-1 off-actor status reply resumes safely on MainActor")
+    func offActorStatusReply() async throws {
+        let proxy = FakePowerHelperProxy()
+        proxy.statusHandler = { reply in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let status = PowerHelperStatus(helperBuild: "136")
+                var encoded = status
+                encoded.protocolVersion = PowerHelperConstants.protocolVersion
+                reply((try? JSONEncoder().encode(encoded)) ?? Data())
+            }
+        }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 1,
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let status = try await client.status()
+        #expect(status.helperBuild == "136")
+        #expect(client.availability == .ready)
+    }
+
+    @Test("C8-1 off-actor connection event hops before reading handler")
+    func offActorConnectionEvent() async throws {
+        let proxy = FakePowerHelperProxy()
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 1,
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        _ = try await client.status()
+        #expect(client.availability == .ready)
+
+        let emit = proxy.onConnectionEvent
+        #expect(emit != nil)
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                emit?(.interrupted)
+                DispatchQueue.main.async {
+                    cont.resume()
+                }
+            }
+        }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while client.availability == .ready, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(client.availability == .connecting)
+    }
+
+    @Test("C8-1 sync set reply from background queue stays bounded")
+    func offActorSyncSetReply() async throws {
+        let proxy = FakePowerHelperProxy()
+        proxy.statusHandler = { reply in
+            let status = PowerHelperStatus(helperBuild: "136")
+            var encoded = status
+            encoded.protocolVersion = PowerHelperConstants.protocolVersion
+            reply((try? JSONEncoder().encode(encoded)) ?? Data())
+        }
+        proxy.setHandler = { enabled, reply in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let status = PowerHelperStatus(
+                    helperBuild: "136", sleepDisabled: enabled, setByHelper: enabled,
+                    holderCount: enabled ? 1 : 0, callerIsHolder: enabled
+                )
+                reply(try? JSONEncoder().encode(status), nil)
+            }
+        }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 1,
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        _ = try await client.status()
+        let started = ContinuousClock.now
+        let ok = client.setSleepDisabledSynchronously(false, timeout: 1)
+        let elapsed = ContinuousClock.now - started
+        #expect(ok)
+        #expect(elapsed < .seconds(1))
+    }
 }
 
 @Suite("PowerHelperClient unregister (W1-6)")

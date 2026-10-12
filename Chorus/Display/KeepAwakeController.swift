@@ -655,24 +655,33 @@ final class KeepAwakeController {
         return lidGuard.isActuallyHoldingSleepDisabled
     }
 
-    /// Spec §4.5 / C8-7: explain accepted-but-ineffective leases.
-    /// Precedence: agentModeOff → lidGuardOff → blocked:<reason>.
+    /// Spec §4.5 / C8-7: explain ineffective assertion and/or Lid Guard sides independently.
+    /// Precedence when both ineffective: agentModeOff → lidGuardOff → blocked:<lid|power|assertion>.
+    /// Partial cases (one side effective) still surface the inactive side's explanation.
     private func ineffectiveHoldReason(assertionEffective: Bool, lidEffective: Bool) -> String? {
-        if assertionEffective || lidEffective { return nil }
+        if assertionEffective, lidEffective { return nil }
+
         if case .whileAgentsWorking = mode, !shutDown {
-            if !lidGuard.settings.enabled {
-                return "lidGuardOff"
+            /// Explicit lid blockers only; bare “enabled but not holding” defers to assertion.
+            let explicitLidReason: String? = {
+                if lidEffective { return nil }
+                if !lidGuard.settings.enabled { return "lidGuardOff" }
+                if let blocked = lidBlockReasonWire(lidGuard.phase) {
+                    return "blocked:\(blocked)"
+                }
+                if pauseReason.isTripped { return "blocked:powerFloor" }
+                return nil
+            }()
+            let assertionReason: String? = assertionEffective ? nil : "blocked:assertionFailed"
+
+            if !assertionEffective, !lidEffective {
+                return explicitLidReason ?? assertionReason ?? "lidGuardOff"
             }
-            if let blocked = lidBlockReasonWire(lidGuard.phase) {
-                return "blocked:\(blocked)"
+            // Partial: explain the ineffective side (lid fallback when enabled but not holding).
+            if !lidEffective {
+                return explicitLidReason ?? "lidGuardOff"
             }
-            if pauseReason.isTripped {
-                return "blocked:powerFloor"
-            }
-            if activationFailed || !isHolding {
-                return "blocked:assertionFailed"
-            }
-            return "lidGuardOff"
+            return assertionReason
         }
         return "agentModeOff"
     }

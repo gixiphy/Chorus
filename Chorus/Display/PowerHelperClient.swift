@@ -372,6 +372,7 @@ final class PowerHelperClient: PowerHelperClienting {
         }
         let gen = beginGeneration()
         let proxy = try ensureProxy()
+        // C8-1: XPC replies arrive off MainActor; withTimeout hops before resume.
         let data: Data = try await withTimeout(callTimeout) { continuation in
             proxy.setSleepDisabled(on) { statusJSON, errorCode in
                 if let errorCode {
@@ -390,6 +391,7 @@ final class PowerHelperClient: PowerHelperClienting {
     func status() async throws -> PowerHelperStatus {
         let gen = beginGeneration()
         let proxy = try ensureProxy()
+        // C8-1: XPC replies arrive off MainActor; withTimeout hops before resume.
         let data: Data = try await withTimeout(callTimeout) { continuation in
             proxy.status { statusJSON in
                 continuation(.success(statusJSON))
@@ -430,8 +432,10 @@ final class PowerHelperClient: PowerHelperClienting {
         let token = connectionToken
         let box = ReplyBox()
         let sem = DispatchSemaphore(value: 0)
+        // C8-1: sync shutdown must not hop to MainActor (would deadlock on wait).
+        // ReplyBox is lock-protected for off-actor XPC queues.
         proxy.setSleepDisabled(on) { _, error in
-            box.ok = (error == nil)
+            box.setOK(error == nil)
             sem.signal()
         }
         let result = sem.wait(timeout: .now() + timeout)
@@ -519,8 +523,11 @@ final class PowerHelperClient: PowerHelperClienting {
         try await withCheckedThrowingContinuation { continuation in
             let gate = ReplyGate()
             body { result in
-                guard gate.claim() else { return }
-                continuation.resume(with: result)
+                // C8-1: real XPC reply queues are off-actor; hop before resume.
+                Task { @MainActor in
+                    guard gate.claim() else { return }
+                    continuation.resume(with: result)
+                }
             }
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
@@ -612,25 +619,22 @@ final class RealPowerHelperXPCProxy: PowerHelperXPCProxying {
         connection.remoteObjectInterface = NSXPCInterface(with: ChorusPowerHelperXPC.self)
         connection.setCodeSigningRequirement(requirement)
         self.connection = connection
-        // Bind handlers to this proxy instance; client discards events if token/proxy mismatch (W1-4).
+        // C8-1: NSXPC handlers fire off MainActor — hop first, then touch actor state.
         connection.invalidationHandler = { [weak self] in
-            guard let self else { return }
-            let handler = self.onConnectionEvent
             Task { @MainActor in
-                handler?(.invalidated)
+                self?.onConnectionEvent?(.invalidated)
             }
         }
         connection.interruptionHandler = { [weak self] in
-            guard let self else { return }
-            let handler = self.onConnectionEvent
             Task { @MainActor in
-                handler?(.interrupted)
+                self?.onConnectionEvent?(.interrupted)
             }
         }
         connection.resume()
     }
 
     func setSleepDisabled(_ enabled: Bool, reply: @escaping (Data?, String?) -> Void) {
+        // Reply may run off MainActor; callers (withTimeout / ReplyBox) are responsible for hops.
         let proxy = connection.remoteObjectProxyWithErrorHandler { error in
             reply(nil, "xpc:\(error.localizedDescription)")
         }
@@ -671,6 +675,16 @@ private final class ReplyGate: @unchecked Sendable {
     }
 }
 
+/// Thread-safe box for synchronous set replies (C8-1; must not require MainActor).
 private final class ReplyBox: @unchecked Sendable {
-    var ok = false
+    private let lock = NSLock()
+    private var _ok = false
+    var ok: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _ok
+    }
+    func setOK(_ value: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        _ok = value
+    }
 }

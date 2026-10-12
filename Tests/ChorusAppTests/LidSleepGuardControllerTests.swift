@@ -29,6 +29,10 @@ struct LidSleepGuardControllerTests {
         var setDelay: Duration = .seconds(0)
         /// After a successful set(true), next status/set returns externalInterference evidence.
         var tripExternalInterferenceAfterArm = false
+        /// C8-2: status() throws (lost evidence) after a failed set.
+        var failStatus = false
+        /// C8-2: next status() surfaces externalInterference without a successful set reply.
+        var injectInterferenceOnStatus = false
 
         func refreshAvailability() {}
         func register() async throws {}
@@ -66,6 +70,13 @@ struct LidSleepGuardControllerTests {
 
         func status() async throws -> PowerHelperStatus {
             statusCalls += 1
+            if failStatus {
+                throw PowerHelperClientError.remote("statusLost")
+            }
+            if injectInterferenceOnStatus {
+                injectInterferenceOnStatus = false
+                injectExternalInterference()
+            }
             if promoteOnStatus, case .connecting = availability {
                 availability = .ready
                 onAvailabilityChange?()
@@ -545,6 +556,73 @@ struct LidSleepGuardControllerTests {
         }
     }
 
+    @Test("C8-2 failed heartbeat + interference on status — no reacquire before latch")
+    func failedHeartbeatProbesEvidenceBeforeReacquire() async throws {
+        let helper = FakeHelper()
+        let notifier = FakeNotifier()
+        let (controller, _, _, _) = makeController(
+            helper: helper, notifier: notifier, heartbeat: 0.12
+        )
+        defer { controller.shutdown() }
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        let armDeadline = ContinuousClock.now + .seconds(2)
+        while !controller.isActuallyHoldingSleepDisabled, ContinuousClock.now < armDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let truesBefore = helper.setCalls.filter({ $0 }).count
+
+        // Heartbeat set throws (restore/store failure); status carries forced-off reason.
+        helper.failNextSet = true
+        helper.injectInterferenceOnStatus = true
+        let latchDeadline = ContinuousClock.now + .seconds(3)
+        while !notifier.forcedOff.contains("externalInterference"), ContinuousClock.now < latchDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(notifier.forcedOff.contains("externalInterference"))
+        try await Task.sleep(for: .milliseconds(400))
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(helper.setCalls.filter({ $0 }).count == truesBefore + 1)
+    }
+
+    @Test("C8-2 failed heartbeat + lost status — remain nonholding, no reacquire")
+    func failedHeartbeatLostEvidenceBlocksReacquire() async throws {
+        let helper = FakeHelper()
+        let (controller, _, _, _) = makeController(helper: helper, heartbeat: 0.12)
+        defer { controller.shutdown() }
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        let armDeadline = ContinuousClock.now + .seconds(2)
+        while !controller.isActuallyHoldingSleepDisabled, ContinuousClock.now < armDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let truesBefore = helper.setCalls.filter({ $0 }).count
+
+        helper.failNextSet = true
+        helper.failStatus = true
+        let failDeadline = ContinuousClock.now + .seconds(2)
+        while helper.setCalls.filter({ $0 }).count <= truesBefore, ContinuousClock.now < failDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(500))
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(helper.setCalls.filter({ $0 }).count == truesBefore + 1)
+        #expect(!controller.isActuallyHoldingSleepDisabled)
+        if case .unavailable(.error) = controller.phase {
+            // ok — awaiting evidence or transient
+        } else {
+            Issue.record("expected unavailable while awaiting evidence, got \(controller.phase)")
+        }
+    }
+
     @Test("C8-3 saved 4h + AC exemption clamped; releases at 3h on AC")
     func maxThreeHoursIncludingAC() async throws {
         var time = 1_000.0
@@ -628,6 +706,49 @@ struct LidSleepGuardControllerTests {
         await controller.detectLeftover()
         #expect(controller.leftover == .recoveryBlocked)
         #expect(helper.setCalls.filter({ $0 }).isEmpty)
+    }
+
+    @Test("C8-4 recovery flags gate ordinary arm after handshake/wake — zero set(true)")
+    func recoveryFlagsGateOrdinaryAcquire() async throws {
+        for flag in ["recoveryBlocked", "pendingRestore", "persistRetryNeeded"] {
+            let helper = FakeHelper()
+            helper.availability = .connecting
+            helper.promoteOnStatus = true
+            switch flag {
+            case "recoveryBlocked": helper.recoveryBlocked = true
+            case "pendingRestore": helper.pendingRestore = true
+            default: helper.persistRetryNeeded = true
+            }
+            let notifier = FakeNotifier()
+            let (controller, _, _, _) = makeController(
+                helper: helper, notifier: notifier, heartbeat: 60
+            )
+            defer { controller.shutdown() }
+
+            controller.update(
+                agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+            )
+            let hsDeadline = ContinuousClock.now + .seconds(2)
+            while helper.statusCalls == 0, ContinuousClock.now < hsDeadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try await Task.sleep(for: .milliseconds(150))
+            #expect(helper.setCalls.filter({ $0 }).isEmpty, "set(true) despite \(flag) after handshake")
+            #expect(controller.leftover == .recoveryBlocked)
+            #expect(notifier.leftoverRecovery >= 1)
+
+            // Simulated wake reevaluate must still refuse acquire.
+            controller.update(
+                agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+            )
+            try await Task.sleep(for: .milliseconds(150))
+            #expect(helper.setCalls.filter({ $0 }).isEmpty, "set(true) despite \(flag) after wake")
+            if case let .unavailable(.error(msg)) = controller.phase {
+                #expect(msg == "recoveryBlocked")
+            } else {
+                Issue.record("expected unavailable(recoveryBlocked) for \(flag), got \(controller.phase)")
+            }
+        }
     }
 
     @Test("C8-5 continuous busy source change + rearm still one armed notice")

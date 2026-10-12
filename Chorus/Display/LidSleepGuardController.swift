@@ -98,9 +98,13 @@ final class LidSleepGuardController {
     @ObservationIgnored private var awaitingArmedConfirm = false
     /// Fi A2 / C8-2: external write of 0 — release and do not re-compete until safe reset.
     @ObservationIgnored private var externalInterferenceLatched = false
+    /// C8-2: after a failed holding set, block reacquire until status evidence is obtained.
+    @ObservationIgnored private var awaitingForcedOffEvidence = false
     /// Local override so a failed set(true) surfaces as unavailable(.error) until retry.
     @ObservationIgnored private var transientHelperError: String?
     @ObservationIgnored private var handshakeTask: Task<Void, Never>?
+    /// C8-1／C8-4: block acquire until handshake applies recovery／forced-off evidence.
+    @ObservationIgnored private var suppressAcquireForHandshake = false
 
     #if DEBUG
     /// M-5 / M-12 / M-13 test overrides (Release: absent).
@@ -195,6 +199,14 @@ final class LidSleepGuardController {
         externalInterferenceLatched = false
     }
 
+    /// C8-2: drop evidence wait after the same safe reset as Fi A2.
+    private func clearAwaitingEvidenceIfSafe() {
+        guard awaitingForcedOffEvidence else { return }
+        guard !settings.enabled || !lastAgentModeActive || !lastBusy.isBusy else { return }
+        awaitingForcedOffEvidence = false
+        transientHelperError = nil
+    }
+
     /// Sync set(false); returns within 1s even if helper is silent (§14.2).
     func shutdown() {
         shutDown = true
@@ -280,6 +292,10 @@ final class LidSleepGuardController {
             applyHelperStatus(status)
             handleForcedOffIfNeeded(status)
             considerExternalInterference(from: status)
+            considerRecoveryHealth(from: status)
+            if awaitingForcedOffEvidence {
+                awaitingForcedOffEvidence = false
+            }
             scheduleReevaluate()
         } catch {
             helperStatus = nil
@@ -330,16 +346,22 @@ final class LidSleepGuardController {
         helper.refreshAvailability()
         guard case .connecting = helper.availability else { return }
         guard handshakeTask == nil else { return }
+        suppressAcquireForHandshake = true
         handshakeTask = Task { @MainActor [weak self] in
-            defer { self?.handshakeTask = nil }
-            guard let self, !self.shutDown else { return }
+            guard let self else { return }
+            defer {
+                self.suppressAcquireForHandshake = false
+                self.handshakeTask = nil
+                if !self.shutDown { self.scheduleReevaluate() }
+            }
+            guard !self.shutDown else { return }
             do {
                 let status = try await self.helper.status()
                 guard !self.shutDown else { return }
                 self.applyHelperStatus(status)
                 self.handleForcedOffIfNeeded(status)
                 self.considerExternalInterference(from: status)
-                self.scheduleReevaluate()
+                self.considerRecoveryHealth(from: status)
             } catch {
                 // Stay connecting／unavailable; retry path may refresh later.
                 Self.log.notice("Lid Guard helper handshake failed: \(String(describing: error))")
@@ -401,15 +423,25 @@ final class LidSleepGuardController {
 
         lidReading = lid.reading
         clearExternalInterferenceLatchIfSafe()
+        clearAwaitingEvidenceIfSafe()
         // Keep trying handshake while enabled/connecting (C8-1).
         if settings.enabled || lastAgentModeActive {
             ensureHelperHandshake()
         }
 
+        let recoveryBlockedAcquire = hasRecoveryHealthBlock
         let helperAvailability: LidHelperAvailability = {
             if externalInterferenceLatched {
                 return .error("externalInterference")
             }
+            if awaitingForcedOffEvidence {
+                return .error("awaitingForcedOffEvidence")
+            }
+            if recoveryBlockedAcquire {
+                return .error("recoveryBlocked")
+            }
+            // Keep policy in connecting while handshake applies evidence (C8-1／C8-4).
+            if suppressAcquireForHandshake { return .connecting }
             if let transientHelperError { return .error(transientHelperError) }
             return helper.availability
         }()
@@ -435,10 +467,18 @@ final class LidSleepGuardController {
         )
         let result = LidSleepGuardPolicy.step(state, input: input)
         var wants = result.wantsSleepDisabled
-        if externalInterferenceLatched {
+        if externalInterferenceLatched || awaitingForcedOffEvidence || recoveryBlockedAcquire
+            || suppressAcquireForHandshake
+        {
             wants = false
         }
         applyPolicyResult(state: result.state, wants: wants, events: result.events)
+    }
+
+    /// C8-4: recovery health from any cached status forbids ordinary acquire.
+    private var hasRecoveryHealthBlock: Bool {
+        guard let status = helperStatus else { return false }
+        return status.recoveryBlocked || status.pendingRestore || status.persistRetryNeeded
     }
 
     private func updateBusyPeriodTracking() {
@@ -473,7 +513,9 @@ final class LidSleepGuardController {
 
         if wants != previousWants {
             if wants {
-                if externalInterferenceLatched {
+                if externalInterferenceLatched || awaitingForcedOffEvidence || hasRecoveryHealthBlock
+                    || suppressAcquireForHandshake
+                {
                     wantsSleepDisabled = false
                 } else {
                     awaitingArmedConfirm = true
@@ -485,7 +527,10 @@ final class LidSleepGuardController {
                 requestSet(false)
                 stopHeartbeat()
             }
-        } else if wants, externalInterferenceLatched {
+        } else if wants,
+                  (externalInterferenceLatched || awaitingForcedOffEvidence || hasRecoveryHealthBlock
+                      || suppressAcquireForHandshake)
+        {
             wantsSleepDisabled = false
             stopHeartbeat()
         }
@@ -496,7 +541,11 @@ final class LidSleepGuardController {
 
     private func requestSet(_ on: Bool) {
         guard !e2eNamedInstance, !shutDown else { return }
-        if on, externalInterferenceLatched { return }
+        if on, externalInterferenceLatched || awaitingForcedOffEvidence || hasRecoveryHealthBlock
+            || suppressAcquireForHandshake
+        {
+            return
+        }
         switch helper.availability {
         case .ready:
             break
@@ -519,18 +568,24 @@ final class LidSleepGuardController {
         let generation = setGeneration
         Task { @MainActor [weak self] in
             guard let self, !self.shutDown, self.setGeneration == generation else { return }
-            if on, self.externalInterferenceLatched { return }
+            if on, self.externalInterferenceLatched || self.awaitingForcedOffEvidence
+                || self.hasRecoveryHealthBlock || self.suppressAcquireForHandshake
+            {
+                return
+            }
             do {
                 let status = try await self.helper.setSleepDisabled(on)
                 guard self.setGeneration == generation, !self.shutDown else { return }
                 if on {
                     self.transientHelperError = nil
+                    self.awaitingForcedOffEvidence = false
                     self.nextRetryDelay = 1
                 }
                 self.applyHelperStatus(status)
                 self.handleForcedOffIfNeeded(status)
                 self.considerExternalInterference(from: status)
-                if on, !self.externalInterferenceLatched {
+                self.considerRecoveryHealth(from: status)
+                if on, !self.externalInterferenceLatched, !self.hasRecoveryHealthBlock {
                     self.maybeNotifyArmedConfirmed()
                 }
                 self.scheduleReevaluate()
@@ -539,15 +594,45 @@ final class LidSleepGuardController {
                 if on {
                     self.transientHelperError = String(describing: error)
                     self.stopHeartbeat()
-                    self.scheduleRetry()
+                    // C8-2: gather forced-off evidence before any reacquire retry.
+                    await self.gatherEvidenceAfterFailedAcquire()
+                    if !self.externalInterferenceLatched, !self.awaitingForcedOffEvidence {
+                        self.scheduleRetry()
+                    }
                     self.scheduleReevaluate()
                 }
             }
         }
     }
 
+    /// C8-2 / Fi A2: after failed holding set, require status evidence before retry.
+    private func gatherEvidenceAfterFailedAcquire() async {
+        awaitingForcedOffEvidence = true
+        wantsSleepDisabled = false
+        stopHeartbeat()
+        retryTask?.cancel()
+        retryTask = nil
+        do {
+            let status = try await helper.status()
+            applyHelperStatus(status)
+            handleForcedOffIfNeeded(status)
+            considerExternalInterference(from: status)
+            considerRecoveryHealth(from: status)
+            awaitingForcedOffEvidence = false
+            if externalInterferenceLatched || hasRecoveryHealthBlock {
+                return
+            }
+            // Evidence obtained and clear — release path may still run; allow bounded retry.
+        } catch {
+            // No evidence → remain nonholding; do not clear error or reacquire.
+            Self.log.notice(
+                "Lid Guard failed to obtain forced-off evidence: \(String(describing: error))"
+            )
+        }
+    }
+
     private func scheduleRetry() {
-        guard !externalInterferenceLatched else { return }
+        guard !externalInterferenceLatched, !awaitingForcedOffEvidence else { return }
         retryTask?.cancel()
         let delay = nextRetryDelay
         nextRetryDelay = min(nextRetryDelay * 2, maxRetryDelay)
@@ -555,7 +640,10 @@ final class LidSleepGuardController {
             try? await Task.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled, !self.shutDown else { return }
             guard !self.externalInterferenceLatched else { return }
-            // Clear transient error so policy can re-arm and requestSet again.
+            // C8-2: re-probe before clearing error / reacquire.
+            await self.gatherEvidenceAfterFailedAcquire()
+            guard !self.externalInterferenceLatched, !self.awaitingForcedOffEvidence else { return }
+            guard !self.hasRecoveryHealthBlock else { return }
             self.transientHelperError = nil
             self.helper.refreshAvailability()
             self.ensureHelperHandshake()
@@ -565,13 +653,19 @@ final class LidSleepGuardController {
 
     private func startHeartbeat() {
         stopHeartbeat()
-        guard !externalInterferenceLatched else { return }
+        guard !externalInterferenceLatched, !awaitingForcedOffEvidence, !hasRecoveryHealthBlock else {
+            return
+        }
         let interval = heartbeatInterval
         heartbeatTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(interval)) } catch { return }
                 guard let self, !Task.isCancelled, !self.shutDown else { return }
-                guard self.wantsSleepDisabled, !self.externalInterferenceLatched else { return }
+                guard self.wantsSleepDisabled,
+                      !self.externalInterferenceLatched,
+                      !self.awaitingForcedOffEvidence,
+                      !self.hasRecoveryHealthBlock
+                else { return }
                 // Heartbeat on main actor Task — freeze stops heartbeats → helper watchdog.
                 self.requestSet(true)
             }
@@ -614,9 +708,11 @@ final class LidSleepGuardController {
             stopHeartbeat()
             retryTask?.cancel()
             retryTask = nil
+            awaitingForcedOffEvidence = false
             return
         }
         externalInterferenceLatched = true
+        awaitingForcedOffEvidence = false
         awaitingArmedConfirm = false
         wantsSleepDisabled = false
         stopHeartbeat()
@@ -626,6 +722,24 @@ final class LidSleepGuardController {
             requestSet(false)
         }
         Self.log.notice("Lid Guard latched externalInterference — no further set(true)")
+    }
+
+    /// C8-4: recovery flags on every status path → leftover + manual guidance; never foreign.
+    private func considerRecoveryHealth(from status: PowerHelperStatus) {
+        if status.recoveryBlocked || status.pendingRestore || status.persistRetryNeeded {
+            leftover = .recoveryBlocked
+            if !didNotifyLeftoverRecovery {
+                didNotifyLeftoverRecovery = true
+                notifier.notifyLeftoverRecoveryNeeded()
+            }
+            awaitingArmedConfirm = false
+            wantsSleepDisabled = false
+            stopHeartbeat()
+            return
+        }
+        if leftover == .recoveryBlocked {
+            leftover = nil
+        }
     }
 
     private func maybeNotifyArmedConfirmed() {

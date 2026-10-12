@@ -593,4 +593,110 @@ struct KeepAwakeControllerTests {
         #expect(!held.effective)
         #expect(held.reason == "agentModeOff")
     }
+
+    @Test("C8-7 partial: assertion works + lidGuardOff → reason lidGuardOff")
+    func holdReasonPartialLidGuardOff() async throws {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "hold-partial-lid-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: false)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        let controller = makeController(assertions: FakeAssertions(), settings: settings)
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        let held = try decodeHold(controller.handleKeepAwakeHold(body: holdBody(id: "r-partial-lid")))
+        #expect(held.assertionEffective)
+        #expect(!held.lidEffective)
+        #expect(held.effective)
+        #expect(held.reason == "lidGuardOff")
+    }
+
+    @Test("C8-7 partial: assertion works + lid blocked noLid → blocked:noLid")
+    func holdReasonPartialLidBlocked() async throws {
+        // Lid noLid blocks arm; AC power keeps assertion power-floor clear (partial case).
+        let power = FakePowerSource()
+        power.snapshot = PowerSnapshot(
+            hasInternalBattery: true, onBattery: false, percent: 80, thermal: .nominal
+        )
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "hold-partial-nolid-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        let helper = FakeLidHelper()
+        let notifier = FakeNotifier()
+        let lid = FakeLidObserver()
+        lid.reading = .noLid
+        let lidGuard = LidSleepGuardController(
+            settings: settings,
+            helper: helper,
+            lid: lid,
+            notifier: notifier,
+            now: { 1_000 },
+            e2eNamedInstance: false,
+            sessionStore: LidClosedSessionStore(suiteName: "ka-nolid-\(UUID().uuidString)"),
+            sleepDisabledProbe: { nil },
+            heartbeatInterval: 60
+        )
+        let controller = KeepAwakeController(
+            settings: settings,
+            displayManager: DisplayManager(settings: settings),
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            lidGuard: lidGuard,
+            powerSource: power,
+            assertions: FakeAssertions(),
+            notifier: notifier
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        let held = try decodeHold(controller.handleKeepAwakeHold(body: holdBody(id: "r-partial-nolid")))
+        #expect(held.assertionEffective)
+        #expect(!held.lidEffective)
+        #expect(held.effective)
+        #expect(held.reason == "blocked:noLid")
+    }
+
+    @Test("C8-7 partial: assertion fails + lid holding → blocked:assertionFailed")
+    func holdReasonPartialAssertionFailed() async throws {
+        let assertions = FakeAssertions()
+        assertions.failingTypes = [
+            kIOPMAssertionTypePreventUserIdleDisplaySleep,
+            kIOPMAssertionTypePreventUserIdleSystemSleep,
+        ]
+        let power = FakePowerSource()
+        power.snapshot = PowerSnapshot(
+            hasInternalBattery: true, onBattery: false, percent: 80, thermal: .nominal
+        )
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "hold-partial-assert-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        let helper = FakeLidHelper()
+        let notifier = FakeNotifier()
+        let lidGuard = makeLidGuard(settings: settings, helper: helper, notifier: notifier)
+        let controller = KeepAwakeController(
+            settings: settings,
+            displayManager: DisplayManager(settings: settings),
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            lidGuard: lidGuard,
+            powerSource: power,
+            assertions: assertions,
+            notifier: notifier
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        // Drive lid hold via hub busy before sampling hold response.
+        _ = controller.sourceHub.leases.hold(id: "seed-busy", ttl: 120)
+        let armDeadline = ContinuousClock.now + .seconds(2)
+        while !lidGuard.isActuallyHoldingSleepDisabled, ContinuousClock.now < armDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(lidGuard.isActuallyHoldingSleepDisabled)
+        let held = try decodeHold(controller.handleKeepAwakeHold(body: holdBody(id: "r-partial-assert")))
+        #expect(!held.assertionEffective)
+        #expect(held.lidEffective)
+        #expect(held.effective)
+        #expect(held.reason == "blocked:assertionFailed")
+    }
 }
