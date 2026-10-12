@@ -5,6 +5,9 @@ import Foundation
 ///
 /// Callers must never invoke this against a real system from automated tests.
 /// Production wiring uses `/usr/bin/pmset`; tests inject `PMSetRunning`.
+///
+/// I/O must run off the helper ledger queue (V-C05-2 / W1-1). Deadlines use
+/// monotonic continuous time so wall-clock jumps cannot extend waits (W1-10).
 protocol PMSetRunning: AnyObject, Sendable {
     func readSleepDisabled() throws -> Bool?
     func writeSleepDisabled(_ enabled: Bool) throws
@@ -38,6 +41,7 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
     static let defaultTimeout: TimeInterval = 5
     /// Cap stdout/stderr so a wedged pmset cannot fill memory (§14.1).
     static let maxOutputBytes = 256 * 1024
+    static let termGraceSeconds: TimeInterval = 1
 
     private let executableURL: URL
     private let timeout: TimeInterval
@@ -77,8 +81,8 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
         guard confirmed == enabled else { throw PMSetRunnerError.writeNotConfirmed }
     }
 
-    /// Drain stdout/stderr with caps; TERM then KILL; always reap. Must not run on the
-    /// helper's ledger serial queue (watchdog stays responsive — §14.1 / V-C05-2).
+    /// Drain stdout/stderr with caps; TERM then KILL; always reap.
+    /// Deadlines are monotonic (`MonotonicTime`) — wall-clock changes cannot extend waits.
     static func runSubprocess(
         executableURL: URL,
         arguments: [String],
@@ -110,23 +114,26 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
             throw PMSetRunnerError.launchFailed
         }
 
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning, Date() < deadline {
+        let deadline = MonotonicTime.seconds() + timeout
+        while process.isRunning, MonotonicTime.seconds() < deadline {
             Thread.sleep(forTimeInterval: 0.05)
         }
 
         if process.isRunning {
             process.terminate() // SIGTERM
-            let termDeadline = Date().addingTimeInterval(1)
-            while process.isRunning, Date() < termDeadline {
+            let termDeadline = MonotonicTime.seconds() + termGraceSeconds
+            while process.isRunning, MonotonicTime.seconds() < termDeadline {
                 Thread.sleep(forTimeInterval: 0.05)
             }
             if process.isRunning {
                 kill(process.processIdentifier, SIGKILL)
             }
+            // Always reap, even if the child ignored TERM and filled pipes.
             process.waitUntilExit()
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
+            _ = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            _ = stderrPipe.fileHandleForReading.readDataToEndOfFile()
             throw PMSetRunnerError.timedOut
         }
 
@@ -134,7 +141,7 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
 
-        // Drain any remaining bytes.
+        // Drain any remaining bytes (bounded by OutputBox).
         stdoutBox.append(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
         stderrBox.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
 

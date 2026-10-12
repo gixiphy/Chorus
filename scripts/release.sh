@@ -53,8 +53,12 @@ if [[ $PACKAGE -eq 1 ]]; then
   fi
 fi
 
-VERSION=$(grep 'CFBundleShortVersionString:' project.yml | sed 's/.*"\(.*\)".*/\1/')
-BUILD=$(grep 'CFBundleVersion:' project.yml | sed 's/.*"\(.*\)".*/\1/')
+# W1-2：與 package.sh 共用精確 App info.properties 抽取（不可全檔 grep）。
+# shellcheck source=lib/chorus-version.sh
+source "$(cd "$(dirname "$0")" && pwd)/lib/chorus-version.sh"
+chorus_read_app_version project.yml || die "無法從 project.yml 讀取 Chorus 版本"
+VERSION="$CHORUS_APP_VERSION"
+BUILD="$CHORUS_APP_BUILD"
 if [[ $DRY -eq 1 && -n "$NEW_VERSION" ]]; then VERSION="$NEW_VERSION"; fi
 if [[ $DRY -eq 1 && $PACKAGE -eq 1 ]]; then BUILD=$((BUILD + 1)); fi
 TAG="v$VERSION"

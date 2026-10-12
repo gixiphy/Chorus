@@ -36,27 +36,18 @@ if [[ -f "$DRIVER_STAMP_FILE" ]]; then
 fi
 echo "$DRIVER_VER $DRIVER_HASH" > "$DRIVER_STAMP_FILE"
 
-# 讀取並遞增版本。PKG-11：單一來源——只取 Chorus app info 區塊的欄位，
-# 避免 helper 的 CURRENT_PROJECT_VERSION / MARKETING_VERSION 讓 grep 多行破壞算術。
-VERSION=$(awk '
-  /^  Chorus:$/ { in_chorus=1; next }
-  /^  [A-Za-z]/ { if (in_chorus && $0 !~ /^  Chorus/) in_chorus=0 }
-  in_chorus && /CFBundleShortVersionString:/ {
-    if (match($0, /"[^"]+"/)) { print substr($0, RSTART+1, RLENGTH-2); exit }
-  }
-' project.yml)
-BUILD=$(awk '
-  /^  Chorus:$/ { in_chorus=1; next }
-  /^  [A-Za-z]/ { if (in_chorus && $0 !~ /^  Chorus/) in_chorus=0 }
-  in_chorus && /CFBundleVersion:/ {
-    if (match($0, /"[^"]+"/)) { print substr($0, RSTART+1, RLENGTH-2); exit }
-  }
-' project.yml)
-[[ -n "$VERSION" && -n "$BUILD" ]] || { echo "✗ 無法從 project.yml 的 Chorus info 讀取版本" >&2; exit 1; }
+# 讀取並遞增版本。PKG-11 / W1-2：單一來源——只取 Chorus info.properties，
+# 絕不 grep 全檔（helper INFOPLIST_KEY / CURRENT_PROJECT_VERSION 會污染算術）。
+# shellcheck source=lib/chorus-version.sh
+source "$(dirname "$0")/lib/chorus-version.sh"
+chorus_read_app_version project.yml || { echo "✗ 無法從 project.yml 的 Chorus info 讀取版本" >&2; exit 1; }
+VERSION="$CHORUS_APP_VERSION"
+BUILD="$CHORUS_APP_BUILD"
 NEXT_BUILD=$((BUILD + 1))
 if [[ -n "$NEW_VERSION" ]]; then VERSION="$NEW_VERSION"; fi
 
-# 同步 App info 與 helper 的 CURRENT_PROJECT_VERSION / MARKETING_VERSION
+# 同步 App info.properties 與 helper 的 CURRENT_PROJECT_VERSION / MARKETING_VERSION。
+# 只改引號內數字／語意版本；INFOPLIST_KEY_*=$(CURRENT_PROJECT_VERSION) 維持單一來源參照。
 sed -i '' "s/CFBundleShortVersionString: \".*\"/CFBundleShortVersionString: \"$VERSION\"/" project.yml
 sed -i '' "s/CFBundleVersion: \".*\"/CFBundleVersion: \"$NEXT_BUILD\"/" project.yml
 sed -i '' "s/CURRENT_PROJECT_VERSION: \".*\"/CURRENT_PROJECT_VERSION: \"$NEXT_BUILD\"/" project.yml
@@ -191,18 +182,11 @@ if [[ -n "$DEVID" ]]; then
   verify_nested_devid "$HELPER_BIN" "ChorusPowerHelper" || exit 1
   verify_nested_devid "$APP/Contents/SharedSupport/chorus" "chorus CLI" || exit 1
   verify_nested_devid "$APP/Contents/PlugIns/ChorusAudioDevice.driver" "ChorusAudioDevice" || exit 1
-  # PKG-9：App 與 helper 的 CFBundleVersion 必須相同
-  APP_BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")
-  HELPER_BUILD=$(codesign -d --info-plist=- "$HELPER_BIN" 2>/dev/null | plutil -extract CFBundleVersion raw - 2>/dev/null || true)
-  if [[ -z "$HELPER_BUILD" ]]; then
-    # Fallback: otool / strings from embedded info plist section is awkward; compare
-    # against the build we just stamped into project.yml.
-    HELPER_BUILD="$NEXT_BUILD"
-  fi
-  if [[ "$APP_BUILD" != "$HELPER_BUILD" ]]; then
-    echo "✗ App CFBundleVersion ($APP_BUILD) ≠ helper ($HELPER_BUILD)" >&2
-    exit 1
-  fi
+  # PKG-8/9/11 / W1-3：實際嵌入的 helper version＋identifier；失敗一律 fail closed（不可用 NEXT_BUILD 頂替）。
+  chorus_verify_helper_metadata \
+    "$APP/Contents/Info.plist" \
+    "$HELPER_BIN" \
+    "com.hermes.Chorus.PowerHelper" || exit 1
   echo "▸ 簽章驗證通過（Developer ID＋Hardened Runtime＋timestamp；含 helper／driver／CLI）"
 else
   echo "▸ 簽章驗證通過（開發簽章，含巢狀 helper／driver／CLI；未標公證 PASS）"
