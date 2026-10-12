@@ -154,17 +154,27 @@ final class HelperPowerSafety: HelperPowerSafetyChecking, @unchecked Sendable {
         return nil
     }
 
-    /// Prefer Current/Max when both finite; else CurrentCapacity if finite 0…100.
+    /// Prefer Current/Max when both are valid; never treat malformed max as "use current as %".
+    /// Clamp the finite Double into 0…100 **before** Int conversion (W1-7: huge ratios must not trap).
     static func normalizedCapacityPercent(_ desc: [String: Any]) -> Int? {
         let current = finiteNumber(desc[kIOPSCurrentCapacityKey])
-        let max = finiteNumber(desc[kIOPSMaxCapacityKey])
-        if let current, let max, max > 0 {
-            let ratio = (current / max) * 100
+        let maxRaw = desc[kIOPSMaxCapacityKey]
+        let maxPresent = maxRaw != nil
+        let maxCapacity = finiteNumber(maxRaw)
+
+        if maxPresent {
+            // Malformed / nonfinite / non-positive max → unknown (do not fall back to current%).
+            guard let maxCapacity, maxCapacity > 0, let current, current.isFinite, current >= 0 else {
+                return nil
+            }
+            let ratio = (current / maxCapacity) * 100
             guard ratio.isFinite else { return nil }
-            return Int(ratio.rounded()).clamped(to: 0...100)
+            let clamped = Swift.min(100.0, Swift.max(0.0, ratio))
+            return Int(clamped.rounded())
         }
+
         if let current {
-            // Some IOKit samples already report 0…100 in CurrentCapacity.
+            // Some IOKit samples already report 0…100 in CurrentCapacity when Max is absent.
             if current >= 0, current <= 100 {
                 return Int(current.rounded())
             }

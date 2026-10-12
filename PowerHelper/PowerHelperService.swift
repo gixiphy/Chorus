@@ -5,8 +5,8 @@ import Foundation
 ///
 /// Ledger mutations and timers run on `queue`. All pmset I/O runs on `ioQueue` so
 /// watchdog / safety / forceOff stay responsive while a runner is wedged (W1-1 / V-C05-2).
-/// Completions hop back to `queue` and honor `applyGeneration` so obsolete acquire
-/// cannot overwrite release / disconnect / forceOff.
+/// Reads are coalesced; writes check generation **before** side effects; restore/forceOff
+/// outranks acquire. Completions hop back to `queue` and honor `applyGeneration`.
 final class PowerHelperService: NSObject, @unchecked Sendable {
     typealias IdleExitHandler = () -> Void
     typealias NowProvider = () -> Double
@@ -32,9 +32,20 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     private var watchdogTimer: DispatchSourceTimer?
     private var safetyTimer: DispatchSourceTimer?
     private var idleTimer: DispatchSourceTimer?
-    private var applyGeneration: UInt64 = 0
+    private let generationLock = NSLock()
+    private var _applyGeneration: UInt64 = 0
+    private var applyGeneration: UInt64 {
+        get { generationLock.lock(); defer { generationLock.unlock() }; return _applyGeneration }
+        set { generationLock.lock(); _applyGeneration = newValue; generationLock.unlock() }
+    }
     /// Persist failure after a verified system write — keep retrying; block idle exit (W1-8/9).
     private var persistRetryNeeded = false
+    /// Launch reconcile finished (W1-15) — XPC handlers wait without same-queue semaphores.
+    private var startupReady = false
+    private var startupWaiters: [() -> Void] = []
+    /// Coalesced read waiters (W1-1): one physical `pmset -g` serves many callers.
+    private var readWaiters: [(generation: UInt64, completion: (Bool?) -> Void)] = []
+    private var readInFlight = false
 
     /// Exported per-connection XPC object (separate instance each accept — V-C05 / tasks §4).
     final class ExportedObject: NSObject, ChorusPowerHelperXPC, @unchecked Sendable {
@@ -95,10 +106,14 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
 
     func start() {
         queue.async { [weak self] in
-            self?.reconcileOnLaunch()
-            self?.installWatchdog()
-            self?.installSafetyTimer()
-            self?.touchExternalActivityAndRescheduleIdle()
+            guard let self else { return }
+            self.beginAsyncReconcile { [weak self] in
+                guard let self else { return }
+                self.markStartupReady()
+            }
+            self.installWatchdog()
+            self.installSafetyTimer()
+            self.touchExternalActivityAndRescheduleIdle()
         }
     }
 
@@ -119,6 +134,10 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
 
     func persistRetryNeededForTesting() -> Bool {
         queue.sync { persistRetryNeeded }
+    }
+
+    func startupReadyForTesting() -> Bool {
+        queue.sync { startupReady }
     }
 
     func runWatchdogTickForTesting() {
@@ -170,45 +189,65 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     ) {
         queue.async { [weak self] in
             guard let self else { return }
-            self.touchExternalActivityAndRescheduleIdle()
-            let generation = self.beginApply()
+            self.whenStartupReady {
+                self.touchExternalActivityAndRescheduleIdle()
 
-            if enabled {
-                if let refuse = self.safety.snapshot().refusesAcquire {
-                    self.lastForcedOffReason = refuse.forcedOffReason
-                    reply(nil, refuse.errorCode)
-                    return
-                }
-
-                self.readSystemValue(generation: generation) { systemValue in
-                    self.queue.async {
-                        guard generation == self.applyGeneration else {
-                            reply(nil, "superseded")
-                            return
+                if enabled {
+                    if let refuse = self.safety.snapshot().refusesAcquire {
+                        self.lastForcedOffReason = refuse.forcedOffReason
+                        // W1-7 / A3: unsafe heartbeat must release an existing own holding.
+                        if self.ledger.holders[connectionID] != nil || self.ledger.setByHelper {
+                            self.initiateProtectedForceOff(reason: refuse.forcedOffReason) {
+                                reply(nil, refuse.errorCode)
+                            }
+                        } else {
+                            // W1-1: do not bump applyGeneration on refuse-only (no side effects).
+                            reply(nil, refuse.errorCode)
                         }
-                        self.continueAcquire(
-                            connectionID: connectionID,
-                            uid: uid,
-                            pid: pid,
-                            systemValue: systemValue,
-                            generation: generation,
-                            reply: reply
-                        )
+                        return
                     }
-                }
-            } else {
-                self.readSystemValue(generation: generation) { systemValue in
-                    self.queue.async {
-                        guard generation == self.applyGeneration else {
-                            reply(nil, "superseded")
-                            return
+
+                    let generation = self.beginApply()
+                    self.readSystemValue(generation: generation) { systemValue in
+                        self.queue.async {
+                            guard generation == self.applyGeneration else {
+                                reply(nil, "superseded")
+                                return
+                            }
+                            self.continueAcquire(
+                                connectionID: connectionID,
+                                uid: uid,
+                                pid: pid,
+                                systemValue: systemValue,
+                                generation: generation,
+                                reply: reply
+                            )
                         }
-                        let action = self.ledger.release(
-                            connectionID: connectionID,
-                            currentSystemValue: systemValue
-                        )
-                        self.applyAction(action, generation: generation) { outcome in
-                            self.finishReply(outcome, connectionID: connectionID, reply: reply)
+                    }
+                } else {
+                    let generation = self.beginApply()
+                    self.readSystemValue(generation: generation) { systemValue in
+                        self.queue.async {
+                            guard generation == self.applyGeneration else {
+                                reply(nil, "superseded")
+                                return
+                            }
+                            // W1-6: zero-holder own residual / pendingRestore must still write(false).
+                            // ledger.release returns .none when the caller is absent.
+                            let action: SleepGuardLedger.Action
+                            if self.ledger.holders[connectionID] != nil {
+                                action = self.ledger.release(
+                                    connectionID: connectionID,
+                                    currentSystemValue: systemValue
+                                )
+                            } else if self.ledger.setByHelper || self.ledger.pendingRestore {
+                                action = self.ledger.forceOff(currentSystemValue: systemValue)
+                            } else {
+                                action = .none
+                            }
+                            self.applyAction(action, generation: generation) { outcome in
+                                self.finishReply(outcome, connectionID: connectionID, reply: reply)
+                            }
                         }
                     }
                 }
@@ -302,7 +341,6 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
             guard let self else { return }
             switch outcome {
             case .ok:
-                // Status encode may need a fresh read — do it off-queue.
                 self.readSystemValue(generation: self.applyGeneration) { systemValue in
                     self.queue.async {
                         let data = self.encodeStatus(callerID: connectionID, systemValue: systemValue)
@@ -322,11 +360,13 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     private func handleStatus(connectionID: UInt64, reply: @escaping (Data) -> Void) {
         queue.async { [weak self] in
             guard let self else { return }
-            self.touchExternalActivityAndRescheduleIdle()
-            let generation = self.applyGeneration
-            self.readSystemValue(generation: generation) { systemValue in
-                self.queue.async {
-                    reply(self.encodeStatus(callerID: connectionID, systemValue: systemValue))
+            self.whenStartupReady {
+                self.touchExternalActivityAndRescheduleIdle()
+                let generation = self.applyGeneration
+                self.readSystemValue(generation: generation) { systemValue in
+                    self.queue.async {
+                        reply(self.encodeStatus(callerID: connectionID, systemValue: systemValue))
+                    }
                 }
             }
         }
@@ -335,19 +375,21 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     private func handleDisconnect(connectionID: UInt64) {
         queue.async { [weak self] in
             guard let self else { return }
-            self.connections.removeValue(forKey: connectionID)
-            let generation = self.beginApply()
-            self.readSystemValue(generation: generation) { systemValue in
-                self.queue.async {
-                    guard generation == self.applyGeneration else { return }
-                    let action = self.ledger.dropConnection(connectionID, currentSystemValue: systemValue)
-                    if action != .none {
-                        self.lastForcedOffReason = "disconnect"
-                        self.lastChangeAt = Date()
-                    }
-                    self.applyAction(action, generation: generation) { _ in
-                        self.queue.async {
-                            self.touchExternalActivityAndRescheduleIdle()
+            self.whenStartupReady {
+                self.connections.removeValue(forKey: connectionID)
+                let generation = self.beginApply()
+                self.readSystemValue(generation: generation) { systemValue in
+                    self.queue.async {
+                        guard generation == self.applyGeneration else { return }
+                        let action = self.ledger.dropConnection(connectionID, currentSystemValue: systemValue)
+                        if action != .none {
+                            self.lastForcedOffReason = "disconnect"
+                            self.lastChangeAt = Date()
+                        }
+                        self.applyAction(action, generation: generation) { _ in
+                            self.queue.async {
+                                self.touchExternalActivityAndRescheduleIdle()
+                            }
                         }
                     }
                 }
@@ -355,58 +397,72 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
         }
     }
 
-    // MARK: - Launch reconcile
+    // MARK: - Launch reconcile (W1-15)
 
-    private func reconcileOnLaunch() {
+    private func beginAsyncReconcile(completion: @escaping () -> Void) {
         let generation = beginApply()
-        // Synchronous path at start only: block until first read so subsequent XPC sees reconcile.
-        // Still uses ioQueue + semaphore bounded by runner timeout — start() is not on a timer.
-        let systemValue = syncReadForLaunch()
-        let persisted: SleepGuardLedger?
-        do {
-            persisted = try store.load()
-        } catch {
-            persisted = nil
-            if systemValue != false {
-                let (blocked, action) = SleepGuardLedger.reconcileOnLaunch(
-                    persisted: nil,
-                    currentSystemValue: systemValue
-                )
-                ledger = blocked
-                applyActionSyncLaunch(action, generation: generation)
+        ioQueue.async { [weak self] in
+            guard let self else {
+                completion()
                 return
             }
-        }
+            let systemValue = try? self.runner.readSleepDisabled()
+            self.queue.async {
+                let persisted: SleepGuardLedger?
+                do {
+                    persisted = try self.store.load()
+                } catch {
+                    persisted = nil
+                    if systemValue != false {
+                        let (blocked, action) = SleepGuardLedger.reconcileOnLaunch(
+                            persisted: nil,
+                            currentSystemValue: systemValue
+                        )
+                        self.ledger = blocked
+                        self.applyAction(action, generation: generation) { _ in
+                            self.queue.async(execute: completion)
+                        }
+                        return
+                    }
+                }
 
-        let (restored, action) = SleepGuardLedger.reconcileOnLaunch(
-            persisted: persisted,
-            currentSystemValue: systemValue
-        )
-        ledger = restored
-        if case .write(false) = action {
-            lastForcedOffReason = "bootReconcile"
-            lastChangeAt = Date()
+                let (restored, action) = SleepGuardLedger.reconcileOnLaunch(
+                    persisted: persisted,
+                    currentSystemValue: systemValue
+                )
+                self.ledger = restored
+                if case .write(false) = action {
+                    self.lastForcedOffReason = "bootReconcile"
+                    self.lastChangeAt = Date()
+                }
+                if action == .none {
+                    // Persist reconciled metadata even when no pmset write (launch baseline).
+                    _ = self.persistAfterMutation()
+                    completion()
+                    return
+                }
+                self.applyAction(action, generation: generation) { _ in
+                    self.queue.async(execute: completion)
+                }
+            }
         }
-        applyActionSyncLaunch(action, generation: generation)
     }
 
-    private func syncReadForLaunch() -> Bool? {
-        let sem = DispatchSemaphore(value: 0)
-        var value: Bool?
-        ioQueue.async {
-            value = try? self.runner.readSleepDisabled()
-            sem.signal()
+    private func markStartupReady() {
+        startupReady = true
+        let waiters = startupWaiters
+        startupWaiters.removeAll()
+        for waiter in waiters {
+            waiter()
         }
-        _ = sem.wait(timeout: .now() + PMSetRunner.defaultTimeout + 2)
-        return value
     }
 
-    private func applyActionSyncLaunch(_ action: SleepGuardLedger.Action, generation: UInt64) {
-        let sem = DispatchSemaphore(value: 0)
-        applyAction(action, generation: generation) { _ in
-            sem.signal()
+    private func whenStartupReady(_ body: @escaping () -> Void) {
+        if startupReady {
+            body()
+        } else {
+            startupWaiters.append(body)
         }
-        _ = sem.wait(timeout: .now() + PMSetRunner.defaultTimeout + 2)
     }
 
     // MARK: - Apply ledger actions (async I/O)
@@ -417,20 +473,37 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     }
 
     private func beginApply() -> UInt64 {
-        applyGeneration += 1
-        return applyGeneration
+        generationLock.lock()
+        _applyGeneration += 1
+        let value = _applyGeneration
+        generationLock.unlock()
+        return value
     }
 
+    /// Coalesced reads: one physical read drains all waiters (W1-1).
     private func readSystemValue(generation: UInt64, completion: @escaping (Bool?) -> Void) {
+        readWaiters.append((generation, completion))
+        guard !readInFlight else { return }
+        readInFlight = true
+        scheduleReadFlush()
+    }
+
+    private func scheduleReadFlush() {
         ioQueue.async { [weak self] in
-            guard let self else {
-                completion(nil)
-                return
-            }
+            guard let self else { return }
             let value = try? self.runner.readSleepDisabled()
-            // Generation checked by caller on ledger queue; always deliver.
-            _ = generation
-            completion(value)
+            self.queue.async {
+                let waiters = self.readWaiters
+                self.readWaiters.removeAll()
+                self.readInFlight = false
+                for (_, completion) in waiters {
+                    completion(value)
+                }
+                if !self.readWaiters.isEmpty {
+                    self.readInFlight = true
+                    self.scheduleReadFlush()
+                }
+            }
         }
     }
 
@@ -440,14 +513,16 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
         rollbackConnectionID: UInt64? = nil,
         completion: @escaping (ApplyOutcome) -> Void
     ) {
-        // Must be called from ledger queue (or launch sync wrapper).
+        // Must be called from ledger queue.
         guard generation == applyGeneration else {
             completion(.ok) // superseded — treat as no-op success for caller discard
             return
         }
         switch action {
         case .none:
-            completion(persistAfterMutation())
+            let outcome = persistAfterMutation()
+            rearmIdleAfterStateChange()
+            completion(outcome)
         case let .write(enabled):
             if enabled {
                 ledger.setByHelper = true
@@ -473,6 +548,11 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
                     completion(.error("pmsetFailed"))
                     return
                 }
+                // W1-1: cancel before side effects — obsolete acquire must not write.
+                guard generation == self.applyGeneration else {
+                    self.queue.async { completion(.ok) }
+                    return
+                }
                 do {
                     try self.runner.writeSleepDisabled(enabled)
                     self.queue.async {
@@ -489,6 +569,7 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
                             self.ledger.pendingRestore = true
                             self.persistRetryNeeded = true
                         }
+                        self.rearmIdleAfterStateChange()
                         completion(persistOutcome)
                     }
                 } catch {
@@ -498,6 +579,7 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
                             return
                         }
                         self.ledger.noteWriteFailure()
+                        self.rearmIdleAfterStateChange()
                         completion(.error("pmsetFailed"))
                     }
                 }
@@ -508,7 +590,9 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
             if shouldRestore {
                 applyAction(.write(false), generation: generation, completion: completion)
             } else {
-                completion(persistAfterMutation())
+                let outcome = persistAfterMutation()
+                rearmIdleAfterStateChange()
+                completion(outcome)
             }
         case .recoveryBlocked:
             completion(.error("recoveryBlocked"))
@@ -547,7 +631,10 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
             otherUsersHolding: otherUsers && ledger.holders.count > 0,
             watchdogSeconds: Int(PowerHelperConstants.watchdogTimeout),
             lastForcedOffReason: lastForcedOffReason,
-            lastChangeAt: lastChangeAt
+            lastChangeAt: lastChangeAt,
+            recoveryBlocked: ledger.recoveryBlocked,
+            pendingRestore: ledger.pendingRestore,
+            persistRetryNeeded: persistRetryNeeded
         )
         return (try? JSONEncoder().encode(status)) ?? Data("{}".utf8)
     }
@@ -569,6 +656,7 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
         // Retry failed persistence without renewing idle (W1-8/9).
         if persistRetryNeeded {
             _ = persistAfterMutation()
+            rearmIdleAfterStateChange()
         }
         readSystemValue(generation: generation) { [weak self] systemValue in
             guard let self else { return }
@@ -583,7 +671,9 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
                     self.lastForcedOffReason = "watchdog"
                     self.lastChangeAt = Date()
                 }
-                self.applyAction(action, generation: generation) { _ in }
+                self.applyAction(action, generation: generation) { _ in
+                    self.queue.async { self.rearmIdleAfterStateChange() }
+                }
                 // Do NOT touchExternalActivity — watchdog must not reset idle (W1-9).
             }
         }
@@ -602,24 +692,51 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     private func runSafetyTick() {
         guard !ledger.holders.isEmpty else { return }
         guard let refuse = safety.snapshot().refusesAcquire else { return }
+        initiateProtectedForceOff(reason: refuse.forcedOffReason) {}
+    }
+
+    /// Non-cancellable restoration path for safety / unsafe heartbeat (W1-1 / W1-7).
+    private func initiateProtectedForceOff(reason: String, completion: @escaping () -> Void) {
         let generation = beginApply()
         readSystemValue(generation: generation) { [weak self] systemValue in
-            guard let self else { return }
+            guard let self else {
+                completion()
+                return
+            }
             self.queue.async {
-                guard generation == self.applyGeneration else { return }
+                guard generation == self.applyGeneration else {
+                    completion()
+                    return
+                }
                 let action = self.ledger.forceOff(currentSystemValue: systemValue)
-                self.lastForcedOffReason = refuse.forcedOffReason
+                self.lastForcedOffReason = reason
                 self.lastChangeAt = Date()
-                self.applyAction(action, generation: generation) { _ in }
+                self.applyAction(action, generation: generation) { _ in
+                    self.queue.async {
+                        self.rearmIdleAfterStateChange()
+                        completion()
+                    }
+                }
             }
         }
     }
 
     private func touchExternalActivityAndRescheduleIdle() {
         lastExternalActivity = Date()
+        scheduleIdleTimer(delay: idleExitDelay)
+    }
+
+    /// W1-16: re-evaluate idle after blockers clear without resetting external activity.
+    private func rearmIdleAfterStateChange() {
+        let elapsed = Date().timeIntervalSince(lastExternalActivity)
+        let remaining = max(0.05, idleExitDelay - elapsed)
+        scheduleIdleTimer(delay: remaining)
+    }
+
+    private func scheduleIdleTimer(delay: TimeInterval) {
         idleTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + idleExitDelay)
+        timer.schedule(deadline: .now() + delay)
         timer.setEventHandler { [weak self] in
             self?.evaluateIdleExit()
         }
@@ -628,12 +745,21 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     }
 
     private func evaluateIdleExit() {
-        guard ledger.holders.isEmpty else { return }
-        // Pending owned restore / persist retry must stay alive (W1-9).
-        if ledger.pendingRestore, ledger.setByHelper { return }
-        if persistRetryNeeded { return }
+        guard ledger.holders.isEmpty else {
+            rearmIdleAfterStateChange()
+            return
+        }
+        // Pending owned restore / persist retry must stay alive (W1-9 / W1-16).
+        if ledger.pendingRestore, ledger.setByHelper {
+            rearmIdleAfterStateChange()
+            return
+        }
+        if persistRetryNeeded {
+            rearmIdleAfterStateChange()
+            return
+        }
         guard Date().timeIntervalSince(lastExternalActivity) >= idleExitDelay - 0.5 else {
-            touchExternalActivityAndRescheduleIdle()
+            rearmIdleAfterStateChange()
             return
         }
         onIdleExit()

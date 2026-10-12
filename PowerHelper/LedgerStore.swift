@@ -48,18 +48,27 @@ struct LedgerPersistenceDTO: Codable, Equatable {
 
 /// File-backed store under `/Library/Application Support/com.hermes.Chorus.PowerHelper/`.
 ///
-/// Uses no-follow, descriptor-relative open/rename; validates root-owned non-writable
-/// ancestors; rejects symlink/FIFO/non-regular files; O_EXCL temp + atomic rename + 0600.
+/// Descriptor-relative open/rename with no-follow ancestor walk; rejects symlink hops
+/// (production: every ancestor; testing: every hop under the resolved temp root), FIFO /
+/// non-regular destinations before blocking open; O_EXCL temp + atomic rename + file and
+/// directory fsync + 0600 (W1-12).
 final class LedgerStore: LedgerStoring, @unchecked Sendable {
     struct SecurityPolicy: Sendable {
         var requireRootOwner: Bool
         var allowedOwnerUID: UInt32?
+        /// When true, any symlink component (including intermediate) is rejected.
+        var rejectAllSymlinks: Bool
 
-        static let production = SecurityPolicy(requireRootOwner: true, allowedOwnerUID: 0)
+        static let production = SecurityPolicy(
+            requireRootOwner: true,
+            allowedOwnerUID: 0,
+            rejectAllSymlinks: true
+        )
 
-        /// Test policy: accept the current process uid as owner.
+        /// Test policy: accept the current process uid as owner; still reject all symlink hops.
+        /// Callers should pass an already-realpath'd directory under a writable test root.
         static func testing(ownerUID: UInt32 = getuid()) -> SecurityPolicy {
-            SecurityPolicy(requireRootOwner: false, allowedOwnerUID: ownerUID)
+            SecurityPolicy(requireRootOwner: false, allowedOwnerUID: ownerUID, rejectAllSymlinks: true)
         }
     }
 
@@ -161,14 +170,26 @@ final class LedgerStore: LedgerStoring, @unchecked Sendable {
             throw LedgerStoreError.writeFailed
         }
 
-        // If destination exists, validate it is a regular file we own before replace.
-        let existing = openat(dirFD, Self.fileName, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-        if existing >= 0 {
-            defer { close(existing) }
-            try validateOpenFile(fd: existing, expectDirectory: false)
+        // Reject non-regular destination (FIFO/device/dir) before a potentially blocking open.
+        var existingStat = stat()
+        if fstatat(dirFD, Self.fileName, &existingStat, AT_SYMLINK_NOFOLLOW) == 0 {
+            let type = existingStat.st_mode & S_IFMT
+            if type == S_IFLNK { throw LedgerStoreError.symlinkRejected }
+            guard type == S_IFREG else { throw LedgerStoreError.notRegularFile }
+            let existing = openat(
+                dirFD,
+                Self.fileName,
+                O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK
+            )
+            if existing >= 0 {
+                defer { close(existing) }
+                try validateOpenFile(fd: existing, expectDirectory: false)
+            } else if errno != ENOENT {
+                if errno == ELOOP { throw LedgerStoreError.symlinkRejected }
+                if errno == ENXIO || errno == EAGAIN { throw LedgerStoreError.notRegularFile }
+                throw LedgerStoreError.writeFailed
+            }
         } else if errno != ENOENT {
-            if errno == ELOOP { throw LedgerStoreError.symlinkRejected }
-            if errno == EISDIR { throw LedgerStoreError.notRegularFile }
             throw LedgerStoreError.writeFailed
         }
 
@@ -178,7 +199,12 @@ final class LedgerStore: LedgerStoring, @unchecked Sendable {
         }
         renamed = true
 
-        let finalFD = openat(dirFD, Self.fileName, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        // Directory fsync so the rename is durable across crash (W1-12).
+        if fsync(dirFD) != 0 {
+            throw LedgerStoreError.writeFailed
+        }
+
+        let finalFD = openat(dirFD, Self.fileName, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
         guard finalFD >= 0 else { throw LedgerStoreError.writeFailed }
         defer { close(finalFD) }
         try validateOpenFile(fd: finalFD, expectDirectory: false)
@@ -194,6 +220,8 @@ final class LedgerStore: LedgerStoring, @unchecked Sendable {
 
         var st = stat()
         if lstat(directoryPath, &st) == 0 {
+            let type = st.st_mode & S_IFMT
+            if type == S_IFLNK { throw LedgerStoreError.symlinkRejected }
             try validateStat(&st, expectDirectory: true)
         } else if errno == ENOENT {
             guard createIfMissing else { throw LedgerStoreError.unsafeRoot }
@@ -202,16 +230,30 @@ final class LedgerStore: LedgerStoring, @unchecked Sendable {
             throw LedgerStoreError.unsafeRoot
         }
 
-        let fd = open(directoryPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard fd >= 0 else {
-            if errno == ELOOP { throw LedgerStoreError.symlinkRejected }
-            throw LedgerStoreError.unsafeRoot
-        }
+        // Descriptor walk: open each component with O_NOFOLLOW so intermediate symlinks fail.
+        let dirFD = try openDirectoryNoFollow(path: directoryPath)
         do {
-            try validateOpenFile(fd: fd, expectDirectory: true)
+            try validateOpenFile(fd: dirFD, expectDirectory: true)
         } catch {
-            close(fd)
+            close(dirFD)
             throw error
+        }
+        return dirFD
+    }
+
+    /// Open `path` by walking components with `openat(..., O_NOFOLLOW)` from `/`.
+    private func openDirectoryNoFollow(path: String) throws -> Int32 {
+        let components = (path as NSString).pathComponents.filter { $0 != "/" }
+        var fd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard fd >= 0 else { throw LedgerStoreError.unsafeRoot }
+        for component in components {
+            let next = openat(fd, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            close(fd)
+            if next < 0 {
+                if errno == ELOOP { throw LedgerStoreError.symlinkRejected }
+                throw LedgerStoreError.unsafeRoot
+            }
+            fd = next
         }
         return fd
     }
@@ -226,16 +268,21 @@ final class LedgerStore: LedgerStoring, @unchecked Sendable {
                 continue
             }
             built = (built as NSString).appendingPathComponent(component)
+            let isLeaf = index == lastIndex
             var st = stat()
             if lstat(built, &st) == 0 {
-                let isLink = (st.st_mode & S_IFMT) == S_IFLNK
-                let isLeaf = index == lastIndex
-                if isLink {
-                    if isLeaf { throw LedgerStoreError.symlinkRejected }
-                    continue
+                let type = st.st_mode & S_IFMT
+                if type == S_IFLNK {
+                    throw LedgerStoreError.symlinkRejected
                 }
                 if isLeaf || policy.requireRootOwner {
                     try validateStat(&st, expectDirectory: true)
+                } else if let allowed = policy.allowedOwnerUID, UInt32(st.st_uid) == allowed {
+                    // Testing: only enforce writability on ancestors we own.
+                    guard type == S_IFDIR else { throw LedgerStoreError.notRegularFile }
+                    if st.st_mode & (S_IWGRP | S_IWOTH) != 0 {
+                        throw LedgerStoreError.worldOrGroupWritable
+                    }
                 }
                 continue
             }
@@ -246,6 +293,9 @@ final class LedgerStore: LedgerStoring, @unchecked Sendable {
             // Re-lstat to reject TOCTOU symlink plant.
             if lstat(built, &st) != 0 {
                 throw LedgerStoreError.writeFailed
+            }
+            if (st.st_mode & S_IFMT) == S_IFLNK {
+                throw LedgerStoreError.symlinkRejected
             }
             try validateStat(&st, expectDirectory: true)
         }
@@ -272,9 +322,8 @@ final class LedgerStore: LedgerStoring, @unchecked Sendable {
             let isLink = (st.st_mode & S_IFMT) == S_IFLNK
             let isLeaf = index == lastIndex
             if isLink {
-                // Leaf directory must never be a symlink. Intermediate hops like
-                // /var → /private/var are normal on macOS temp paths.
-                if isLeaf {
+                // W1-12: never skip intermediate symlinks when rejectAllSymlinks (prod + tests).
+                if policy.rejectAllSymlinks || isLeaf {
                     throw LedgerStoreError.symlinkRejected
                 }
                 continue
@@ -282,10 +331,17 @@ final class LedgerStore: LedgerStoring, @unchecked Sendable {
             if isLeaf {
                 try validateStat(&st, expectDirectory: true)
             } else if policy.requireRootOwner {
-                // Production: every ancestor must be root-owned and not group/world-writable.
                 try validateStat(&st, expectDirectory: true)
+            } else {
+                // Testing: still reject group/world-writable ancestors we own under the test root.
+                let type = st.st_mode & S_IFMT
+                guard type == S_IFDIR else { throw LedgerStoreError.notRegularFile }
+                if let allowed = policy.allowedOwnerUID, UInt32(st.st_uid) == allowed {
+                    if st.st_mode & (S_IWGRP | S_IWOTH) != 0 {
+                        throw LedgerStoreError.worldOrGroupWritable
+                    }
+                }
             }
-            // Testing: skip intermediate system ancestors (root-owned /var/folders/…).
         }
     }
 

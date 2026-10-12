@@ -331,10 +331,136 @@ struct PowerHelperServiceWatchdogTests {
         _ = sem2.wait(timeout: .now() + 5)
         #expect(box.error == "refusedThermal")
 
-        var ledger = service.ledgerSnapshotForTesting()
-        #expect(ledger.setByHelper == true)
-        let action = ledger.forceOff(currentSystemValue: true)
-        #expect(action == .write(false))
+        // W1-7: unsafe heartbeat must initiate protected restoration, not leave holders intact.
+        let deadline = Date().addingTimeInterval(3)
+        while service.ledgerSnapshotForTesting().holders.isEmpty == false, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        let ledger = service.ledgerSnapshotForTesting()
+        #expect(ledger.holders.isEmpty)
+        #expect(runner.writes.contains(false))
+    }
+
+    @Test("refused heartbeat does not bump generation over pending release (W1-1)")
+    func refuseDoesNotSupersedeRelease() {
+        let runner = FakePMSetRunner()
+        runner.systemValue = false
+        let safety = FakeSafety()
+        let service = PowerHelperService(
+            runner: runner,
+            store: FakeLedgerStore(),
+            safety: safety,
+            helperBuild: "136",
+            onIdleExit: {}
+        )
+        service.start()
+        Thread.sleep(forTimeInterval: 0.05)
+
+        let exported = PowerHelperService.ExportedObject(
+            service: service, connectionID: 1, uid: 501, pid: 1
+        )
+        let acquireSem = DispatchSemaphore(value: 0)
+        exported.setSleepDisabled(true) { _, _ in acquireSem.signal() }
+        _ = acquireSem.wait(timeout: .now() + 3)
+        #expect(service.ledgerSnapshotForTesting().holders.count == 1)
+
+        // Wedged release write; a refused heartbeat must not cancel it via generation.
+        runner.blockNextWrites()
+        let releaseSem = DispatchSemaphore(value: 0)
+        var releaseError: String?
+        exported.setSleepDisabled(false) { _, error in
+            releaseError = error
+            releaseSem.signal()
+        }
+        Thread.sleep(forTimeInterval: 0.05)
+        safety.snap.thermal = .critical
+        let refuseSem = DispatchSemaphore(value: 0)
+        exported.setSleepDisabled(true) { _, error in
+            #expect(error == "refusedThermal")
+            refuseSem.signal()
+        }
+        _ = refuseSem.wait(timeout: .now() + 2)
+        runner.unblockWrite()
+        _ = releaseSem.wait(timeout: .now() + 3)
+        #expect(releaseError == nil || releaseError == "storeFailed")
+        #expect(runner.writes.contains(false))
+    }
+
+    @Test("obsolete queued write1 cancelled before side effect (W1-1)")
+    func obsoleteWriteCancelledBeforeSideEffect() {
+        let runner = FakePMSetRunner()
+        runner.systemValue = false
+        let safety = FakeSafety()
+        let service = PowerHelperService(
+            runner: runner,
+            store: FakeLedgerStore(),
+            safety: safety,
+            helperBuild: "136",
+            onIdleExit: {}
+        )
+        service.start()
+        Thread.sleep(forTimeInterval: 0.05)
+
+        let exported = PowerHelperService.ExportedObject(
+            service: service, connectionID: 1, uid: 501, pid: 1
+        )
+        runner.blockNextWrites()
+        let acquireSem = DispatchSemaphore(value: 0)
+        exported.setSleepDisabled(true) { _, _ in acquireSem.signal() }
+        Thread.sleep(forTimeInterval: 0.05)
+        // ForceOff bumps generation while write(true) is queued/blocked.
+        safety.snap.thermal = .critical
+        service.runSafetyTickForTesting()
+        Thread.sleep(forTimeInterval: 0.05)
+        runner.unblockWrite()
+        _ = acquireSem.wait(timeout: .now() + 2)
+        // Either write(true) was cancelled before side effect, or its ack was discarded and
+        // forceOff wrote false afterward — never leave an unopposed obsolete hold.
+        let deadline = Date().addingTimeInterval(3)
+        while !runner.writes.contains(false), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        #expect(service.ledgerSnapshotForTesting().holders.isEmpty || runner.writes.contains(false))
+    }
+
+    @Test("status encodes recovery health fields (W1-6)")
+    func statusEncodesRecoveryFields() throws {
+        let store = FakeLedgerStore()
+        store.stored = SleepGuardLedger(
+            holders: [:],
+            priorValueWasDisabled: false,
+            setByHelper: true,
+            pendingRestore: true,
+            recoveryBlocked: false
+        )
+        let runner = FakePMSetRunner()
+        runner.systemValue = true
+        runner.writeError = PMSetRunnerError.timedOut
+        let service = PowerHelperService(
+            runner: runner,
+            store: store,
+            safety: FakeSafety(),
+            helperBuild: "136",
+            onIdleExit: {}
+        )
+        service.start()
+        let deadline = Date().addingTimeInterval(2)
+        while !service.startupReadyForTesting(), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        let exported = PowerHelperService.ExportedObject(
+            service: service, connectionID: 1, uid: 501, pid: 1
+        )
+        let sem = DispatchSemaphore(value: 0)
+        var data: Data?
+        exported.status { json in
+            data = json
+            sem.signal()
+        }
+        _ = sem.wait(timeout: .now() + 3)
+        let status = try JSONDecoder().decode(PowerHelperStatus.self, from: try #require(data))
+        #expect(status.pendingRestore == true || status.setByHelper == true)
+        #expect(status.helperBuild == "136")
     }
 }
 
@@ -394,6 +520,49 @@ struct PowerHelperServiceIdleTests {
         Thread.sleep(forTimeInterval: 0.2)
         service.checkIdleForTesting()
         #expect(exited.flag == false)
+    }
+
+    @Test("idle rearms after temporary blocker clears without external activity (W1-16)")
+    func idleRearmsAfterBlockerClears() {
+        let exited = ExpectationFlag()
+        let store = FakeLedgerStore()
+        store.stored = SleepGuardLedger(
+            holders: [:],
+            priorValueWasDisabled: false,
+            setByHelper: true,
+            pendingRestore: true
+        )
+        let runner = FakePMSetRunner()
+        runner.systemValue = true
+        // First restore attempt fails; later succeeds without further XPC.
+        runner.writeError = PMSetRunnerError.timedOut
+        let service = PowerHelperService(
+            runner: runner,
+            store: store,
+            safety: FakeSafety(),
+            helperBuild: "136",
+            now: { 100 },
+            idleExitDelay: 0.15,
+            onIdleExit: { exited.flag = true }
+        )
+        service.start()
+        Thread.sleep(forTimeInterval: 0.08)
+        #expect(exited.flag == false)
+        runner.writeError = nil
+        runner.systemValue = true
+        // Watchdog/retry path clears pending restore.
+        service.runWatchdogTickForTesting()
+        let deadline = Date().addingTimeInterval(3)
+        while (service.ledgerSnapshotForTesting().pendingRestore
+            || service.ledgerSnapshotForTesting().setByHelper
+            || service.persistRetryNeededForTesting()), Date() < deadline
+        {
+            service.runWatchdogTickForTesting()
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        Thread.sleep(forTimeInterval: 0.25)
+        service.checkIdleForTesting()
+        #expect(exited.flag == true)
     }
 }
 
@@ -472,14 +641,55 @@ struct HelperPowerSafetyTests {
         let pct = HelperPowerSafety.normalizedCapacityPercent(desc)
         #expect(pct == 80)
     }
+
+    @Test("malformed max does not fall back to current as percent (W1-7)")
+    func malformedMaxUnknown() {
+        let desc: [String: Any] = [
+            kIOPSTypeKey as String: kIOPSInternalBatteryType as String,
+            kIOPSCurrentCapacityKey as String: 50,
+            kIOPSMaxCapacityKey as String: Double.nan
+        ]
+        #expect(HelperPowerSafety.normalizedCapacityPercent(desc) == nil)
+        let zeroMax: [String: Any] = [
+            kIOPSTypeKey as String: kIOPSInternalBatteryType as String,
+            kIOPSCurrentCapacityKey as String: 50,
+            kIOPSMaxCapacityKey as String: 0
+        ]
+        #expect(HelperPowerSafety.normalizedCapacityPercent(zeroMax) == nil)
+    }
+
+    @Test("huge finite ratio clamps before Int conversion (W1-7)")
+    func hugeRatioClamps() {
+        // Finite but far outside 0…100 before Int conversion (must not trap).
+        let desc: [String: Any] = [
+            kIOPSTypeKey as String: kIOPSInternalBatteryType as String,
+            kIOPSCurrentCapacityKey as String: 1e20,
+            kIOPSMaxCapacityKey as String: 1.0
+        ]
+        let pct = HelperPowerSafety.normalizedCapacityPercent(desc)
+        #expect(pct == 100)
+    }
 }
 
 @Suite("LedgerStore safety (V-C05-3 / W1-12)")
 struct LedgerStoreTests {
+    /// Darwin `realpath` of the process temp dir (URL.resolvingSymlinksInPath leaves `/var` as a link).
+    private func makeResolvedTempDir(suffix: String = "") throws -> URL {
+        let tmp = FileManager.default.temporaryDirectory.path
+        let resolved: String = try tmp.withCString { cstr in
+            guard let ptr = realpath(cstr, nil) else {
+                throw LedgerStoreError.unsafeRoot
+            }
+            defer { free(ptr) }
+            return String(cString: ptr)
+        }
+        return URL(fileURLWithPath: resolved, isDirectory: true)
+            .appendingPathComponent("chorus-ledger-\(UUID().uuidString)\(suffix)", isDirectory: true)
+    }
+
     @Test("round-trip metadata without holders; absent initial save")
     func roundTrip() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chorus-ledger-\(UUID().uuidString)", isDirectory: true)
+        let dir = try makeResolvedTempDir()
         // Directory does not exist yet — save must create securely.
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -508,8 +718,7 @@ struct LedgerStoreTests {
 
     @Test("corrupt JSON yields corrupt error")
     func corrupt() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chorus-ledger-\(UUID().uuidString)", isDirectory: true)
+        let dir = try makeResolvedTempDir()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -525,8 +734,7 @@ struct LedgerStoreTests {
 
     @Test("symlink file is rejected")
     func symlinkFile() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chorus-ledger-\(UUID().uuidString)", isDirectory: true)
+        let dir = try makeResolvedTempDir()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -541,10 +749,9 @@ struct LedgerStoreTests {
         }
     }
 
-    @Test("writable parent is rejected")
+    @Test("writable leaf directory is rejected")
     func writableParent() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chorus-ledger-\(UUID().uuidString)", isDirectory: true)
+        let dir = try makeResolvedTempDir()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: dir.path)
@@ -555,10 +762,24 @@ struct LedgerStoreTests {
         }
     }
 
-    @Test("FIFO / nonregular file rejected")
+    @Test("writable intermediate ancestor is rejected (W1-12)")
+    func writableAncestor() throws {
+        let root = try makeResolvedTempDir()
+        let ancestor = root.appendingPathComponent("ancestor", isDirectory: true)
+        let leaf = ancestor.appendingPathComponent("helper", isDirectory: true)
+        try FileManager.default.createDirectory(at: leaf, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o775], ofItemAtPath: ancestor.path)
+
+        let store = LedgerStore(directoryPath: leaf.path, policy: .testing())
+        #expect(throws: LedgerStoreError.worldOrGroupWritable) {
+            try store.save(SleepGuardLedger())
+        }
+    }
+
+    @Test("FIFO / nonregular file rejected on load")
     func fifoRejected() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chorus-ledger-\(UUID().uuidString)", isDirectory: true)
+        let dir = try makeResolvedTempDir()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -572,10 +793,26 @@ struct LedgerStoreTests {
         }
     }
 
+    @Test("save rejects existing FIFO without blocking (W1-12)")
+    func saveRejectsFIFO() throws {
+        let dir = try makeResolvedTempDir()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fifo = dir.appendingPathComponent("ledger.json")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+
+        let store = LedgerStore(directoryPath: dir.path, policy: .testing())
+        let start = Date()
+        #expect(throws: LedgerStoreError.notRegularFile) {
+            try store.save(SleepGuardLedger())
+        }
+        #expect(Date().timeIntervalSince(start) < 1.0)
+    }
+
     @Test("symlink parent rejected")
     func symlinkParent() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chorus-ledger-\(UUID().uuidString)", isDirectory: true)
+        let root = try makeResolvedTempDir()
         let real = root.appendingPathComponent("real", isDirectory: true)
         let link = root.appendingPathComponent("link", isDirectory: true)
         try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
@@ -588,10 +825,31 @@ struct LedgerStoreTests {
         }
     }
 
+    @Test("intermediate ancestor symlink rejected (W1-12)")
+    func intermediateSymlinkRejected() throws {
+        let root = try makeResolvedTempDir()
+        let real = root.appendingPathComponent("real", isDirectory: true)
+        let mid = root.appendingPathComponent("mid", isDirectory: true)
+        let leafName = "helper"
+        try FileManager.default.createDirectory(
+            at: real.appendingPathComponent(leafName, isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createSymbolicLink(at: mid, withDestinationURL: real)
+
+        let store = LedgerStore(
+            directoryPath: mid.appendingPathComponent(leafName).path,
+            policy: .testing()
+        )
+        #expect(throws: LedgerStoreError.symlinkRejected) {
+            try store.save(SleepGuardLedger())
+        }
+    }
+
     @Test("unsupported version is corrupt")
     func badVersion() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chorus-ledger-\(UUID().uuidString)", isDirectory: true)
+        let dir = try makeResolvedTempDir()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -638,6 +896,78 @@ struct PMSetRunnerTimeoutTests {
         }
         let elapsed = MonotonicTime.seconds() - start
         #expect(elapsed < 2.5) // timeout + term grace + reap, bounded
+    }
+
+    @Test("descendant-held pipes and dual-pipe saturation stay bounded (W1-1)")
+    func descendantAndSaturatedPipesBounded() throws {
+        let script = """
+        #!/bin/sh
+        trap '' TERM
+        # Child holds both pipes open after parent would exit.
+        ( while true; do printf 'S'; printf 'E' >&2; sleep 0.01; done ) &
+        while true; do printf 'x'; printf 'y' >&2; sleep 0.01; done
+        """
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pmset-desc-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("desc.sh")
+        try script.write(to: path, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+
+        let start = MonotonicTime.seconds()
+        do {
+            _ = try PMSetRunner.runSubprocess(
+                executableURL: path,
+                arguments: [],
+                timeout: 0.25
+            )
+            Issue.record("expected timeout")
+        } catch let error as PMSetRunnerError {
+            #expect(error == .timedOut)
+        }
+        let elapsed = MonotonicTime.seconds() - start
+        #expect(elapsed < 3.0)
+    }
+}
+
+@Suite("PowerHelperService startup reconcile (W1-15)")
+struct PowerHelperServiceStartupTests {
+    @Test("startup reconcile is async; RPC waits without same-queue deadlock")
+    func asyncStartupNoDeadlock() throws {
+        let runner = FakePMSetRunner()
+        runner.systemValue = true
+        runner.writeDelay = 0.15
+        let store = FakeLedgerStore()
+        store.stored = SleepGuardLedger(
+            holders: [:],
+            priorValueWasDisabled: false,
+            setByHelper: true,
+            pendingRestore: true
+        )
+        let service = PowerHelperService(
+            runner: runner,
+            store: store,
+            safety: FakeSafety(),
+            helperBuild: "136",
+            onIdleExit: {}
+        )
+        let start = Date()
+        service.start()
+        // RPC enqueued during startup must complete after reconcile — no 7s same-queue hang.
+        let exported = PowerHelperService.ExportedObject(
+            service: service, connectionID: 1, uid: 501, pid: 1
+        )
+        let sem = DispatchSemaphore(value: 0)
+        var data: Data?
+        exported.status { json in
+            data = json
+            sem.signal()
+        }
+        #expect(sem.wait(timeout: .now() + 3) == .success)
+        #expect(data != nil)
+        #expect(Date().timeIntervalSince(start) < 2.5)
+        #expect(service.startupReadyForTesting() == true)
     }
 }
 

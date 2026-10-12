@@ -42,6 +42,8 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
     /// Cap stdout/stderr so a wedged pmset cannot fill memory (§14.1).
     static let maxOutputBytes = 256 * 1024
     static let termGraceSeconds: TimeInterval = 1
+    /// Extra bound for draining pipes after kill (descendant-held writers).
+    static let drainGraceSeconds: TimeInterval = 0.5
 
     private let executableURL: URL
     private let timeout: TimeInterval
@@ -81,8 +83,9 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
         guard confirmed == enabled else { throw PMSetRunnerError.writeNotConfirmed }
     }
 
-    /// Drain stdout/stderr with caps; TERM then KILL; always reap.
+    /// Drain stdout/stderr with caps; TERM then KILL process group; always reap with bounded drain.
     /// Deadlines are monotonic (`MonotonicTime`) — wall-clock changes cannot extend waits.
+    /// Descendant-held pipe writers cannot wedge forever: we kill the group and time-box drain (W1-1).
     static func runSubprocess(
         executableURL: URL,
         arguments: [String],
@@ -92,6 +95,8 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
         process.executableURL = executableURL
         process.arguments = arguments
         process.environment = [:]
+        // Own process group so descendants sharing the pipes can be killed.
+        process.qualityOfService = .userInitiated
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -114,36 +119,49 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
             throw PMSetRunnerError.launchFailed
         }
 
+        // Put child in its own process group (best-effort; race if already exited).
+        let pid = process.processIdentifier
+        if pid > 0 {
+            _ = setpgid(pid, pid)
+        }
+
         let deadline = MonotonicTime.seconds() + timeout
         while process.isRunning, MonotonicTime.seconds() < deadline {
             Thread.sleep(forTimeInterval: 0.05)
         }
 
         if process.isRunning {
-            process.terminate() // SIGTERM
+            process.terminate() // SIGTERM to direct child
+            if pid > 0 {
+                kill(-pid, SIGTERM)
+            }
             let termDeadline = MonotonicTime.seconds() + termGraceSeconds
             while process.isRunning, MonotonicTime.seconds() < termDeadline {
                 Thread.sleep(forTimeInterval: 0.05)
             }
             if process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
+                if pid > 0 {
+                    kill(-pid, SIGKILL)
+                }
+                kill(pid, SIGKILL)
             }
-            // Always reap, even if the child ignored TERM and filled pipes.
-            process.waitUntilExit()
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
-            _ = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            _ = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            boundedReapAndDrain(
+                process: process,
+                stdoutPipe: stdoutPipe,
+                stderrPipe: stderrPipe,
+                stdoutBox: stdoutBox,
+                stderrBox: stderrBox
+            )
             throw PMSetRunnerError.timedOut
         }
 
-        process.waitUntilExit()
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-        stderrPipe.fileHandleForReading.readabilityHandler = nil
-
-        // Drain any remaining bytes (bounded by OutputBox).
-        stdoutBox.append(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
-        stderrBox.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
+        boundedReapAndDrain(
+            process: process,
+            stdoutPipe: stdoutPipe,
+            stderrPipe: stderrPipe,
+            stdoutBox: stdoutBox,
+            stderrBox: stderrBox
+        )
 
         return (
             exitCode: process.terminationStatus,
@@ -151,6 +169,60 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
             stderr: stderrBox.data,
             truncated: stdoutBox.truncated || stderrBox.truncated
         )
+    }
+
+    /// Time-boxed reap + pipe drain — never unbounded `readDataToEndOfFile` / `waitUntilExit` (W1-1).
+    private static func boundedReapAndDrain(
+        process: Process,
+        stdoutPipe: Pipe,
+        stderrPipe: Pipe,
+        stdoutBox: OutputBox,
+        stderrBox: OutputBox
+    ) {
+        let reapDeadline = MonotonicTime.seconds() + drainGraceSeconds + termGraceSeconds
+        while process.isRunning, MonotonicTime.seconds() < reapDeadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        if process.isRunning {
+            let pid = process.processIdentifier
+            if pid > 0 {
+                kill(-pid, SIGKILL)
+                kill(pid, SIGKILL)
+            }
+        }
+
+        // Bounded reap on a helper thread — never hang the ledger/io caller on waitUntilExit.
+        if process.isRunning {
+            let pid = process.processIdentifier
+            if pid > 0 {
+                kill(-pid, SIGKILL)
+                kill(pid, SIGKILL)
+            }
+        }
+        let reapSem = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            process.waitUntilExit()
+            reapSem.signal()
+        }
+        _ = reapSem.wait(timeout: .now() + drainGraceSeconds + termGraceSeconds)
+
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+        let drainDeadline = MonotonicTime.seconds() + drainGraceSeconds
+        while MonotonicTime.seconds() < drainDeadline {
+            let outChunk = stdoutPipe.fileHandleForReading.availableData
+            let errChunk = stderrPipe.fileHandleForReading.availableData
+            if outChunk.isEmpty, errChunk.isEmpty {
+                break
+            }
+            stdoutBox.append(outChunk)
+            stderrBox.append(errChunk)
+            if stdoutBox.truncated, stderrBox.truncated {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
     }
 }
 
