@@ -43,14 +43,16 @@ public enum DesktopAgentMatcher {
 
     // MARK: - Codex
 
-    /// argv 含 `app-server`，basename 為 `codex`，不含 `--help`／`--version`，
+    /// argv[0] basename 為 `codex`，參數含 `app-server`，不含 `--help`／`--version`，
     /// 且執行檔在信任的 `/Applications` 或 `~/Applications` 的 Codex／ChatGPT.app 內。
     public static func matchesCodexApp(executablePath: String?, arguments: [String]) -> Bool {
         guard !argumentsContainHelpOrVersion(arguments) else { return false }
         guard argumentsContainToken(arguments, token: "app-server") else { return false }
         guard let path = executablePath, isTrustedCodexExecutable(path) else { return false }
-        let base = (path as NSString).lastPathComponent
-        guard base == "codex" || argumentsContainBasename(arguments, name: "codex") else {
+        // Spec §4.4：必須檢查 argv[0] basename，不可只靠執行檔路徑或後續參數。
+        guard let argv0 = arguments.first,
+              (argv0 as NSString).lastPathComponent == "codex"
+        else {
             return false
         }
         return true

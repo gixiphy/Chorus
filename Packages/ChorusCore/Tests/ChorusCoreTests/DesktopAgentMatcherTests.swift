@@ -73,4 +73,39 @@ struct DesktopAgentMatcherTests {
         )
         #expect(DesktopAgentMatcher.claudeDesktopSourceEnabled == false)
     }
+
+    @Test("V-C04-2 C4-3 trusted path requires argv[0] basename codex")
+    func codexRequiresArgv0Basename() {
+        let trusted = "/Applications/Codex.app/Contents/Resources/codex"
+        #expect(
+            DesktopAgentMatcher.classify(
+                executablePath: trusted,
+                arguments: ["other", "app-server"]
+            ) == nil
+        )
+        #expect(
+            DesktopAgentMatcher.classify(
+                executablePath: trusted,
+                arguments: ["app-server"]
+            ) == nil
+        )
+        #expect(
+            DesktopAgentMatcher.classify(
+                executablePath: trusted,
+                arguments: ["other", "app-server", "codex"]
+            ) == nil
+        )
+        #expect(
+            DesktopAgentMatcher.classify(
+                executablePath: trusted,
+                arguments: [trusted, "app-server"]
+            ) == .codexApp
+        )
+        #expect(
+            DesktopAgentMatcher.classify(
+                executablePath: trusted,
+                arguments: ["codex", "app-server"]
+            ) == .codexApp
+        )
+    }
 }

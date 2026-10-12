@@ -166,9 +166,8 @@ public struct OrcaWorktreePsResponse: Decodable, Sendable, Equatable {
 
         private static func dateFromEpochMillis(_ millis: Double) -> Date? {
             guard millis.isFinite else { return nil }
-            // Heuristic: values ≥ 1e12 are milliseconds; smaller are seconds.
-            let seconds = millis >= 1_000_000_000_000 ? millis / 1_000 : millis
-            return Date(timeIntervalSince1970: seconds)
+            // Contract: numeric lastActivityAt is epoch milliseconds (§4.3).
+            return Date(timeIntervalSince1970: millis / 1_000)
         }
     }
 
@@ -182,30 +181,38 @@ public struct OrcaWorktreePsResponse: Decodable, Sendable, Equatable {
 // MARK: - Classification
 
 public enum OrcaClassification: Sendable, Equatable {
-    case working(rows: [OrcaWorktreePsResponse.Row])
+    /// `qualityWarning`：§14.3 未知 status 等品質提示；有 working 證據時仍為 working，供 C07 對應 degraded。
+    case working(rows: [OrcaWorktreePsResponse.Row], qualityWarning: String?)
     case idle
-    /// §14.3：truncated 無 working、或僅有未知 status —— 不能宣稱完整 idle。
+    /// §14.3：truncated 無 working、或含未知 status 且無 working —— 不能宣稱完整 idle。
     case incomplete(reason: String)
     case failed(reason: String)
 }
 
 public enum OrcaActivityPlanner {
+    /// Allowlisted `error.code` values that may appear in a sanitized failure reason.
+    /// Arbitrary CLI message／code text must never be forwarded (§14.3).
+    public static let allowlistedFailureCodes: Set<String> = [
+        "RUNTIME_UNAVAILABLE",
+    ]
+
+    /// Fixed §14.3 quality hint when any row has an unknown status.
+    public static let unknownStatusWarning = "unknown status present"
+
     /// 判定一份 `orca worktree ps --json` 回應是否代表工作中。
     ///
     /// - `working` 一律算工作中。
     /// - `permission` 僅在 `countPermissionAsWorking == true` 時算（預設 true，Fi A3）。
     /// - `active`／`done`／`inactive` 不算工作中（`active` 只表示有活著的 PTY）。
     /// - `truncated == true` 且回傳列中沒有工作證據 → `.incomplete`（§14.3），不是 idle。
-    /// - 僅有 `unknown` status → `.incomplete`。
+    /// - 任一 `unknown` status、且無 working 證據 → `.incomplete`（不猜 working）。
+    /// - 有 working 證據且含 `unknown` → `.working` 並附 `qualityWarning`（不把 unknown 當 working）。
     public static func classify(
         _ response: OrcaWorktreePsResponse,
         countPermissionAsWorking: Bool
     ) -> OrcaClassification {
         guard response.ok else {
-            let detail = response.error?.message
-                ?? response.error?.code
-                ?? "ok=false"
-            return .failed(reason: detail)
+            return .failed(reason: sanitizedFailureReason(for: response.error))
         }
         guard let result = response.result else {
             return .failed(reason: "missing result")
@@ -213,23 +220,37 @@ public enum OrcaActivityPlanner {
 
         let rows = result.worktrees
         let workingRows = rows.filter { isWorkingStatus($0.status, countPermission: countPermissionAsWorking) }
-        if !workingRows.isEmpty {
-            return .working(rows: workingRows)
-        }
-
-        let truncated = result.truncated == true
-        let onlyUnknown = !rows.isEmpty && rows.allSatisfy {
-            if case .unknown = $0.status { return true }
+        let hasUnknown = rows.contains { row in
+            if case .unknown = row.status { return true }
             return false
         }
 
+        if !workingRows.isEmpty {
+            let warning = hasUnknown ? unknownStatusWarning : nil
+            return .working(rows: workingRows, qualityWarning: warning)
+        }
+
+        let truncated = result.truncated == true
         if truncated {
             return .incomplete(reason: "truncated without working evidence")
         }
-        if onlyUnknown {
-            return .incomplete(reason: "unknown status only")
+        if hasUnknown {
+            return .incomplete(reason: unknownStatusWarning)
         }
         return .idle
+    }
+
+    /// Sanitized `.failed` reason：fixed category or allowlisted code only（§14.3）。
+    public static func sanitizedFailureReason(
+        for error: OrcaWorktreePsResponse.ErrorBody?
+    ) -> String {
+        if let code = error?.code, allowlistedFailureCodes.contains(code) {
+            return "orca:\(code)"
+        }
+        if error != nil {
+            return "orca error"
+        }
+        return "ok=false"
     }
 
     /// 列是否算「工作中」狀態（不含 truncated／ok 檢查）。

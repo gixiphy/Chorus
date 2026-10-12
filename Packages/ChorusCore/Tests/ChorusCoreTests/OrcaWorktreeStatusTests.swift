@@ -21,7 +21,7 @@ struct OrcaWorktreeStatusTests {
             OrcaFixtures.oneWorking,
             countPermissionAsWorking: true
         )
-        guard case let .working(rows) = result else {
+        guard case let .working(rows, warning) = result else {
             Issue.record("expected working, got \(result)")
             return
         }
@@ -30,6 +30,7 @@ struct OrcaWorktreeStatusTests {
         #expect(rows[0].id == "wt-feature")
         #expect(rows[0].name == "feature-branch")
         #expect(rows[0].lastActivityAt != nil)
+        #expect(warning == nil)
     }
 
     @Test("V-C04-1 onePermissionOnly respects countPermissionAsWorking")
@@ -38,12 +39,13 @@ struct OrcaWorktreeStatusTests {
             OrcaFixtures.onePermissionOnly,
             countPermissionAsWorking: true
         )
-        guard case let .working(rows) = counted else {
+        guard case let .working(rows, warning) = counted else {
             Issue.record("expected working when permission counts, got \(counted)")
             return
         }
         #expect(rows.count == 1)
         #expect(rows[0].status == .permission)
+        #expect(warning == nil)
 
         let ignored = OrcaActivityPlanner.classifyJSON(
             OrcaFixtures.onePermissionOnly,
@@ -67,21 +69,23 @@ struct OrcaWorktreeStatusTests {
             OrcaFixtures.mixedAllStatuses,
             countPermissionAsWorking: true
         )
-        guard case let .working(rows) = withPerm else {
+        guard case let .working(rows, warning) = withPerm else {
             Issue.record("expected working, got \(withPerm)")
             return
         }
         #expect(Set(rows.map(\.status)) == [.working, .permission])
+        #expect(warning == nil)
 
         let withoutPerm = OrcaActivityPlanner.classifyJSON(
             OrcaFixtures.mixedAllStatuses,
             countPermissionAsWorking: false
         )
-        guard case let .working(onlyWorking) = withoutPerm else {
+        guard case let .working(onlyWorking, withoutWarning) = withoutPerm else {
             Issue.record("expected working without permission, got \(withoutPerm)")
             return
         }
         #expect(onlyWorking.map(\.status) == [.working])
+        #expect(withoutWarning == nil)
     }
 
     @Test("V-C04-1 / V-C07-6 unknownStatus → incomplete, not idle")
@@ -94,7 +98,52 @@ struct OrcaWorktreeStatusTests {
             Issue.record("expected incomplete, got \(result)")
             return
         }
-        #expect(reason.contains("unknown"))
+        #expect(reason == OrcaActivityPlanner.unknownStatusWarning)
+    }
+
+    @Test("V-C04-1 C4-1 active+unknown → incomplete, not idle")
+    func activePlusUnknownIncomplete() {
+        let json = mixedJSON(statuses: ["active", "thinking"])
+        let result = OrcaActivityPlanner.classifyJSON(json, countPermissionAsWorking: true)
+        guard case let .incomplete(reason) = result else {
+            Issue.record("expected incomplete, got \(result)")
+            return
+        }
+        #expect(reason == OrcaActivityPlanner.unknownStatusWarning)
+    }
+
+    @Test("V-C04-1 C4-1 inactive+unknown → incomplete, not idle")
+    func inactivePlusUnknownIncomplete() {
+        let json = mixedJSON(statuses: ["inactive", "thinking"])
+        let result = OrcaActivityPlanner.classifyJSON(json, countPermissionAsWorking: true)
+        guard case let .incomplete(reason) = result else {
+            Issue.record("expected incomplete, got \(result)")
+            return
+        }
+        #expect(reason == OrcaActivityPlanner.unknownStatusWarning)
+    }
+
+    @Test("V-C04-1 C4-1 permission+unknown with permission counting disabled → incomplete")
+    func permissionPlusUnknownWhenPermissionIgnored() {
+        let json = mixedJSON(statuses: ["permission", "thinking"])
+        let result = OrcaActivityPlanner.classifyJSON(json, countPermissionAsWorking: false)
+        guard case let .incomplete(reason) = result else {
+            Issue.record("expected incomplete, got \(result)")
+            return
+        }
+        #expect(reason == OrcaActivityPlanner.unknownStatusWarning)
+    }
+
+    @Test("V-C04-1 C4-1 working+unknown → working with quality warning")
+    func workingPlusUnknownKeepsWorkingWithWarning() {
+        let json = mixedJSON(statuses: ["working", "thinking"])
+        let result = OrcaActivityPlanner.classifyJSON(json, countPermissionAsWorking: true)
+        guard case let .working(rows, warning) = result else {
+            Issue.record("expected working with warning, got \(result)")
+            return
+        }
+        #expect(rows.map(\.status) == [.working])
+        #expect(warning == OrcaActivityPlanner.unknownStatusWarning)
     }
 
     @Test("V-C04-1 truncated with working → working")
@@ -103,12 +152,13 @@ struct OrcaWorktreeStatusTests {
             OrcaFixtures.truncated,
             countPermissionAsWorking: true
         )
-        guard case let .working(rows) = result else {
+        guard case let .working(rows, warning) = result else {
             Issue.record("expected working, got \(result)")
             return
         }
         #expect(rows.count == 1)
         #expect(rows[0].status == .working)
+        #expect(warning == nil)
     }
 
     @Test("V-C07-6 truncated without working → incomplete, not idle")
@@ -138,7 +188,7 @@ struct OrcaWorktreeStatusTests {
         #expect(reason.contains("truncated"))
     }
 
-    @Test("V-C04-1 okFalse → failed")
+    @Test("V-C04-1 okFalse → failed with allowlisted sanitized reason")
     func okFalse() {
         let result = OrcaActivityPlanner.classifyJSON(
             OrcaFixtures.okFalse,
@@ -148,7 +198,34 @@ struct OrcaWorktreeStatusTests {
             Issue.record("expected failed, got \(result)")
             return
         }
-        #expect(!reason.isEmpty)
+        #expect(reason == "orca:RUNTIME_UNAVAILABLE")
+        #expect(!reason.contains("daemon"))
+    }
+
+    @Test("V-C04-1 C4-2 ok:false reason strips path/control/long payload")
+    func okFalseSanitizedReason() {
+        let sentinelPath = "/Users/private/secret-worktree"
+        let longPayload = String(repeating: "X", count: 4_096)
+        let json = """
+        {
+          "ok": false,
+          "error": {
+            "code": "LEAKED\\nCODE\\u0001\(sentinelPath)",
+            "message": "failed at \(sentinelPath)\\n\(longPayload)"
+          }
+        }
+        """
+        let result = OrcaActivityPlanner.classifyJSON(json, countPermissionAsWorking: true)
+        guard case let .failed(reason) = result else {
+            Issue.record("expected failed, got \(result)")
+            return
+        }
+        #expect(reason == "orca error")
+        #expect(!reason.contains(sentinelPath))
+        #expect(!reason.contains("\n"))
+        #expect(!reason.contains("\u{0001}"))
+        #expect(!reason.contains("XXXX"))
+        #expect(reason.count <= 64)
     }
 
     @Test("V-C04-1 malformed → failed")
@@ -182,6 +259,31 @@ struct OrcaWorktreeStatusTests {
         #expect(date?.timeIntervalSince1970 == 1_791_815_400)
     }
 
+    @Test("V-C04-1 C4-4 numeric epoch milliseconds always divide by 1000", arguments: [
+        (0.0, 0.0),
+        (1_000.0, 1.0),
+        (946_684_800_000.0, 946_684_800.0),
+    ])
+    func epochMillisAlwaysMilliseconds(millis: Double, expectedSeconds: Double) {
+        let json = """
+        {
+          "ok": true,
+          "result": {
+            "worktrees": [
+              {
+                "worktreeId": "wt-epoch-edge",
+                "status": "working",
+                "lastActivityAt": \(millis)
+              }
+            ]
+          }
+        }
+        """
+        let response = OrcaActivityPlanner.decodeResponse(from: json)
+        let date = response?.result?.worktrees.first?.lastActivityAt
+        #expect(date?.timeIntervalSince1970 == expectedSeconds)
+    }
+
     @Test("unknown fields are ignored; decode still succeeds")
     func ignoresUnknownFields() {
         let json = """
@@ -202,10 +304,11 @@ struct OrcaWorktreeStatusTests {
         }
         """
         let result = OrcaActivityPlanner.classifyJSON(json, countPermissionAsWorking: true)
-        guard case .working = result else {
+        guard case let .working(_, warning) = result else {
             Issue.record("expected working, got \(result)")
             return
         }
+        #expect(warning == nil)
     }
 
     @Test("R01 constants: bundle id and CLI candidates")
@@ -213,5 +316,29 @@ struct OrcaWorktreeStatusTests {
         #expect(OrcaWorktreeStatus.knownBundleIDs.contains("com.stablyai.orca"))
         #expect(OrcaWorktreeStatus.teamID == "6CX3WHS9HZ")
         #expect(OrcaWorktreeStatus.defaultCLICandidates.first == "/opt/homebrew/bin/orca")
+    }
+
+    // MARK: - Helpers
+
+    private func mixedJSON(statuses: [String]) -> String {
+        let rows = statuses.enumerated().map { index, status in
+            """
+            {
+              "worktreeId": "wt-\(index)",
+              "displayName": "row-\(index)",
+              "status": "\(status)"
+            }
+            """
+        }.joined(separator: ",")
+        return """
+        {
+          "ok": true,
+          "result": {
+            "worktrees": [\(rows)],
+            "totalCount": \(statuses.count),
+            "truncated": false
+          }
+        }
+        """
     }
 }
