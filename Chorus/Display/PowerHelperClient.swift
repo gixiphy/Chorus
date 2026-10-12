@@ -1,4 +1,5 @@
 import ChorusCore
+import Darwin
 import Foundation
 import ServiceManagement
 
@@ -556,6 +557,9 @@ private final class InjectedRepairing: PowerHelperRepairing {
 /// User-level `pmset -g` probe for leftover detection (§6.6). Never requires root.
 enum SleepDisabledProbe {
     static let timeout: TimeInterval = 3
+    private static let termGraceSeconds: TimeInterval = 0.5
+    private static let drainGraceSeconds: TimeInterval = 0.5
+    private static let maxStdoutBytes = 256 * 1024
 
     static func readSleepDisabled(
         run: (URL, [String], TimeInterval) throws -> (exit: Int32, stdout: Data, truncated: Bool)
@@ -576,6 +580,14 @@ enum SleepDisabledProbe {
         }
     }
 
+    /// V1-3: never block MainActor — leftover probe runs off-actor.
+    static func readSleepDisabledOffMainActor() async -> Bool? {
+        await Task.detached(priority: .userInitiated) {
+            readSleepDisabled()
+        }.value
+    }
+
+    /// Continuous drain + TERM/KILL + bounded reap/EOF (V1-3). Modeled on helper PMSetRunner.
     static func runSubprocess(
         executableURL: URL,
         arguments: [String],
@@ -591,19 +603,110 @@ enum SleepDisabledProbe {
         process.standardInput = FileHandle.nullDevice
         try process.launch()
 
+        let outFD = pipe.fileHandleForReading.fileDescriptor
+        let flags = fcntl(outFD, F_GETFL)
+        if flags >= 0 {
+            _ = fcntl(outFD, F_SETFL, flags | O_NONBLOCK)
+        }
+        let box = ProbeOutputBox(limit: maxStdoutBytes)
+        let pid = process.processIdentifier
+        if pid > 0 {
+            _ = setpgid(pid, pid)
+        }
+
         let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning, Date() < deadline {
+            _ = drainAvailable(fd: outFD, box: box)
             Thread.sleep(forTimeInterval: 0.05)
         }
+
         if process.isRunning {
             process.terminate()
-            process.waitUntilExit()
-            return (exit: -1, stdout: Data(), truncated: true)
+            if pid > 0 { kill(-pid, SIGTERM) }
+            let termDeadline = Date().addingTimeInterval(termGraceSeconds)
+            while process.isRunning, Date() < termDeadline {
+                _ = drainAvailable(fd: outFD, box: box)
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if process.isRunning {
+                if pid > 0 { kill(-pid, SIGKILL) }
+                kill(pid, SIGKILL)
+            }
+            boundedReapAndDrain(process: process, outFD: outFD, box: box)
+            return (exit: -1, stdout: box.data, truncated: true)
         }
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let truncated = data.count > 256 * 1024
-        return (exit: process.terminationStatus, stdout: data.prefix(256 * 1024), truncated: truncated)
+
+        boundedReapAndDrain(process: process, outFD: outFD, box: box)
+        return (exit: process.terminationStatus, stdout: box.data, truncated: box.truncated)
+    }
+
+    private static func boundedReapAndDrain(process: Process, outFD: Int32, box: ProbeOutputBox) {
+        let reapDeadline = Date().addingTimeInterval(drainGraceSeconds + termGraceSeconds)
+        while process.isRunning, Date() < reapDeadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        if process.isRunning {
+            let pid = process.processIdentifier
+            if pid > 0 {
+                kill(-pid, SIGKILL)
+                kill(pid, SIGKILL)
+            }
+        }
+        var sawEOF = false
+        let drainDeadline = Date().addingTimeInterval(drainGraceSeconds)
+        repeat {
+            sawEOF = drainAvailable(fd: outFD, box: box) || sawEOF
+            if sawEOF { break }
+            Thread.sleep(forTimeInterval: 0.01)
+        } while Date() < drainDeadline
+        if !sawEOF { box.markTruncated() }
+    }
+
+    @discardableResult
+    private static func drainAvailable(fd: Int32, box: ProbeOutputBox) -> Bool {
+        var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+        for _ in 0..<16 {
+            let count = read(fd, &buffer, buffer.count)
+            if count == 0 { return true }
+            if count < 0 {
+                if errno == EINTR { continue }
+                if errno != EAGAIN && errno != EWOULDBLOCK { box.markTruncated() }
+                return false
+            }
+            box.append(Data(buffer.prefix(count)))
+        }
+        return false
+    }
+}
+
+private final class ProbeOutputBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private let limit: Int
+    private(set) var data = Data()
+    private(set) var truncated = false
+
+    init(limit: Int) { self.limit = limit }
+
+    func markTruncated() {
+        lock.lock(); defer { lock.unlock() }
+        truncated = true
+    }
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        if data.count >= limit {
+            truncated = true
+            return
+        }
+        let remaining = limit - data.count
+        if chunk.count > remaining {
+            data.append(chunk.prefix(remaining))
+            truncated = true
+        } else {
+            data.append(chunk)
+        }
     }
 }
 

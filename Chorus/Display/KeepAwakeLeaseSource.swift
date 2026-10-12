@@ -12,18 +12,28 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
     private let graceSeconds: Double
     private let wallNow: () -> Date
     private let uptimeNow: () -> Double
+    /// Stable wall conversion for an unchanged heartbeat uptime stamp (V1-2).
+    private var wallAnchors: [String: (uptimeStamp: Double, wall: Date)] = [:]
 
     init(
         graceSeconds: Double = KeepAwakeLeaseTable.defaultGraceSeconds,
         wallNow: @escaping () -> Date = Date.init,
-        uptimeNow: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }
+        /// Cross-sleep continuous clock (V1-7); not awake-only `systemUptime`.
+        uptimeNow: @escaping () -> Double = {
+            LidMonotonicTime.seconds() ?? ProcessInfo.processInfo.systemUptime
+        }
     ) {
         self.graceSeconds = graceSeconds
         self.wallNow = wallNow
         self.uptimeNow = uptimeNow
     }
 
+    /// Shared continuous clock for hold/status wire remaining time (V1-7／V1-11).
+    func currentUptime() -> Double { uptimeNow() }
+
     func start() {
+        // V1-2: already-running start is a no-op (no fresh wall sample / notify).
+        guard !running else { return }
         running = true
         refreshReports(notify: false)
     }
@@ -31,6 +41,7 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
     func stop() {
         running = false
         report = []
+        wallAnchors = [:]
     }
 
     /// Fi A4：模式／automation／token 變更時立即清除，不建立 grace tombstone。
@@ -38,6 +49,7 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
     func clearImmediately() {
         table = KeepAwakeLeaseTable()
         report = []
+        wallAnchors = [:]
         if running {
             onChange?()
         }
@@ -45,6 +57,7 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
 
     @discardableResult
     func hold(id: String, ttl: Double?) -> KeepAwakeLeaseTable.HoldResult {
+        // Table purges at the same `now` before capacity (V1-9).
         let result = table.hold(id: id, ttl: ttl, now: uptimeNow())
         refreshReports(notify: true)
         return result
@@ -83,13 +96,11 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
     private func refreshReports(notify: Bool) {
         let uptime = uptimeNow()
         _ = table.purgeExpired(now: uptime, graceSeconds: graceSeconds)
-        let wall = wallNow()
-        let toWall: (Double) -> Date = { up in
-            wall.addingTimeInterval(up - uptime)
-        }
 
         var next: [KeepAwakeSourceReport] = []
+        var liveIDs: Set<String> = []
         for lease in table.active(now: uptime) {
+            liveIDs.insert(lease.id)
             let remaining = max(0, lease.expiresAt - uptime)
             let minutes = Int((remaining / 60).rounded(.up))
             next.append(
@@ -99,12 +110,13 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
                     displayName: lease.id,
                     detail: "剩 \(max(minutes, 1)) 分",
                     isWorkingNow: true,
-                    lastWorkingAt: toWall(lease.lastHeartbeatAt),
+                    lastWorkingAt: stableWall(id: lease.id, uptimeStamp: lease.lastHeartbeatAt, sampleUptime: uptime),
                     health: .ok
                 )
             )
         }
         for stone in table.graceTombstones(now: uptime, graceSeconds: graceSeconds) {
+            liveIDs.insert(stone.id)
             next.append(
                 KeepAwakeSourceReport(
                     id: "lease:\(stone.id)",
@@ -112,12 +124,14 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
                     displayName: stone.id,
                     detail: nil,
                     isWorkingNow: false,
-                    lastWorkingAt: toWall(stone.lastWorkingAt),
+                    lastWorkingAt: stableWall(id: stone.id, uptimeStamp: stone.lastWorkingAt, sampleUptime: uptime),
                     health: .ok
                 )
             )
         }
         if let aggregate = table.aggregateGraceContribution(now: uptime, graceSeconds: graceSeconds) {
+            let aggID = "aggregate-grace"
+            liveIDs.insert(aggID)
             next.append(
                 KeepAwakeSourceReport(
                     id: "lease:aggregate-grace",
@@ -125,13 +139,26 @@ final class KeepAwakeLeaseSource: KeepAwakeSource {
                     displayName: "租約寬限",
                     detail: "摺疊 \(aggregate.foldedCount) 筆",
                     isWorkingNow: false,
-                    lastWorkingAt: toWall(aggregate.lastWorkingAt),
+                    lastWorkingAt: stableWall(id: aggID, uptimeStamp: aggregate.lastWorkingAt, sampleUptime: uptime),
                     health: .ok
                 )
             )
         }
+        wallAnchors = wallAnchors.filter { liveIDs.contains($0.key) }
 
+        let previous = report
         report = next
-        if notify { onChange?() }
+        // Preserve real detail/source-change notifications; skip no-op churn (V1-2).
+        if notify, previous != next { onChange?() }
+    }
+
+    /// Wall display anchor is stable until the underlying continuous stamp changes.
+    private func stableWall(id: String, uptimeStamp: Double, sampleUptime: Double) -> Date {
+        if let cached = wallAnchors[id], cached.uptimeStamp == uptimeStamp {
+            return cached.wall
+        }
+        let wall = wallNow().addingTimeInterval(uptimeStamp - sampleUptime)
+        wallAnchors[id] = (uptimeStamp, wall)
+        return wall
     }
 }

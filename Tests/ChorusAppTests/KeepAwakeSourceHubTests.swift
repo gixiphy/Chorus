@@ -203,6 +203,91 @@ struct KeepAwakeSourceHubTests {
         #expect(calls == 0)
     }
 
+    @Test("V1-10 present → stop → absent → much-later restart does not fabricate busy")
+    func grokEvidenceClearedOnStop() {
+        var clock = Date(timeIntervalSince1970: 7_000_000)
+        let checker = FakeAppChecker()
+        checker.present = true
+        let presence = AppPresenceSource(checker: checker, now: { clock })
+        let (hub, _) = makeHub(now: { clock }, appPresence: presence)
+        hub.configure(
+            KeepAwakeSourceSettings(orcaEnabled: false, desktopAgentsEnabled: false, grokBotEnabled: true)
+        )
+        hub.start()
+        presence.refresh(notify: true)
+        #expect(hub.isBusy)
+
+        hub.stop()
+        checker.present = false
+        clock = clock.addingTimeInterval(10_000) // ≫ grace
+        hub.configure(
+            KeepAwakeSourceSettings(orcaEnabled: false, desktopAgentsEnabled: false, grokBotEnabled: true)
+        )
+        hub.start()
+        presence.refresh(notify: true)
+        #expect(!hub.isBusy)
+        #expect(!hub.reports.contains { $0.id == "app:grok-bot" })
+        hub.stop()
+    }
+
+    @Test("V1-2 unchanged configure is idempotent under drifting wall")
+    func configureIdempotentWithLease() {
+        var uptime = 50.0
+        var wallTick = 0
+        let leases = KeepAwakeLeaseSource(
+            wallNow: {
+                wallTick += 1
+                return Date(timeIntervalSince1970: 8_000_000 + Double(wallTick))
+            },
+            uptimeNow: { uptime }
+        )
+        var depth = 0
+        var maxDepth = 0
+        var busyChanges = 0
+        let hub = KeepAwakeSourceHub(
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil, now: {
+                Date(timeIntervalSince1970: uptime)
+            }),
+            orca: OrcaActivitySource(
+                runner: FakeRunner(), workspaceCenter: NotificationCenter(),
+                presence: FakePresence(), now: { Date(timeIntervalSince1970: uptime) }
+            ),
+            desktop: DesktopAgentSource(
+                lister: StaticDesktopLister([]),
+                verifier: FakeVerifier(ok: false),
+                transcripts: StaticTranscriptScanner([]),
+                now: { Date(timeIntervalSince1970: uptime) }
+            ),
+            leases: leases,
+            appPresence: AppPresenceSource(
+                checker: FakeAppChecker(),
+                now: { Date(timeIntervalSince1970: uptime) }
+            ),
+            now: { Date(timeIntervalSince1970: uptime) }
+        )
+        hub.agentActivity.chromiumThrottleWarningOverride = false
+        let settings = KeepAwakeSourceSettings(
+            orcaEnabled: false, desktopAgentsEnabled: false, grokBotEnabled: false
+        )
+        hub.configure(settings)
+        hub.onBusyChanged = {
+            depth += 1
+            maxDepth = max(maxDepth, depth)
+            busyChanges += 1
+            // Re-enter configure like KeepAwakeController.reevaluate does.
+            hub.configure(settings)
+            depth -= 1
+        }
+        hub.start()
+        _ = leases.hold(id: "reentry", ttl: 120)
+        #expect(hub.isBusy)
+        #expect(maxDepth <= 2)
+        let before = busyChanges
+        hub.configure(settings) // unchanged — no notify
+        #expect(busyChanges == before)
+        hub.stop()
+    }
+
     @Test("C7-5 Grok exit grace from exit time; tick self-corrects")
     func grokExitGrace() {
         var clock = Date(timeIntervalSince1970: 6_500_000)

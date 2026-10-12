@@ -88,7 +88,8 @@ final class AppPresenceSource: KeepAwakeSource {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
         observers = []
-        report = []
+        // V1-10: clear presence evidence on stop — grace only for exits observed while running.
+        clearEvidence()
     }
 
     /// Opt-out：立即移除跡證（V-C07-5）。

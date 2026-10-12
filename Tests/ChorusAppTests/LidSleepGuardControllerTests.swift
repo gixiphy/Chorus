@@ -181,7 +181,7 @@ struct LidSleepGuardControllerTests {
         settings: SettingsStore? = nil,
         now: @escaping () -> Double = { 1_000 },
         e2e: Bool = false,
-        probe: @escaping () -> Bool? = { nil },
+        probe: @escaping () async -> Bool? = { nil },
         sessionStore: LidClosedSessionStore = LidClosedSessionStore(
             suiteName: "lid-session-\(UUID().uuidString)"
         ),
@@ -436,6 +436,8 @@ struct LidSleepGuardControllerTests {
             }
             #expect(notifier.leftoverRestored == 1)
             #expect(controller.leftover == nil)
+            // V1-4: direct set(false) only — no acquire-as-repair.
+            #expect(helper.setCalls == [false])
         }
 
         // Foreign
@@ -1136,5 +1138,66 @@ struct LidSleepGuardControllerTests {
         let (controller, _, _, _) = makeController(sessionStore: store)
         defer { controller.shutdown() }
         #expect(controller.state.maxDurationLatched)
+    }
+
+    @Test("V1-4 recovery queued before shutdown never notifies success", .timeLimit(.minutes(1)))
+    func recoveryQueuedBeforeShutdownIgnored() async throws {
+        let helper = FakeHelper()
+        helper.sleepDisabled = true
+        helper.setByHelper = true
+        helper.holderCount = 0
+        helper.callerIsHolder = false
+        helper.setDelay = .milliseconds(250)
+        let notifier = FakeNotifier()
+        let (controller, _, _, _) = makeController(
+            helper: helper, notifier: notifier, probe: { true }
+        )
+        let detect = Task { await controller.detectLeftover() }
+        try await Task.sleep(for: .milliseconds(40))
+        controller.shutdown()
+        await detect.value
+        #expect(notifier.leftoverRestored == 0)
+        #expect(!helper.setCalls.contains(true), "must not acquire after/during shutdown recovery")
+    }
+
+    @Test("V1-4 delayed failing release does not publish restored", .timeLimit(.minutes(1)))
+    func recoveryFailedReleaseNoNotify() async throws {
+        let helper = FakeHelper()
+        helper.sleepDisabled = true
+        helper.setByHelper = true
+        helper.holderCount = 0
+        helper.callerIsHolder = false
+        helper.failRelease = true
+        let notifier = FakeNotifier()
+        let (controller, _, _, _) = makeController(
+            helper: helper, notifier: notifier, probe: { true }
+        )
+        defer { controller.shutdown() }
+        await controller.detectLeftover()
+        #expect(notifier.leftoverRestored == 0)
+        #expect(controller.leftover == .ownResidual || helper.setCalls == [false])
+    }
+
+    @Test("V1-3 leftover probe is injectable and awaited (no sync MainActor pmset)", .timeLimit(.minutes(1)))
+    func leftoverProbeOffMainActorSeam() async throws {
+        final class ProbeBox: @unchecked Sendable {
+            var calls = 0
+        }
+        let box = ProbeBox()
+        let helper = FakeHelper()
+        helper.sleepDisabled = false
+        let (controller, _, _, _) = makeController(
+            helper: helper,
+            probe: {
+                box.calls += 1
+                // Simulate a short off-actor wait; controller awaits this.
+                try? await Task.sleep(for: .milliseconds(5))
+                return false
+            }
+        )
+        defer { controller.shutdown() }
+        await controller.detectLeftover()
+        #expect(box.calls == 1)
+        #expect(controller.leftover == nil)
     }
 }

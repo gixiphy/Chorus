@@ -81,6 +81,8 @@ final class AutomationHTTPTransport: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.hermes.Chorus.http", qos: .userInitiated)
     private let handlers: Handlers
     private let token: Mutex<String>
+    /// V1-5: bumped before clearLeases on rotate/stop so late hold/release cannot undo revocation.
+    private let keepAwakeAuthorizationGeneration = Mutex<UInt64>(0)
     private static let log = ChorusLog(category: "automation")
 
     // 以下只在 queue 上讀寫
@@ -93,6 +95,15 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         self.token = Mutex(token)
         self.handlers = handlers
         admission = AutomationAdmission(limits: limits)
+    }
+
+    /// Call before clearing leases on token rotation / automation stop (V1-5).
+    func invalidateKeepAwakeAuthorization() {
+        keepAwakeAuthorizationGeneration.withLock { $0 &+= 1 }
+    }
+
+    var keepAwakeAuthorizationGenerationForTesting: UInt64 {
+        keepAwakeAuthorizationGeneration.withLock { $0 }
     }
 
     /// 建立並啟動 listener。狀態變化在 queue 上回報。
@@ -233,9 +244,9 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         case ("GET", "/v1/events"):
             startEventStream(id)
         case ("POST", "/v1/keepawake/hold"):
-            callMainThread(id) { [handlers] in await handlers.keepAwakeHold(request.body) }
+            dispatchKeepAwakeMutation(id, body: request.body, hold: true)
         case ("POST", "/v1/keepawake/release"):
-            callMainThread(id) { [handlers] in await handlers.keepAwakeRelease(request.body) }
+            dispatchKeepAwakeMutation(id, body: request.body, hold: false)
         case ("GET", "/v1/keepawake"):
             callMainThread(id) { [handlers] in await handlers.keepAwakeStatus() }
         default:
@@ -262,6 +273,65 @@ final class AutomationHTTPTransport: @unchecked Sendable {
             return await handlers.keepAwakeStatus()
         default:
             return nil
+        }
+    }
+
+    /// V1-5／V1-6 test seam：command admission + authorization generation at mutation time.
+    static func executeKeepAwakeMutationForTesting(
+        admission: inout AutomationAdmission,
+        requestGeneration: UInt64,
+        currentGeneration: UInt64,
+        body: Data,
+        handler: (Data) async -> Response
+    ) async -> Response {
+        switch admission.admitCommands(1) {
+        case let .batchTooLarge(limit):
+            return Response(
+                status: 413,
+                json: errorJSON("tooManyCommands", "一次最多 \(limit) 筆指令")
+            )
+        case .overloaded:
+            return Response(
+                status: 503,
+                json: errorJSON("overloaded", "待處理的指令太多，稍後再試")
+            )
+        case nil:
+            defer { admission.releaseCommands(1) }
+            guard requestGeneration == currentGeneration else {
+                return Response(
+                    status: 409,
+                    json: errorJSON("staleAuthorization", "授權已失效，請重試")
+                )
+            }
+            return await handler(body)
+        }
+    }
+
+    /// V1-6: reserve one command for hold/release; keep reservation until work completes (incl. after 504).
+    private func dispatchKeepAwakeMutation(_ id: ObjectIdentifier, body: Data, hold: Bool) {
+        switch admission.admitCommands(1) {
+        case let .batchTooLarge(limit):
+            respond(id, status: 413, json: Self.errorJSON("tooManyCommands", "一次最多 \(limit) 筆指令"))
+        case .overloaded:
+            respond(id, status: 503, json: Self.errorJSON("overloaded", "待處理的指令太多，稍後再試"))
+        case nil:
+            let generation = keepAwakeAuthorizationGeneration.withLock { $0 }
+            callMainThread(id, releasingCommands: 1) { [weak self, handlers] in
+                guard let self else {
+                    return Handlers.keepAwakeUnavailable
+                }
+                let current = self.keepAwakeAuthorizationGeneration.withLock { $0 }
+                guard current == generation else {
+                    return Response(
+                        status: 409,
+                        json: Self.errorJSON("staleAuthorization", "授權已失效，請重試")
+                    )
+                }
+                if hold {
+                    return await handlers.keepAwakeHold(body)
+                }
+                return await handlers.keepAwakeRelease(body)
+            }
         }
     }
 

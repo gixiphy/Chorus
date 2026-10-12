@@ -24,6 +24,7 @@ struct DoctorInputsCollectorTests {
         )
         let withLeftover = DoctorInputsCollector.lidKeepAwakeSnapshot(
             phase: .off,
+            helperAvailability: .ready,
             helperStatus: status,
             leftover: .foreign,
             reports: []
@@ -38,6 +39,7 @@ struct DoctorInputsCollectorTests {
 
         let clean = DoctorInputsCollector.lidKeepAwakeSnapshot(
             phase: .idle,
+            helperAvailability: .ready,
             helperStatus: PowerHelperStatus(helperBuild: "136", sleepDisabled: false, setByHelper: false),
             leftover: nil,
             reports: [
@@ -59,6 +61,7 @@ struct DoctorInputsCollectorTests {
     func recoveryBlockedIsWarning() {
         let snap = DoctorInputsCollector.lidKeepAwakeSnapshot(
             phase: .unavailable(.error("recoveryBlocked")),
+            helperAvailability: .error("recoveryBlocked"),
             helperStatus: PowerHelperStatus(
                 helperBuild: "136",
                 sleepDisabled: true,
@@ -80,6 +83,7 @@ struct DoctorInputsCollectorTests {
     func sanitizesSourceReasons() {
         let snap = DoctorInputsCollector.lidKeepAwakeSnapshot(
             phase: .idle,
+            helperAvailability: .ready,
             helperStatus: nil,
             leftover: nil,
             reports: [
@@ -102,49 +106,45 @@ struct DoctorInputsCollectorTests {
         #expect(reason.contains("<path>") || reason.contains("<redacted>"))
     }
 
-    @Test("helper availability 由 phase／status／leftover 推導")
-    func availabilityDerivation() {
-        #expect(
-            DoctorInputsCollector.helperAvailabilityWire(
-                phase: .unavailable(.requiresApproval),
-                helperStatus: nil,
-                leftover: nil
-            ) == "requiresApproval"
+    @Test("V1-8 helper availability tracks client state, not policy phase")
+    func availabilityTracksHelperClient() {
+        // Paused / blocked policy must not invent ready when helper is unregistered.
+        let pausedUnregistered = DoctorInputsCollector.lidKeepAwakeSnapshot(
+            phase: .blocked(.userPaused(untilUptime: 9_999)),
+            helperAvailability: .notRegistered,
+            helperStatus: nil,
+            leftover: nil,
+            reports: []
         )
-        #expect(
-            DoctorInputsCollector.helperAvailabilityWire(
-                phase: .armed,
-                helperStatus: nil,
-                leftover: nil
-            ) == "ready"
+        #expect(pausedUnregistered.helperAvailability == "notRegistered")
+
+        let offWithStaleCache = DoctorInputsCollector.lidKeepAwakeSnapshot(
+            phase: .off,
+            helperAvailability: .notRegistered,
+            helperStatus: PowerHelperStatus(helperBuild: "1", sleepDisabled: false),
+            leftover: nil,
+            reports: []
         )
-        #expect(
-            DoctorInputsCollector.helperAvailabilityWire(
-                phase: .off,
-                helperStatus: PowerHelperStatus(helperBuild: "1"),
-                leftover: nil
-            ) == "ready"
+        #expect(offWithStaleCache.helperAvailability == "notRegistered")
+
+        let disconnected = DoctorInputsCollector.lidKeepAwakeSnapshot(
+            phase: .armed,
+            helperAvailability: .error("disconnected"),
+            helperStatus: PowerHelperStatus(helperBuild: "1"),
+            leftover: nil,
+            reports: []
         )
-        #expect(
-            DoctorInputsCollector.helperAvailabilityWire(
-                phase: .off,
-                helperStatus: nil,
-                leftover: .unknownOwner
-            ) == "unavailable"
-        )
-        #expect(
-            DoctorInputsCollector.helperAvailabilityWire(
-                phase: .off,
-                helperStatus: nil,
-                leftover: nil
-            ) == "notRegistered"
-        )
+        #expect(disconnected.helperAvailability.hasPrefix("error("))
+
+        #expect(DoctorInputsCollector.availabilityWire(.requiresApproval) == "requiresApproval")
+        #expect(DoctorInputsCollector.availabilityWire(.ready) == "ready")
     }
 
     @Test("chorus doctor JSON 含 keepawake.lid 項目")
     func doctorJSONContainsLidCheck() throws {
         let snap = DoctorInputsCollector.lidKeepAwakeSnapshot(
             phase: .idle,
+            helperAvailability: .ready,
             helperStatus: PowerHelperStatus(helperBuild: "136", sleepDisabled: false),
             leftover: nil,
             reports: []

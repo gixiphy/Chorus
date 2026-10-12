@@ -114,6 +114,50 @@ struct PowerHelperXPCTests {
         #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: off) == false)
     }
 
+    @Test("V1-1 active assertion annotations and extended settings still parse SleepDisabled")
+    func assertionAnnotationsAndExtendedSettings() {
+        // Apple pmset prints assertion notes after sleep/displaysleep and lists
+        // lowpowermode / powermode / DestroyFVKeyOnStandby (PowerManagement pmset.m).
+        let sample = """
+        System-wide power settings:
+         Currently on AC Power:
+         lidwake           1
+         autorestart       0
+         hibernatefile     /var/vm/sleepimage
+         powermode         0
+         networkoversleep  0
+         disksleep         10
+         sleep             0 (sleep prevented by power assertion)
+         SleepDisabled     1
+         ttyskeepawake     1
+         hibernatemode     3
+         powernap          1
+         DestroyFVKeyOnStandby 0
+         displaysleep      0 (display sleep prevented by power assertion)
+         lowpowermode      0
+         FutureSettingXYZ  7
+        """
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: sample) == true)
+
+        let off = sample.replacingOccurrences(of: "SleepDisabled     1", with: "SleepDisabled     0")
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: off) == false)
+
+        // Malformed SleepDisabled must still fail — never ignore garbage as 0/1.
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+         Currently on AC Power:
+         sleep             0 (sleep prevented by power assertion)
+         SleepDisabled     1 extra
+         disksleep         10
+        """) == nil)
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+         Currently on AC Power:
+         SleepDisabled: 1
+         disksleep         10
+        """) == nil)
+    }
+
     @Test("V-C03-7 / W0-10 ChorusPowerHelperXPC enumerates exactly two required methods")
     func protocolSurface() {
         final class Stub: NSObject, ChorusPowerHelperXPC {

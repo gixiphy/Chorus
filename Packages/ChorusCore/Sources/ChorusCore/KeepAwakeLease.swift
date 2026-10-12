@@ -26,12 +26,21 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
         public var expiresAt: Double
         public var firstHeldAt: Double
         public var lastHeartbeatAt: Double
+        /// Clamped TTL from the most recent hold/renew (wire status accuracy, V1-11).
+        public var ttl: Double
 
-        public init(id: String, expiresAt: Double, firstHeldAt: Double, lastHeartbeatAt: Double) {
+        public init(
+            id: String,
+            expiresAt: Double,
+            firstHeldAt: Double,
+            lastHeartbeatAt: Double,
+            ttl: Double = KeepAwakeLeaseTable.defaultTTL
+        ) {
             self.id = id
             self.expiresAt = expiresAt
             self.firstHeldAt = firstHeldAt
             self.lastHeartbeatAt = lastHeartbeatAt
+            self.ttl = ttl
         }
     }
 
@@ -84,6 +93,10 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
             clampedTTL = Self.defaultTTL
         }
 
+        // V1-9: purge at the same sampled `now` before capacity so expired slots free up.
+        // Retains grace tombstones via purgeExpired.
+        _ = purgeExpired(now: now, graceSeconds: Self.defaultGraceSeconds)
+
         if let existing = leases[id] {
             // 續約：上限滿時仍可成功（§14.3）。
             let expiresAt = now + clampedTTL
@@ -91,7 +104,8 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
                 id: id,
                 expiresAt: expiresAt,
                 firstHeldAt: existing.firstHeldAt,
-                lastHeartbeatAt: now
+                lastHeartbeatAt: now,
+                ttl: clampedTTL
             )
             tombstones.removeValue(forKey: id)
             return .held(expiresAt: expiresAt, clampedTTL: clampedTTL)
@@ -104,7 +118,8 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
             id: id,
             expiresAt: expiresAt,
             firstHeldAt: now,
-            lastHeartbeatAt: now
+            lastHeartbeatAt: now,
+            ttl: clampedTTL
         )
         tombstones.removeValue(forKey: id)
         return .held(expiresAt: expiresAt, clampedTTL: clampedTTL)

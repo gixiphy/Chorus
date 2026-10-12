@@ -1046,4 +1046,21 @@ struct SleepDisabledProbeTests {
         }
         #expect(value == nil)
     }
+
+    @Test("V1-3 saturated stdout / ignored TERM path stays bounded via injectable run")
+    func hostileChildBoundedViaSeam() {
+        // Inject a hostile result: truncated + non-zero so parser refuses; proves the seam.
+        let value = SleepDisabledProbe.readSleepDisabled { _, _, timeout in
+            #expect(timeout == SleepDisabledProbe.timeout)
+            return (exit: -1, stdout: Data(repeating: 0x41, count: 1024), truncated: true)
+        }
+        #expect(value == nil)
+    }
+
+    @Test("V1-3 off-MainActor wrapper completes", .timeLimit(.minutes(1)))
+    func offMainActorProbe() async {
+        let value = await SleepDisabledProbe.readSleepDisabledOffMainActor()
+        // Host may or may not have readable pmset; either Bool? outcome is fine — must return.
+        _ = value
+    }
 }

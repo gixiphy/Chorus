@@ -153,6 +153,9 @@ final class KeepAwakeController {
     /// 只有綁定 App 模式才掛：其餘模式不必為每次 App 啟動／結束醒來。
     @ObservationIgnored private var appObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var shutDown = false
+    /// V1-2: coalesce sync hub→reevaluate→configure cycles.
+    @ObservationIgnored private var reevaluating = false
+    @ObservationIgnored private var pendingReevaluate = false
     /// 同一次觸發不重複發通知；恢復後清掉。
     @ObservationIgnored private var didNotifyCurrentTrip = false
 
@@ -341,7 +344,7 @@ final class KeepAwakeController {
         case let .held(expiresAt, clampedTTL):
             // Lease notify → hub → reevaluate is sync; re-read effectiveness after.
             reevaluate()
-            let uptime = ProcessInfo.processInfo.systemUptime
+            let uptime = sourceHub.leases.currentUptime()
             let assertion = assertionEffectiveForLease()
             let lid = lidEffectiveForLease()
             let response = KeepAwakeHoldResponse(
@@ -384,12 +387,12 @@ final class KeepAwakeController {
     /// GET status：helper 用快取，不阻塞 main actor 打 XPC（§14.3）。
     func handleKeepAwakeStatus() -> AutomationHTTPTransport.Response {
         let snap = sourceHub.leases.snapshot()
-        let uptime = ProcessInfo.processInfo.systemUptime
+        let uptime = sourceHub.leases.currentUptime()
         let leases = snap.active.map {
             KeepAwakeLeaseStatusDTO(
                 id: $0.id,
                 expiresIn: max(0, $0.expiresAt - uptime),
-                ttl: KeepAwakeLeaseTable.defaultTTL
+                ttl: $0.ttl
             )
         }
         let helperDTO: KeepAwakeHelperStatusDTO? = {
@@ -418,6 +421,21 @@ final class KeepAwakeController {
     }
 
     func reevaluate() {
+        if reevaluating {
+            pendingReevaluate = true
+            return
+        }
+        reevaluating = true
+        defer {
+            reevaluating = false
+            if pendingReevaluate {
+                pendingReevaluate = false
+                // Async — bound callback depth independently of hub/lease sync notify (V1-2).
+                Task { @MainActor [weak self] in
+                    self?.reevaluate()
+                }
+            }
+        }
         if case .whileAgentsWorking = mode {
             sourceHub.configure(settings.keepAwakeSourceSettings)
         }

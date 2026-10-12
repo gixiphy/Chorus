@@ -139,12 +139,15 @@ public struct PowerHelperStatus: Codable, Sendable, Equatable {
 
 public enum PMSetOutputParser {
     /// 已知的 `pmset -g` 設定鍵（完整輸出應至少出現若干列）。
+    /// 含 Apple PowerManagement 常見鍵與 assertion 註解出現時仍會列出的鍵。
     private static let knownSettingKeys: Set<String> = [
         "lidwake", "hibernatemode", "hibernatefile", "ttyskeepawake",
         "disksleep", "displaysleep", "sleep", "SleepDisabled", "powernap",
         "womp", "autorestart", "networkoversleep", "proximitywake",
         "tcpkeepalive", "acwake", "standby", "standbydelayhigh", "standbydelaylow",
         "highstandbythreshold", "gpuswitch", "halfdim", "lessbright",
+        "lowpowermode", "powermode", "DestroyFVKeyOnStandby",
+        "sleeppreventedby", "displaysleeppreventedby",
     ]
 
     /// 解析 `pmset -g` 輸出中的 SleepDisabled。
@@ -183,7 +186,10 @@ public enum PMSetOutputParser {
 
     /// 嚴格標頭＋列文法；失敗回 nil。
     ///
-    /// 完整輸出：至少一條合法標頭列，且 ≥1 條合法已知設定列；任何無法驗證的列 → nil。
+    /// 完整輸出：至少一條合法標頭列，且 ≥1 條合法設定列。
+    /// Apple `pmset -g` 會在 sleep／displaysleep 後附加 assertion 註解，並列出
+    /// lowpowermode／powermode／DestroyFVKeyOnStandby 等鍵；標頭模式下允許
+    /// 型式正確的未知設定列，但 SleepDisabled 必須是明確的單一 0／1（不得帶註解／垃圾）。
     /// 精簡文法（無標頭）：每一非空列都必須是合法已知設定列，且
     /// （含 SleepDisabled）或（≥2 列）。不得靠 substring 僞標頭過關。
     private static func parseValidatedRows(_ text: String) -> [SettingRow]? {
@@ -195,7 +201,7 @@ public enum PMSetOutputParser {
 
         var hasHeader = false
         var rows: [SettingRow] = []
-        var otherLineCount = 0
+        var garbageLineCount = 0
 
         for line in lines {
             if isHeaderLine(line) {
@@ -205,22 +211,23 @@ public enum PMSetOutputParser {
             switch classifySettingLine(line) {
             case .valid(let row):
                 rows.append(row)
-            case .malformedKnownKey:
+            case .malformedSleepDisabled, .malformedKnownKey:
                 return nil
+            case .ignorableUnknownSetting:
+                // 標頭模式下略過型式正確的未知鍵；精簡模式仍視為夾雜。
+                if !hasHeader { garbageLineCount += 1 }
             case .other:
-                otherLineCount += 1
+                garbageLineCount += 1
             }
         }
 
         if hasHeader {
-            // 標頭不能替未知／畸形列背書（例如 SleepDisabled: 1）。
-            // 未確認的新系統格式保守回 nil，待有實機樣本再擴充文法。
-            guard otherLineCount == 0, !rows.isEmpty else { return nil }
+            guard garbageLineCount == 0, !rows.isEmpty else { return nil }
             return rows
         }
 
         // 精簡文法：禁止夾雜非設定列；不得用 contains 僞標頭
-        guard otherLineCount == 0, !rows.isEmpty else { return nil }
+        guard garbageLineCount == 0, !rows.isEmpty else { return nil }
         let hasSleepDisabled = rows.contains { $0.key == "SleepDisabled" }
         guard hasSleepDisabled || rows.count >= 2 else { return nil }
         return rows
@@ -235,19 +242,50 @@ public enum PMSetOutputParser {
 
     private enum LineClass {
         case valid(SettingRow)
+        /// SleepDisabled 鍵存在但值／token 無法唯一判讀為 0／1。
+        case malformedSleepDisabled
         case malformedKnownKey
+        /// 型式正確（鍵 + 整數／路徑值［+ 註解］）但鍵不在已知表。
+        case ignorableUnknownSetting
         case other
     }
 
     private static func classifySettingLine(_ line: String) -> LineClass {
         let parts = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        guard let key = parts.first else { return .other }
-        guard knownSettingKeys.contains(key) else { return .other }
-        // 恰好兩欄：鍵 + 值；多餘 token、缺值、或值不符文法 → 畸形
-        guard parts.count == 2, isValidSettingValue(key: key, value: parts[1]) else {
-            return .malformedKnownKey
+        guard let key = parts.first, !key.isEmpty else { return .other }
+
+        if key == "SleepDisabled" {
+            // 嚴格：恰好兩欄且值為 0／1。不得忽略「SleepDisabled: 1」或多餘 token。
+            guard parts.count == 2, parts[1] == "0" || parts[1] == "1" else {
+                return .malformedSleepDisabled
+            }
+            return .valid(SettingRow(key: key, value: parts[1]))
         }
-        return .valid(SettingRow(key: key, value: parts[1]))
+
+        guard parts.count >= 2 else {
+            return knownSettingKeys.contains(key) ? .malformedKnownKey : .other
+        }
+        let value = parts[1]
+        guard isValidSettingValue(key: key, value: value) else {
+            return knownSettingKeys.contains(key) ? .malformedKnownKey : .other
+        }
+
+        if knownSettingKeys.contains(key) {
+            // sleep／displaysleep 等可帶 assertion 註解 token；只取第一個值欄。
+            return .valid(SettingRow(key: key, value: value))
+        }
+        // 未知鍵但文法像設定列（含可選註解）→ 標頭模式可忽略。
+        if looksLikeSettingKey(key) {
+            return .ignorableUnknownSetting
+        }
+        return .other
+    }
+
+    private static func looksLikeSettingKey(_ key: String) -> Bool {
+        guard key.unicodeScalars.count >= 2 else { return false }
+        return key.unicodeScalars.allSatisfy { scalar in
+            CharacterSet.alphanumerics.contains(scalar) || scalar == "_" || scalar == "-"
+        }
     }
 
     /// SleepDisabled 僅 0／1；路徑鍵允許以 `/` 開頭；其餘鍵為整數。

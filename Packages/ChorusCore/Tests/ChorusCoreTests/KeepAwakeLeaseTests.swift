@@ -113,6 +113,48 @@ struct KeepAwakeLeaseTests {
         #expect(table.tombstones["bot"]?.lastWorkingAt == 40)
     }
 
+    @Test("V1-9 full table of expired leases frees capacity for a new id without prior purge")
+    func holdPurgesBeforeCapacity() {
+        var table = KeepAwakeLeaseTable()
+        let start = 0.0
+        for i in 0..<32 {
+            let result = table.hold(id: "exp-\(i)", ttl: 30, now: start)
+            guard case .held = result else {
+                Issue.record("seed lease \(i) should hold")
+                return
+            }
+        }
+        // After expiry, before any tick/status: new id must succeed (purge inside hold).
+        let afterExpiry = start + 31
+        let result = table.hold(id: "fresh", ttl: 60, now: afterExpiry)
+        guard case let .held(expires, ttl) = result else {
+            Issue.record("expected held after expired table, got \(result)")
+            return
+        }
+        #expect(ttl == 60)
+        #expect(expires == afterExpiry + 60)
+        #expect(table.active(now: afterExpiry).map(\.id) == ["fresh"])
+        // Expired peers become grace tombstones, not live capacity consumers.
+        #expect(table.tombstones.count + (table.aggregateGrace == nil ? 0 : 1) > 0)
+    }
+
+    @Test("V1-11 lease stores clamped TTL across hold and renew")
+    func storesClampedTTL() {
+        var table = KeepAwakeLeaseTable()
+        guard case let .held(_, ttl60) = table.hold(id: "job", ttl: 60, now: 0) else {
+            Issue.record("hold 60")
+            return
+        }
+        #expect(ttl60 == 60)
+        #expect(table.leases["job"]?.ttl == 60)
+        guard case let .held(_, ttl120) = table.hold(id: "job", ttl: 120, now: 10) else {
+            Issue.record("renew 120")
+            return
+        }
+        #expect(ttl120 == 120)
+        #expect(table.leases["job"]?.ttl == 120)
+    }
+
     @Test("V-C01-2 purgeExpired only removes expired; keeps grace tombstones")
     func purgeExpired() {
         var table = KeepAwakeLeaseTable()

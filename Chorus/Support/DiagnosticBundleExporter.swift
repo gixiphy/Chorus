@@ -100,11 +100,7 @@ enum DiagnosticBundleExporter {
         guard let keepAwake = AppStateRegistry.keepAwake else { return nil }
         let lid = keepAwake.lidGuard
         return encodeHelperStatusAttachment(
-            availability: DoctorInputsCollector.helperAvailabilityWire(
-                phase: lid.phase,
-                helperStatus: lid.helperStatus,
-                leftover: lid.leftover
-            ),
+            availability: DoctorInputsCollector.availabilityWire(lid.helperAvailability),
             status: lid.helperStatus,
             leftover: lid.leftover.map(DoctorInputsCollector.leftoverWire)
         )

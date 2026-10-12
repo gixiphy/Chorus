@@ -101,6 +101,8 @@ final class ControlHTTPServer {
 
     @discardableResult
     func regenerateToken() -> String {
+        // V1-5: invalidate queued keepawake work before clearing leases.
+        transport?.invalidateKeepAwakeAuthorization()
         // Fi A4：token rotation 立即清除租約、不延長 grace。
         keepAwakeClearLeases?()
         var bytes = [UInt8](repeating: 0, count: 32)
@@ -227,6 +229,8 @@ final class ControlHTTPServer {
     }
 
     private func stop() {
+        // V1-5: invalidate before clear so disable/re-enable cannot admit stale holds.
+        transport?.invalidateKeepAwakeAuthorization()
         // Fi A4：停用 automation 立即清除租約。
         keepAwakeClearLeases?()
         setEventStreamsActive(false)

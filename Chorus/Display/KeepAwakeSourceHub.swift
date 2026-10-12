@@ -156,6 +156,10 @@ final class KeepAwakeSourceHub {
 
     func configure(_ settings: KeepAwakeSourceSettings) {
         let previous = self.settings
+        // V1-2: unchanged configuration is idempotent (no lifecycle restart / recompute churn).
+        if previous == settings {
+            return
+        }
         self.settings = settings
         orca.configure(
             enabled: settings.orcaEnabled,

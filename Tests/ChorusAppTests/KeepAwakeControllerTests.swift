@@ -749,4 +749,26 @@ struct KeepAwakeControllerTests {
         #expect(held.effective)
         #expect(held.reason == "blocked:assertionFailed")
     }
+
+    @Test("V1-2／V1-11 reevaluate coalesce + status TTL", .timeLimit(.minutes(1)))
+    func reevaluateReentryAndStatusTTL() async throws {
+        let controller = makeController(assertions: FakeAssertions())
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        let hold = controller.handleKeepAwakeHold(
+            body: try JSONEncoder().encode(KeepAwakeHoldRequest(id: "reentry", ttl: 90))
+        )
+        #expect(hold.status == 200)
+        for _ in 0..<20 {
+            controller.reevaluate()
+        }
+        #expect(controller.sourceHub.isBusy)
+        let status = controller.handleKeepAwakeStatus()
+        #expect(status.status == 200)
+        let decoded = try JSONDecoder().decode(
+            KeepAwakeStatusResponse.self, from: Data(status.json.utf8)
+        )
+        #expect(decoded.leases.first?.ttl == 90)
+        #expect(decoded.leases.first?.id == "reentry")
+    }
 }

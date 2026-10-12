@@ -1073,6 +1073,68 @@ struct PowerHelperServiceStartupTests {
         #expect(Date().timeIntervalSince(start) < 2.5)
         #expect(service.startupReadyForTesting() == true)
     }
+
+    @Test("V1-12 same-uid nonholder is not otherUsersHolding; different uid is")
+    func sameUIDNonholderStatusMetadata() throws {
+        let runner = FakePMSetRunner()
+        runner.systemValue = false
+        let service = PowerHelperService(
+            runner: runner,
+            store: FakeLedgerStore(),
+            safety: FakeSafety(),
+            helperBuild: "136",
+            onIdleExit: {}
+        )
+        service.start()
+        defer { service.stopTimersForTesting() }
+        let readyDeadline = Date().addingTimeInterval(2)
+        while !service.startupReadyForTesting(), Date() < readyDeadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+
+        let holder = PowerHelperService.ExportedObject(
+            service: service, connectionID: 1, uid: 501, pid: 11
+        )
+        let box = ReplyBox()
+        let acquired = DispatchSemaphore(value: 0)
+        holder.setSleepDisabled(true) { data, error in
+            box.status = data
+            box.error = error
+            acquired.signal()
+        }
+        #expect(acquired.wait(timeout: .now() + 3) == .success)
+        #expect(box.error == nil)
+        #expect(service.ledgerSnapshotForTesting().holders.count == 1)
+
+        let sameUID = PowerHelperService.ExportedObject(
+            service: service, connectionID: 2, uid: 501, pid: 22
+        )
+        var sameData: Data?
+        let sameSem = DispatchSemaphore(value: 0)
+        sameUID.status { json in
+            sameData = json
+            sameSem.signal()
+        }
+        #expect(sameSem.wait(timeout: .now() + 3) == .success)
+        let sameStatus = try JSONDecoder().decode(PowerHelperStatus.self, from: #require(sameData))
+        #expect(sameStatus.callerIsHolder == false)
+        #expect(sameStatus.otherUsersHolding == false)
+        #expect(sameStatus.holderCount == 1)
+
+        let otherUID = PowerHelperService.ExportedObject(
+            service: service, connectionID: 3, uid: 502, pid: 33
+        )
+        var otherData: Data?
+        let otherSem = DispatchSemaphore(value: 0)
+        otherUID.status { json in
+            otherData = json
+            otherSem.signal()
+        }
+        #expect(otherSem.wait(timeout: .now() + 3) == .success)
+        let otherStatus = try JSONDecoder().decode(PowerHelperStatus.self, from: #require(otherData))
+        #expect(otherStatus.callerIsHolder == false)
+        #expect(otherStatus.otherUsersHolding == true)
+    }
 }
 
 private final class ReplyBox: @unchecked Sendable {

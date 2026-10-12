@@ -33,6 +33,9 @@ final class LidSleepGuardController {
     /// True only when reading is confirmed `.noLid` (not transient `.unknown`).
     var isConfirmedNoLid: Bool { lidReading == .noLid }
 
+    /// Actual helper SMAppService/XPC availability (V1-8); not invented from policy phase.
+    var helperAvailability: LidHelperAvailability { helper.availability }
+
     /// §5.5: menu “闔蓋也不睡” only when all three hold.
     var isActuallyHoldingSleepDisabled: Bool {
         wantsSleepDisabled
@@ -62,7 +65,7 @@ final class LidSleepGuardController {
     @ObservationIgnored private let now: () -> Double
     @ObservationIgnored private let e2eNamedInstance: Bool
     @ObservationIgnored private let sessionStore: LidClosedSessionStore
-    @ObservationIgnored private let sleepDisabledProbe: () -> Bool?
+    @ObservationIgnored private let sleepDisabledProbe: () async -> Bool?
     @ObservationIgnored private let pauseDurationSeconds: () -> Double
     @ObservationIgnored private let heartbeatInterval: TimeInterval
 
@@ -104,6 +107,7 @@ final class LidSleepGuardController {
     /// Local override so a failed set(true) surfaces as unavailable(.error) until retry.
     @ObservationIgnored private var transientHelperError: String?
     @ObservationIgnored private var handshakeTask: Task<Void, Never>?
+    @ObservationIgnored private var recoveryTask: Task<Void, Never>?
     /// C8-1／C8-4: block acquire until handshake applies recovery／forced-off evidence.
     @ObservationIgnored private var suppressAcquireForHandshake = false
 
@@ -129,7 +133,9 @@ final class LidSleepGuardController {
         now: @escaping () -> Double = { LidMonotonicTime.seconds() ?? ProcessInfo.processInfo.systemUptime },
         e2eNamedInstance: Bool = InstanceConfig.current.name != nil,
         sessionStore: LidClosedSessionStore = LidClosedSessionStore(),
-        sleepDisabledProbe: @escaping () -> Bool? = { SleepDisabledProbe.readSleepDisabled() },
+        sleepDisabledProbe: @escaping () async -> Bool? = {
+            await SleepDisabledProbe.readSleepDisabledOffMainActor()
+        },
         pauseDurationSeconds: @escaping () -> Double = { 3600 },
         heartbeatInterval: TimeInterval = PowerHelperConstants.heartbeatInterval
     ) {
@@ -193,7 +199,12 @@ final class LidSleepGuardController {
     func restoreLeftover() {
         switch leftover {
         case .ownResidual:
-            Task { await restoreOwnResidual() }
+            recoveryTask?.cancel()
+            let generation = setGeneration
+            recoveryTask = Task { [weak self] in
+                guard let self else { return }
+                _ = await self.restoreOwnResidual(expectedGeneration: generation)
+            }
         case .foreign, .unknownOwner, .otherUserHolding, .recoveryBlocked, .none:
             // Foreign / recovery / unknown: UI copies manual pmset — no auto override (Fi A2／A8).
             break
@@ -223,6 +234,8 @@ final class LidSleepGuardController {
         retryTask = nil
         handshakeTask?.cancel()
         handshakeTask = nil
+        recoveryTask?.cancel()
+        recoveryTask = nil
         setGeneration &+= 1
         let shouldRelease =
             wantsSleepDisabled
@@ -243,9 +256,11 @@ final class LidSleepGuardController {
     /// Read-only leftover probe allowed even when the option is off (§6.6 / §14.2).
     /// Named E2E instances never connect or repair.
     func detectLeftover() async {
-        guard !e2eNamedInstance else { return }
+        guard !e2eNamedInstance, !shutDown else { return }
         helper.refreshAvailability()
-        let probe = sleepDisabledProbe()
+        // V1-3: await off-MainActor probe (default hops via Task.detached).
+        let probe = await sleepDisabledProbe()
+        guard !shutDown else { return }
         let registered: Bool = {
             switch helper.availability {
             case .notRegistered: return false
@@ -277,12 +292,14 @@ final class LidSleepGuardController {
             applyHelperStatus(status)
             classifyLeftover(from: status)
             if leftover == .ownResidual {
-                let restored = await restoreOwnResidual()
+                let restored = await restoreOwnResidual(expectedGeneration: generation)
+                guard !shutDown, setGeneration == generation else { return }
                 if restored {
                     leftover = nil
                 }
             }
         } catch {
+            guard !shutDown else { return }
             leftover = .unknownOwner
         }
         publish()
@@ -854,18 +871,20 @@ final class LidSleepGuardController {
         }
     }
 
+    /// V1-4: direct bounded set(false) for verified own residuals (helper forceOff path).
+    /// No new acquire; every await completion gated by lifecycle/generation.
     @discardableResult
-    private func restoreOwnResidual() async -> Bool {
-        guard !e2eNamedInstance else { return false }
+    private func restoreOwnResidual(expectedGeneration: UInt64) async -> Bool {
+        guard !e2eNamedInstance, !shutDown else { return false }
+        guard setGeneration == expectedGeneration else { return false }
         // Never acquire-as-repair while recovery is blocked (Fi A8 / C8-4).
         if let status = helperStatus,
            status.recoveryBlocked || status.pendingRestore || status.persistRetryNeeded {
             return false
         }
         do {
-            // Normal restore path: acquire then release (§6.6 / ledger exception).
-            _ = try await helper.setSleepDisabled(true)
             let after = try await helper.setSleepDisabled(false)
+            guard !shutDown, setGeneration == expectedGeneration else { return false }
             applyHelperStatus(after)
             // Only notify when restore evidence shows SleepDisabled cleared (V-C08-7).
             guard after.sleepDisabled == false else { return false }

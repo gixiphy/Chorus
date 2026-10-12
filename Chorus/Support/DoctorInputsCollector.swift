@@ -37,16 +37,15 @@ enum DoctorInputsCollector {
     /// 純函式：由 controller 快照組出 doctor 輸入（可測、不碰 XPC）。
     static func lidKeepAwakeSnapshot(
         phase: LidSleepGuardPhase,
+        helperAvailability: LidHelperAvailability,
         helperStatus: PowerHelperStatus?,
         leftover: LeftoverSleepDisabled?,
         reports: [KeepAwakeSourceReport]
     ) -> DoctorInputs.LidKeepAwake {
-        DoctorInputs.LidKeepAwake(
-            helperAvailability: helperAvailabilityWire(
-                phase: phase,
-                helperStatus: helperStatus,
-                leftover: leftover
-            ),
+        // V1-8: policy phase stays separate; availability comes from the helper client.
+        _ = phase
+        return DoctorInputs.LidKeepAwake(
+            helperAvailability: availabilityWire(helperAvailability),
             sleepDisabled: helperStatus?.sleepDisabled,
             setByHelper: helperStatus.map(\.setByHelper),
             leftover: leftover.map(leftoverWire),
@@ -62,6 +61,7 @@ enum DoctorInputsCollector {
         let lid = keepAwake.lidGuard
         return lidKeepAwakeSnapshot(
             phase: lid.phase,
+            helperAvailability: lid.helperAvailability,
             helperStatus: lid.helperStatus,
             leftover: lid.leftover,
             reports: keepAwake.sourceHub.reports
@@ -75,24 +75,6 @@ enum DoctorInputsCollector {
         case .otherUserHolding: "otherUserHolding"
         case .unknownOwner: "unknownOwner"
         case .recoveryBlocked: "recoveryBlocked"
-        }
-    }
-
-    /// C08 未公開 `helper.availability`；依 phase／helperStatus／leftover 推導（交接紀錄註明）。
-    static func helperAvailabilityWire(
-        phase: LidSleepGuardPhase,
-        helperStatus: PowerHelperStatus?,
-        leftover: LeftoverSleepDisabled?
-    ) -> String {
-        switch phase {
-        case let .unavailable(availability):
-            return availabilityWire(availability)
-        case .armed, .holdingLidClosed, .idle, .blocked:
-            return "ready"
-        case .off:
-            if helperStatus != nil { return "ready" }
-            if leftover == .unknownOwner { return "unavailable" }
-            return "notRegistered"
         }
     }
 

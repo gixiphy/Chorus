@@ -27,6 +27,8 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     private var lastChangeAt: Date?
     private var nextConnectionID: UInt64 = 1
     private var connections: [UInt64: NSXPCConnection] = [:]
+    /// Authenticated peer uid, independent of holder state (V1-12).
+    private var connectionUIDs: [UInt64: UInt32] = [:]
     /// Last *external* activity (XPC accept / set / status) — not watchdog ticks (W1-9).
     private var lastExternalActivity = Date()
     private var watchdogTimer: DispatchSourceTimer?
@@ -72,7 +74,7 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
         }
 
         func status(withReply reply: @escaping (Data) -> Void) {
-            service?.handleStatus(connectionID: connectionID, reply: reply)
+            service?.handleStatus(connectionID: connectionID, uid: uid, reply: reply)
         }
     }
 
@@ -164,6 +166,7 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
             let assigned = nextConnectionID
             nextConnectionID += 1
             connections[assigned] = connection
+            connectionUIDs[assigned] = uid
             touchExternalActivityAndRescheduleIdle()
             return assigned
         }
@@ -361,7 +364,14 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
             case .ok:
                 self.readSystemValue(generation: self.applyGeneration) { systemValue in
                     self.queue.async {
-                        let data = self.encodeStatus(callerID: connectionID, systemValue: systemValue)
+                        let uid = self.connectionUIDs[connectionID]
+                            ?? self.ledger.holders[connectionID]?.uid
+                            ?? 0
+                        let data = self.encodeStatus(
+                            callerID: connectionID,
+                            callerUID: uid,
+                            systemValue: systemValue
+                        )
                         if self.persistRetryNeeded {
                             reply(data, "storeFailed")
                         } else {
@@ -375,15 +385,24 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
         }
     }
 
-    private func handleStatus(connectionID: UInt64, reply: @escaping (Data) -> Void) {
+    private func handleStatus(
+        connectionID: UInt64,
+        uid: UInt32,
+        reply: @escaping (Data) -> Void
+    ) {
         queue.async { [weak self] in
             guard let self else { return }
+            self.connectionUIDs[connectionID] = uid
             self.whenStartupReady {
                 self.touchExternalActivityAndRescheduleIdle()
                 let generation = self.applyGeneration
                 self.readSystemValue(generation: generation) { systemValue in
                     self.queue.async {
-                        reply(self.encodeStatus(callerID: connectionID, systemValue: systemValue))
+                        reply(self.encodeStatus(
+                            callerID: connectionID,
+                            callerUID: uid,
+                            systemValue: systemValue
+                        ))
                     }
                 }
             }
@@ -400,6 +419,7 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
                 }
                 self.restorationInProgress = true
                 self.connections.removeValue(forKey: connectionID)
+                self.connectionUIDs.removeValue(forKey: connectionID)
                 let generation = self.beginApply()
                 self.readSystemValue(generation: generation) { systemValue in
                     self.queue.async {
@@ -647,13 +667,10 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
         }
     }
 
-    private func encodeStatus(callerID: UInt64, systemValue: Bool?) -> Data {
+    private func encodeStatus(callerID: UInt64, callerUID: UInt32, systemValue: Bool?) -> Data {
         let callerIsHolder = ledger.holders[callerID] != nil
-        let callerUID = ledger.holders[callerID]?.uid
-        let otherUsers = ledger.holders.values.contains { holder in
-            if let callerUID { return holder.uid != callerUID }
-            return true
-        }
+        // V1-12: compare authenticated connection uid, not holder-derived uid.
+        let otherUsers = ledger.holders.values.contains { $0.uid != callerUID }
         let status = PowerHelperStatus(
             protocolVersion: PowerHelperConstants.protocolVersion,
             helperBuild: helperBuild,

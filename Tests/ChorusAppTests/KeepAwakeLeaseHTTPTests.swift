@@ -73,7 +73,7 @@ struct KeepAwakeLeaseHTTPTests {
             },
             keepAwakeStatus: {
                 let leases = box.value.active(now: now).map {
-                    KeepAwakeLeaseStatusDTO(id: $0.id, expiresIn: $0.expiresAt - now, ttl: KeepAwakeLeaseTable.defaultTTL)
+                    KeepAwakeLeaseStatusDTO(id: $0.id, expiresIn: $0.expiresAt - now, ttl: $0.ttl)
                 }
                 let response = KeepAwakeStatusResponse(
                     mode: "agent",
@@ -199,6 +199,79 @@ struct KeepAwakeLeaseHTTPTests {
     @Test("maxBodyBytes 上限仍為 256 KiB")
     func bodyLimitUnchanged() {
         #expect(AutomationHTTPTransport.maxBodyBytes == 256 * 1024)
+    }
+
+    @Test("V1-5／V1-6 stale authorization rejected; overload returns 503; reservation released")
+    func keepAwakeAdmissionAndStaleAuth() async throws {
+        var admission = AutomationAdmission(limits: .init(maxPendingCommands: 1))
+        let body = try JSONEncoder().encode(KeepAwakeHoldRequest(id: "race", ttl: 60))
+        var handled = 0
+
+        let first = await AutomationHTTPTransport.executeKeepAwakeMutationForTesting(
+            admission: &admission,
+            requestGeneration: 0,
+            currentGeneration: 0,
+            body: body
+        ) { _ in
+            handled += 1
+            return .init(status: 200, json: #"{"ok":true}"#)
+        }
+        #expect(first.status == 200)
+        #expect(handled == 1)
+
+        // Capacity full before release would 503 — reserve without completing via direct admit.
+        #expect(admission.admitCommands(1) == nil)
+        let overloaded = await AutomationHTTPTransport.executeKeepAwakeMutationForTesting(
+            admission: &admission,
+            requestGeneration: 0,
+            currentGeneration: 0,
+            body: body
+        ) { _ in
+            handled += 1
+            return .init(status: 200, json: #"{"ok":true}"#)
+        }
+        #expect(overloaded.status == 503)
+        #expect(handled == 1)
+        admission.releaseCommands(1)
+
+        let stale = await AutomationHTTPTransport.executeKeepAwakeMutationForTesting(
+            admission: &admission,
+            requestGeneration: 1,
+            currentGeneration: 2,
+            body: body
+        ) { _ in
+            handled += 1
+            return .init(status: 200, json: #"{"ok":true}"#)
+        }
+        #expect(stale.status == 409)
+        #expect(handled == 1)
+        // Reservation released after stale reject — next admit succeeds.
+        #expect(admission.admitCommands(1) == nil)
+        admission.releaseCommands(1)
+    }
+
+    @Test("V1-11 status emits clamped TTL from hold/renew")
+    func statusTTLMatchesHold() async throws {
+        let (handlers, _) = makeLeaseHandlers(now: 2_000)
+        let hold60 = try JSONEncoder().encode(KeepAwakeHoldRequest(id: "ttl-job", ttl: 60))
+        _ = await AutomationHTTPTransport.routeKeepAwakeForTesting(
+            method: "POST", path: "/v1/keepawake/hold", body: hold60, handlers: handlers
+        )
+        var status = try #require(await AutomationHTTPTransport.routeKeepAwakeForTesting(
+            method: "GET", path: "/v1/keepawake", body: Data(), handlers: handlers
+        ))
+        var decoded = try JSONDecoder().decode(KeepAwakeStatusResponse.self, from: Data(status.json.utf8))
+        #expect(decoded.leases.first?.ttl == 60)
+
+        let renew120 = try JSONEncoder().encode(KeepAwakeHoldRequest(id: "ttl-job", ttl: 120))
+        _ = await AutomationHTTPTransport.routeKeepAwakeForTesting(
+            method: "POST", path: "/v1/keepawake/hold", body: renew120, handlers: handlers
+        )
+        status = try #require(await AutomationHTTPTransport.routeKeepAwakeForTesting(
+            method: "GET", path: "/v1/keepawake", body: Data(), handlers: handlers
+        ))
+        decoded = try JSONDecoder().decode(KeepAwakeStatusResponse.self, from: Data(status.json.utf8))
+        #expect(decoded.leases.first?.ttl == 120)
     }
 }
 
