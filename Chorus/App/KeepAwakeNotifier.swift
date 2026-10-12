@@ -10,6 +10,25 @@ import UserNotifications
 @MainActor
 protocol KeepAwakeNotifying: AnyObject {
     func notifyPowerFloorPaused(_ state: PowerFloorState)
+    // §7.3 lid keep-awake（C08）
+    func notifyLidGuardArmed(sources: [KeepAwakeSourceReport])
+    func notifyLidGuardReleased(reason: LidBlockReason?, lidClosed: Bool)
+    func notifyLidGuardHelperNeedsApproval()
+    func notifyLeftoverRestored()
+    func notifyLeftoverForeign()
+    func notifyHelperForcedOff(reason: String)
+}
+
+extension KeepAwakeNotifying {
+    func notifyLidGuardArmed(sources: [KeepAwakeSourceReport]) { _ = sources }
+    func notifyLidGuardReleased(reason: LidBlockReason?, lidClosed: Bool) {
+        _ = reason
+        _ = lidClosed
+    }
+    func notifyLidGuardHelperNeedsApproval() {}
+    func notifyLeftoverRestored() {}
+    func notifyLeftoverForeign() {}
+    func notifyHelperForcedOff(reason: String) { _ = reason }
 }
 
 @MainActor
@@ -28,9 +47,24 @@ final class KeepAwakeNotifier: KeepAwakeNotifying {
         case .critical:
             content.body = String(localized: "Mac 過熱，降溫後會自動恢復")
         }
+        deliver(content, prefix: "keep-awake-power-floor")
+    }
+
+    // Skeleton stubs — full copy + authorization in integration commit.
+    func notifyLidGuardArmed(sources: [KeepAwakeSourceReport]) { _ = sources }
+    func notifyLidGuardReleased(reason: LidBlockReason?, lidClosed: Bool) {
+        _ = reason
+        _ = lidClosed
+    }
+    func notifyLidGuardHelperNeedsApproval() {}
+    func notifyLeftoverRestored() {}
+    func notifyLeftoverForeign() {}
+    func notifyHelperForcedOff(reason: String) { _ = reason }
+
+    private func deliver(_ content: UNMutableNotificationContent, prefix: String) {
         requestAuthorizationIfNeeded()
         UNUserNotificationCenter.current().add(UNNotificationRequest(
-            identifier: "keep-awake-power-floor-\(UUID().uuidString)",
+            identifier: "\(prefix)-\(UUID().uuidString)",
             content: content,
             trigger: nil
         ))

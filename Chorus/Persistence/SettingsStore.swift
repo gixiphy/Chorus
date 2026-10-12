@@ -72,6 +72,13 @@ final class SettingsStore {
         static let keepAwakeBatteryFloor = "chorus.keepAwake.batteryFloor"
         static let keepAwakeAgentIdleBlankEnabled = "chorus.keepAwake.agentIdleBlank"
         static let keepAwakeAgentIdleMinutes = "chorus.keepAwake.agentIdleMinutes"
+        // §8.1 lid keep-awake (C08)
+        static let keepAwakeLidGuard = "chorus.keepAwake.lidGuard"
+        static let keepAwakeOrcaEnabled = "chorus.keepAwake.orcaEnabled"
+        static let keepAwakeOrcaCountsPermission = "chorus.keepAwake.orcaCountsPermission"
+        static let keepAwakeOrcaCLIPath = "chorus.keepAwake.orcaCLIPath"
+        static let keepAwakeDesktopAgentsEnabled = "chorus.keepAwake.desktopAgentsEnabled"
+        static let keepAwakeGrokBotEnabled = "chorus.keepAwake.grokBotEnabled"
         static let virtualTargetUID = "chorus.audio.virtualTargetUID"
         static let automationServer = "chorus.automation.serverEnabled"
         static let automationPort = "chorus.automation.serverPort"
@@ -557,6 +564,56 @@ final class SettingsStore {
         didSet { defaults.set(keepAwakeAgentIdleMinutes.rawValue, forKey: Key.keepAwakeAgentIdleMinutes) }
     }
 
+    /// 闔蓋防睡設定（spec §8.1）；讀寫時 `normalized()`。
+    var keepAwakeLidGuard: LidSleepSettings {
+        didSet {
+            let normalized = keepAwakeLidGuard.normalized()
+            if normalized != keepAwakeLidGuard {
+                keepAwakeLidGuard = normalized
+                return
+            }
+            if let data = try? JSONEncoder().encode(normalized) {
+                defaults.set(data, forKey: Key.keepAwakeLidGuard)
+            }
+        }
+    }
+
+    /// Orca 工作來源（預設開）。
+    var keepAwakeOrcaEnabled: Bool {
+        didSet { defaults.set(keepAwakeOrcaEnabled, forKey: Key.keepAwakeOrcaEnabled) }
+    }
+
+    /// Orca `permission` 算工作中（預設開；Fi A3）。
+    var keepAwakeOrcaCountsPermission: Bool {
+        didSet { defaults.set(keepAwakeOrcaCountsPermission, forKey: Key.keepAwakeOrcaCountsPermission) }
+    }
+
+    /// 覆寫 `orca` CLI 路徑；nil＝自動定位。
+    var keepAwakeOrcaCLIPath: String? {
+        didSet { defaults.set(keepAwakeOrcaCLIPath, forKey: Key.keepAwakeOrcaCLIPath) }
+    }
+
+    /// Codex／Claude 桌面 App 來源（預設開）。
+    var keepAwakeDesktopAgentsEnabled: Bool {
+        didSet { defaults.set(keepAwakeDesktopAgentsEnabled, forKey: Key.keepAwakeDesktopAgentsEnabled) }
+    }
+
+    /// Grok Bot App 開著就算（預設關；Fi A3／A4）。
+    var keepAwakeGrokBotEnabled: Bool {
+        didSet { defaults.set(keepAwakeGrokBotEnabled, forKey: Key.keepAwakeGrokBotEnabled) }
+    }
+
+    /// Hub 設定快照（給 `KeepAwakeSourceHub.configure`）。
+    var keepAwakeSourceSettings: KeepAwakeSourceSettings {
+        KeepAwakeSourceSettings(
+            orcaEnabled: keepAwakeOrcaEnabled,
+            orcaCountsPermission: keepAwakeOrcaCountsPermission,
+            orcaCLIPath: keepAwakeOrcaCLIPath,
+            desktopAgentsEnabled: keepAwakeDesktopAgentsEnabled,
+            grokBotEnabled: keepAwakeGrokBotEnabled
+        )
+    }
+
     /// 虛擬輸出裝置的轉送目標：**nil＝自動**（跟著使用中的螢幕走，都沒有就
     /// 回內建輸出）。指定 UID 則固定送那台——但它不在時仍會自動退回，
     /// 不會讓聲音消失；它回來時再接回去。
@@ -756,6 +813,19 @@ final class SettingsStore {
         } else {
             keepAwakeAgentIdleMinutes = .default
         }
+        if let data = defaults.data(forKey: Key.keepAwakeLidGuard),
+           let decoded = try? JSONDecoder().decode(LidSleepSettings.self, from: data) {
+            keepAwakeLidGuard = decoded.normalized()
+        } else {
+            keepAwakeLidGuard = LidSleepSettings()
+        }
+        keepAwakeOrcaEnabled = defaults.object(forKey: Key.keepAwakeOrcaEnabled) as? Bool ?? true
+        keepAwakeOrcaCountsPermission =
+            defaults.object(forKey: Key.keepAwakeOrcaCountsPermission) as? Bool ?? true
+        keepAwakeOrcaCLIPath = defaults.string(forKey: Key.keepAwakeOrcaCLIPath)
+        keepAwakeDesktopAgentsEnabled =
+            defaults.object(forKey: Key.keepAwakeDesktopAgentsEnabled) as? Bool ?? true
+        keepAwakeGrokBotEnabled = defaults.bool(forKey: Key.keepAwakeGrokBotEnabled)
         virtualTargetUID = defaults.string(forKey: Key.virtualTargetUID)
         automationServerEnabled = defaults.bool(forKey: Key.automationServer)
         automationServerPort = UInt16(defaults.object(forKey: Key.automationPort) as? Int ?? 55780)

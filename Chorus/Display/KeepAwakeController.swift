@@ -67,9 +67,12 @@ final class KeepAwakeController {
     /// 計時模式的剩餘秒數（其餘模式為 nil）。
     /// 存成 property 而非 computed——選單要每秒重繪倒數，得是可觀察的變更。
     private(set) var remainingSeconds: Double?
-    /// Agent 活動偵測。只有 Agent 模式會叫它 `start()`，
-    /// 其餘模式不必為了沒人看的狀態定期掃目錄。
-    let agentActivity: AgentActivityMonitor
+    /// 多來源 OR hub（spec §4.7／§7.1）。Agent 模式才 `start()`。
+    let sourceHub: KeepAwakeSourceHub
+    /// 闔蓋防睡控制器（spec §5.5）。
+    let lidGuard: LidSleepGuardController
+    /// 相容別名：UI／既有綁定仍讀 `agentActivity`。
+    var agentActivity: AgentActivityMonitor { sourceHub.agentActivity }
     /// 整機負載偵測。只有高負載模式會叫它 `start()`。
     let systemLoad: SystemLoadMonitor
     /// 電量／溫度監聽。只有 `mode != .off` 時啟動。
@@ -157,6 +160,8 @@ final class KeepAwakeController {
         settings: SettingsStore,
         displayManager: DisplayManager,
         agentActivity: AgentActivityMonitor = AgentActivityMonitor(),
+        sourceHub: KeepAwakeSourceHub? = nil,
+        lidGuard: LidSleepGuardController? = nil,
         systemLoad: SystemLoadMonitor = SystemLoadMonitor(),
         powerSource: any PowerSourceObserving = PowerSourceMonitor(),
         idleBlanker: AgentIdleBlanker? = nil,
@@ -167,7 +172,11 @@ final class KeepAwakeController {
     ) {
         self.settings = settings
         self.displayManager = displayManager
-        self.agentActivity = agentActivity
+        let hub = sourceHub ?? KeepAwakeSourceHub(agentActivity: agentActivity)
+        self.sourceHub = hub
+        self.lidGuard = lidGuard ?? LidSleepGuardController(
+            settings: settings, notifier: notifier
+        )
         self.systemLoad = systemLoad
         self.powerSource = powerSource
         self.idleBlanker = idleBlanker ?? AgentIdleBlanker(displays: displayManager)
@@ -181,11 +190,13 @@ final class KeepAwakeController {
         agentCustomProcessNames = settings.keepAwakeCustomProcessNames
         agentIdleBlankEnabled = settings.keepAwakeAgentIdleBlankEnabled
         agentIdleBlankMinutes = settings.keepAwakeAgentIdleMinutes
-        agentActivity.onWorkingChanged = { [weak self] in self?.reevaluate() }
+        hub.configure(settings.keepAwakeSourceSettings)
+        hub.onBusyChanged = { [weak self] in self?.reevaluate() }
+        self.lidGuard.onChange = { [weak self] in self?.reevaluate() }
         systemLoad.onDecisionChanged = { [weak self] in self?.reevaluate() }
         powerSource.onChange = { [weak self] in self?.reevaluate() }
         // `didSet` 在 init 裡不會跑，設定得在這裡自己推一次給 monitor。
-        agentActivity.configureProcessDetection(
+        hub.agentActivity.configureProcessDetection(
             enabled: agentProcessDetectionEnabled, customProcessNames: agentCustomProcessNames
         )
     }
@@ -300,8 +311,10 @@ final class KeepAwakeController {
 
     /// App 結束前釋放（核心其實也會自動回收，但明確釋放比較乾淨）。
     /// 使用 runtime `activate(.off)`：不清除已保存偏好。
+    /// Lid Guard 必須在 deactivate **之前**同步 set(false)（spec §7.1）。
     func shutdown() {
         shutDown = true
+        lidGuard.shutdown()
         idleBlanker.stop()
         deactivate()
     }
@@ -321,7 +334,7 @@ final class KeepAwakeController {
             now: currentTime,
             connectedDisplayUUIDs: connected,
             runningAppBundleIDs: running,
-            agentsWorking: agentActivity.isWorking,
+            agentsWorking: sourceHub.isBusy,
             systemBusy: systemLoad.evaluation.shouldHold,
             powerFloorTripped: pauseReason.isTripped
         )
@@ -358,6 +371,17 @@ final class KeepAwakeController {
             && (!plan.preventsSystemSleep || systemAssertion != nil)
         activationFailed = shouldHold && !isHolding
         updateIdleBlanker()
+        // Skeleton: lidGuard.update wired; full set/heartbeat in integration.
+        let agentModeActive = {
+            if case .whileAgentsWorking = mode { return !shutDown }
+            return false
+        }()
+        lidGuard.update(
+            agentModeActive: agentModeActive,
+            busy: sourceHub.busy,
+            power: powerSource.snapshot,
+            existingFloor: batteryFloor
+        )
     }
 
     private func updateIdleBlanker() {
@@ -442,15 +466,19 @@ final class KeepAwakeController {
         if case .whileSystemBusy = mode {
             systemLoad.resetAfterWake()
         }
-        reevaluate()
+        Task { @MainActor [weak self] in
+            await self?.lidGuard.refreshFromHelper()
+            self?.reevaluate()
+        }
     }
 
-    /// Agent 模式進出時開／關目錄輪詢。
+    /// Agent 模式進出時開／關來源 hub（含既有 agents＋新來源）。
     private func updateAgentMonitor() {
         if case .whileAgentsWorking = mode {
-            agentActivity.start()
+            sourceHub.configure(settings.keepAwakeSourceSettings)
+            sourceHub.start()
         } else {
-            agentActivity.stop()
+            sourceHub.stop()
         }
     }
 
