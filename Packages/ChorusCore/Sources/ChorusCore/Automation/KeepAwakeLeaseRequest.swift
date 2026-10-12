@@ -104,6 +104,97 @@ public struct KeepAwakeHelperStatusDTO: Codable, Sendable, Equatable {
     }
 }
 
+/// CLI `chorus keepawake …` 參數解析（C09；放 Core 以便 App 測試引用）。
+public enum KeepAwakeCLIParser: Sendable {
+    public enum Command: Equatable, Sendable {
+        case hold(id: String, ttl: Double?)
+        case release(id: String)
+        case status
+    }
+
+    public enum ParseError: Error, Equatable, Sendable {
+        case usage(String)
+        case peerRejected
+    }
+
+    public static func parse(_ arguments: [String]) -> Result<Command, ParseError> {
+        if arguments.contains("--peer") {
+            return .failure(.peerRejected)
+        }
+        guard let verb = arguments.first else {
+            return .failure(.usage("用法：chorus keepawake hold|release|status …"))
+        }
+        let rest = Array(arguments.dropFirst())
+        switch verb {
+        case "hold":
+            return parseHold(rest)
+        case "release":
+            return parseRelease(rest)
+        case "status":
+            if rest.isEmpty { return .success(.status) }
+            return .failure(.usage("用法：chorus keepawake status [--json]"))
+        case "help", "-h", "--help":
+            return .failure(.usage("用法：chorus keepawake hold|release|status …"))
+        default:
+            return .failure(.usage("未知的 keepawake 子指令「\(verb)」"))
+        }
+    }
+
+    private static func parseHold(_ arguments: [String]) -> Result<Command, ParseError> {
+        var args = arguments
+        var id: String?
+        var ttl: Double?
+        while let flag = args.first {
+            args.removeFirst()
+            switch flag {
+            case "--id":
+                guard let value = args.first else {
+                    return .failure(.usage("「--id」少了名稱"))
+                }
+                args.removeFirst()
+                id = value
+            case "--ttl":
+                guard let value = args.first else {
+                    return .failure(.usage("「--ttl」少了秒數"))
+                }
+                args.removeFirst()
+                guard let parsed = Double(value), parsed.isFinite else {
+                    return .failure(.usage("「--ttl」必須是數字"))
+                }
+                ttl = parsed
+            default:
+                return .failure(.usage("未知參數「\(flag)」"))
+            }
+        }
+        guard let id else {
+            return .failure(.usage("用法：chorus keepawake hold --id <name> [--ttl <秒>] [--json]"))
+        }
+        return .success(.hold(id: id, ttl: ttl))
+    }
+
+    private static func parseRelease(_ arguments: [String]) -> Result<Command, ParseError> {
+        var args = arguments
+        var id: String?
+        while let flag = args.first {
+            args.removeFirst()
+            switch flag {
+            case "--id":
+                guard let value = args.first else {
+                    return .failure(.usage("「--id」少了名稱"))
+                }
+                args.removeFirst()
+                id = value
+            default:
+                return .failure(.usage("未知參數「\(flag)」"))
+            }
+        }
+        guard let id else {
+            return .failure(.usage("用法：chorus keepawake release --id <name> [--json]"))
+        }
+        return .success(.release(id: id))
+    }
+}
+
 /// `GET /v1/keepawake` 回應（spec §4.5；wire 用獨立 DTO）。
 public struct KeepAwakeStatusResponse: Codable, Sendable, Equatable {
     public var mode: String

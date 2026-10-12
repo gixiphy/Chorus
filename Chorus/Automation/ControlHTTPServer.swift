@@ -39,6 +39,12 @@ final class ControlHTTPServer {
     @ObservationIgnored private unowned let scenes: SceneStore
     /// nil（還沒接上）或來源回傳 nil（AppState 已釋放）時，`/v1/doctor` 回 503。
     @ObservationIgnored private var doctorReport: (@MainActor () -> DoctorReport?)?
+    /// Keepawake handlers（C09）；未設定時路由回 503。實際接線由 C08 完成。
+    @ObservationIgnored private var keepAwakeHold: (@MainActor (Data) -> AutomationHTTPTransport.Response)?
+    @ObservationIgnored private var keepAwakeRelease: (@MainActor (Data) -> AutomationHTTPTransport.Response)?
+    @ObservationIgnored private var keepAwakeStatus: (@MainActor () -> AutomationHTTPTransport.Response)?
+    /// Fi A4：token rotation / 停用 automation 時立即清租約。
+    @ObservationIgnored private var keepAwakeClearLeases: (@MainActor () -> Void)?
     /// 連線層（背景 queue）。nil ＝ 介面沒開。
     @ObservationIgnored private var transport: AutomationHTTPTransport?
     @ObservationIgnored private var eventSubscription: UUID?
@@ -68,6 +74,19 @@ final class ControlHTTPServer {
         doctorReport = source
     }
 
+    /// C08 在 AppState 接上租約表後呼叫。`clearLeases` 於 token 輪替與停用 automation 時觸發（Fi A4）。
+    func setKeepAwakeHandlers(
+        hold: @escaping @MainActor (Data) -> AutomationHTTPTransport.Response,
+        release: @escaping @MainActor (Data) -> AutomationHTTPTransport.Response,
+        status: @escaping @MainActor () -> AutomationHTTPTransport.Response,
+        clearLeases: (@MainActor () -> Void)? = nil
+    ) {
+        keepAwakeHold = hold
+        keepAwakeRelease = release
+        keepAwakeStatus = status
+        keepAwakeClearLeases = clearLeases
+    }
+
     // MARK: - Token
 
     /// 目前的 token；沒有就生一個。32 bytes 隨機、存 Keychain。
@@ -82,6 +101,8 @@ final class ControlHTTPServer {
 
     @discardableResult
     func regenerateToken() -> String {
+        // Fi A4：token rotation 立即清除租約、不延長 grace。
+        keepAwakeClearLeases?()
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         let token = Data(bytes).base64EncodedString()
@@ -152,6 +173,15 @@ final class ControlHTTPServer {
             },
             eventStreamsActive: { [weak self] active in
                 Task { @MainActor in self?.setEventStreamsActive(active) }
+            },
+            keepAwakeHold: { @MainActor [weak self] body in
+                self?.keepAwakeHold?(body) ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
+            },
+            keepAwakeRelease: { @MainActor [weak self] body in
+                self?.keepAwakeRelease?(body) ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
+            },
+            keepAwakeStatus: { @MainActor [weak self] in
+                self?.keepAwakeStatus?() ?? AutomationHTTPTransport.Handlers.keepAwakeUnavailable
             }
         )
         let created = AutomationHTTPTransport(token: token, handlers: handlers)
@@ -197,6 +227,8 @@ final class ControlHTTPServer {
     }
 
     private func stop() {
+        // Fi A4：停用 automation 立即清除租約。
+        keepAwakeClearLeases?()
         setEventStreamsActive(false)
         transport?.stop()
         transport = nil

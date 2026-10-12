@@ -69,6 +69,8 @@ struct ChorusCLI {
                 try await send(try parse(verb: verb, arguments: arguments), config: config, json: jsonOutput)
             case "perform":
                 try await send(try parsePerform(arguments: arguments), config: config, json: jsonOutput)
+            case "keepawake":
+                exit(await runKeepAwake(arguments: arguments, config: config, json: jsonOutput))
             default:
                 fail("未知的子指令「\(subcommand)」。執行 chorus help 看用法")
             }
@@ -360,6 +362,90 @@ struct ChorusCLI {
         }
     }
 
+    // MARK: - keepawake
+
+    private static func runKeepAwake(arguments: [String], config: Config, json: Bool) async -> Int32 {
+        switch KeepAwakeCLIParser.parse(arguments) {
+        case let .failure(.usage(message)):
+            FileHandle.standardError.write(Data("chorus: \(message)\n".utf8))
+            return 2
+        case .failure(.peerRejected):
+            FileHandle.standardError.write(Data("chorus: keepawake 不支援 --peer\n".utf8))
+            return 2
+        case let .success(command):
+            do {
+                switch command {
+                case let .hold(id, ttl):
+                    let request = KeepAwakeHoldRequest(id: id, ttl: ttl)
+                    let body = try JSONEncoder().encode(request)
+                    let (status, data) = try await Client(config: config).postRaw(
+                        "/v1/keepawake/hold", body: body
+                    )
+                    try checkKeepAwakeHTTP(status, data: data)
+                    let decoded = try JSONDecoder().decode(KeepAwakeHoldResponse.self, from: data)
+                    if json {
+                        print(String(decoding: data, as: UTF8.self))
+                    } else {
+                        print("hold \(decoded.id)：expiresIn=\(Int(decoded.expiresIn))s ttl=\(Int(decoded.ttl))s effective=\(decoded.effective)")
+                    }
+                    if !decoded.effective {
+                        let reason = decoded.reason ?? "unknown"
+                        FileHandle.standardError.write(
+                            Data("chorus: 警告：租約已記錄但目前無效（\(reason)）\n".utf8)
+                        )
+                    }
+                    return 0
+                case let .release(id):
+                    let request = KeepAwakeReleaseRequest(id: id)
+                    let body = try JSONEncoder().encode(request)
+                    let (status, data) = try await Client(config: config).postRaw(
+                        "/v1/keepawake/release", body: body
+                    )
+                    try checkKeepAwakeHTTP(status, data: data)
+                    if json {
+                        print(String(decoding: data, as: UTF8.self))
+                    } else {
+                        let decoded = try JSONDecoder().decode(KeepAwakeReleaseResponse.self, from: data)
+                        print("release \(decoded.id)：released=\(decoded.released)")
+                    }
+                    return 0
+                case .status:
+                    let body = try await Client(config: config).get("/v1/keepawake")
+                    if json {
+                        print(body)
+                    } else {
+                        print(body)
+                    }
+                    return 0
+                }
+            } catch let error as CLIError {
+                FileHandle.standardError.write(Data("chorus: \(error.message)\n".utf8))
+                return error.exitCode
+            } catch {
+                // URLSession 連線錯誤 → 4（spec §4.5 / V-C09-3）
+                if let urlError = error as? URLError {
+                    FileHandle.standardError.write(
+                        Data("chorus: 連不上 Chorus（\(urlError.localizedDescription)）\n".utf8)
+                    )
+                    return 4
+                }
+                FileHandle.standardError.write(Data("chorus: \(error)\n".utf8))
+                return 1
+            }
+        }
+    }
+
+    private static func checkKeepAwakeHTTP(_ status: Int, data: Data) throws(CLIError) {
+        switch status {
+        case 200...299:
+            return
+        case 401:
+            throw CLIError("token 不正確。請到設定頁重新產生，或檢查 CHORUS_TOKEN。", exitCode: 3)
+        default:
+            throw CLIError("HTTP \(status) \(String(decoding: data, as: UTF8.self))")
+        }
+    }
+
     private static func printUsage() {
         print("""
         chorus — Chorus 的命令列控制介面
@@ -375,6 +461,9 @@ struct ChorusCLI {
           chorus state
           chorus listen
           chorus doctor [--json]
+          chorus keepawake hold --id <name> [--ttl <秒>] [--json]
+          chorus keepawake release --id <name> [--json]
+          chorus keepawake status [--json]
 
         目標（省略時依屬性推斷）：
           --display <名稱>        --display-like <片段>   --display-uuid <uuid>
@@ -421,6 +510,7 @@ struct ChorusCLI {
         `chorus state` 會列出 focusScene／focusRemaining／focusDeadline。
 
         chorus doctor 結束碼：0 沒有錯誤、1 有錯誤、3 token／設定問題、4 連不上 Chorus。
+        chorus keepawake 結束碼：0 成功（effective=false 仍為 0，警告印 stderr）、2 用法錯誤、3 token 錯、4 連不上 Chorus。
 
         介面需在 Chorus 設定頁「自動化介面」開啟。token 由 App 寫入
         ~/.config/chorus/config.json（權限 600），亦可用 CHORUS_TOKEN 覆寫。
@@ -520,6 +610,15 @@ struct Client {
             decoded: decoded,
             ok: decoded?.ok ?? false
         )
+    }
+
+    /// Keepawake 等非 ControlRequest 的 POST；連線錯誤（URLError）向上拋給呼叫端映射 exit 4。
+    func postRaw(_ path: String, body: Data) async throws -> (status: Int, body: Data) {
+        let (data, response) = try await URLSession.shared.data(
+            for: request(path, method: "POST", body: body)
+        )
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        return (status, data)
     }
 
     /// SSE 事件流：一行一個 JSON，方便 `chorus listen | jq` 直接接管線。

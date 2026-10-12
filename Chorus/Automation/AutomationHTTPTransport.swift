@@ -27,6 +27,35 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         let execute: @Sendable (_ requests: [ControlRequest], _ isBatch: Bool) async -> Response
         /// 第一個事件流開啟（true）／最後一個關閉（false）。沒有訂閱者時不必編碼事件。
         let eventStreamsActive: @Sendable (Bool) -> Void
+        /// Keepawake 租約（C09）。預設 503，讓既有建構點不必改。
+        let keepAwakeHold: @Sendable (Data) async -> Response
+        let keepAwakeRelease: @Sendable (Data) async -> Response
+        let keepAwakeStatus: @Sendable () async -> Response
+
+        static let keepAwakeUnavailable = Response(
+            status: 503,
+            json: AutomationHTTPTransport.errorJSON("unavailable", "keepawake handler 尚未接線")
+        )
+
+        init(
+            state: @escaping @Sendable () async -> Response,
+            scenes: @escaping @Sendable () async -> Response,
+            doctor: @escaping @Sendable () async -> Response,
+            execute: @escaping @Sendable (_ requests: [ControlRequest], _ isBatch: Bool) async -> Response,
+            eventStreamsActive: @escaping @Sendable (Bool) -> Void,
+            keepAwakeHold: @escaping @Sendable (Data) async -> Response = { _ in Self.keepAwakeUnavailable },
+            keepAwakeRelease: @escaping @Sendable (Data) async -> Response = { _ in Self.keepAwakeUnavailable },
+            keepAwakeStatus: @escaping @Sendable () async -> Response = { Self.keepAwakeUnavailable }
+        ) {
+            self.state = state
+            self.scenes = scenes
+            self.doctor = doctor
+            self.execute = execute
+            self.eventStreamsActive = eventStreamsActive
+            self.keepAwakeHold = keepAwakeHold
+            self.keepAwakeRelease = keepAwakeRelease
+            self.keepAwakeStatus = keepAwakeStatus
+        }
     }
 
     /// 從接受連線到請求讀完的絕對期限——慢慢送一點資料不能無限續命。
@@ -203,11 +232,36 @@ final class AutomationHTTPTransport: @unchecked Sendable {
             handleCommand(id, body: request.body)
         case ("GET", "/v1/events"):
             startEventStream(id)
+        case ("POST", "/v1/keepawake/hold"):
+            callMainThread(id) { [handlers] in await handlers.keepAwakeHold(request.body) }
+        case ("POST", "/v1/keepawake/release"):
+            callMainThread(id) { [handlers] in await handlers.keepAwakeRelease(request.body) }
+        case ("GET", "/v1/keepawake"):
+            callMainThread(id) { [handlers] in await handlers.keepAwakeStatus() }
         default:
             respond(id, status: 404, json: Self.errorJSON(
                 "notFound",
-                "可用端點：POST /v1/command、GET /v1/state、GET /v1/scenes、GET /v1/doctor、GET /v1/events、GET /v1/health"
+                "可用端點：POST /v1/command、GET /v1/state、GET /v1/scenes、GET /v1/doctor、GET /v1/events、GET /v1/health、POST /v1/keepawake/hold、POST /v1/keepawake/release、GET /v1/keepawake"
             ))
+        }
+    }
+
+    /// Test seam：在既有安全檢查之後路由（V-C09）。回傳 nil 表示呼叫端應自行處理 401/403。
+    static func routeKeepAwakeForTesting(
+        method: String,
+        path: String,
+        body: Data,
+        handlers: Handlers
+    ) async -> Response? {
+        switch (method, path) {
+        case ("POST", "/v1/keepawake/hold"):
+            return await handlers.keepAwakeHold(body)
+        case ("POST", "/v1/keepawake/release"):
+            return await handlers.keepAwakeRelease(body)
+        case ("GET", "/v1/keepawake"):
+            return await handlers.keepAwakeStatus()
+        default:
+            return nil
         }
     }
 
@@ -448,6 +502,7 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         case 404: "Not Found"
         case 408: "Request Timeout"
         case 413: "Payload Too Large"
+        case 429: "Too Many Requests"
         case 503: "Service Unavailable"
         case 504: "Gateway Timeout"
         default: "Error"
@@ -468,6 +523,10 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         let name = host.split(separator: ":").first.map(String.init)?.lowercased() ?? ""
         return name == "127.0.0.1" || name == "localhost" || name == "[::1]" || name == "::1"
     }
+
+    /// Test seam for Host / Bearer gates (V-C09-1 / S-9).
+    static func isLocalHostForTesting(_ host: String?) -> Bool { isLocalHost(host) }
+    static func bearerTokenForTesting(_ header: String?) -> String? { bearerToken(header) }
 
     private static func bearerToken(_ header: String?) -> String? {
         guard let header else { return nil }
