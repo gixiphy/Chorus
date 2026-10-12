@@ -209,10 +209,15 @@ struct KeepAwakeLeaseCodableTests {
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.sortedKeys]
+        e.dateEncodingStrategy = .secondsSince1970
         return e
     }()
 
-    private let decoder = JSONDecoder()
+    private let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .secondsSince1970
+        return d
+    }()
 
     @Test("V-C01-3 HoldRequest round-trip and fixed JSON")
     func holdRequest() throws {
@@ -257,56 +262,51 @@ struct KeepAwakeLeaseCodableTests {
 
     @Test("V-C01-3 / W0-10 StatusResponse full canonical JSON round-trip")
     func statusResponse() throws {
-        let value = KeepAwakeStatusResponse(
-            mode: "whileAgentsWorking",
-            isHolding: true,
-            lidPhase: "armed",
-            contributing: [
-                KeepAwakeSourceReport(
-                    id: "lease:build-bot",
-                    kind: .lease,
-                    displayName: "build-bot",
-                    detail: "剩 10 分",
-                    isWorkingNow: true,
-                    lastWorkingAt: Date(timeIntervalSince1970: 1_700_000_000),
-                    health: .ok
-                )
-            ],
-            leases: [KeepAwakeLeaseStatusDTO(id: "build-bot", expiresIn: 600, ttl: 600)],
-            helper: KeepAwakeHelperStatusDTO(
-                availability: "ready",
-                sleepDisabled: true,
-                setByHelper: true,
-                holderCount: 1,
-                callerIsHolder: true,
-                otherUsersHolding: false,
-                lastForcedOffReason: nil
-            ),
-            assertionEffective: true,
-            lidEffective: true
-        )
+        // 獨立固定 fixture（secondsSince1970）；含 source kind/name/working/timestamp/health
+        // 與 optional 欄位出現／缺席鎖定。
+        let fixture = """
+        {"assertionEffective":true,"contributing":[{"detail":"剩 10 分","displayName":"build-bot","health":{"kind":"ok"},"id":"lease:build-bot","isWorkingNow":true,"kind":"lease","lastWorkingAt":1700000000}],"helper":{"availability":"ready","callerIsHolder":true,"holderCount":1,"otherUsersHolding":false,"setByHelper":true,"sleepDisabled":true},"isHolding":true,"leases":[{"expiresIn":600,"id":"build-bot","ttl":600}],"lidEffective":true,"lidPhase":"armed","mode":"whileAgentsWorking"}
+        """.data(using: .utf8)!
 
-        let data = try encoder.encode(value)
-        let round = try decoder.decode(KeepAwakeStatusResponse.self, from: data)
-        #expect(round == value)
+        let decoded = try decoder.decode(KeepAwakeStatusResponse.self, from: fixture)
+        #expect(decoded.mode == "whileAgentsWorking")
+        #expect(decoded.isHolding)
+        #expect(decoded.lidPhase == "armed")
+        #expect(decoded.assertionEffective)
+        #expect(decoded.lidEffective)
+        #expect(decoded.leases == [KeepAwakeLeaseStatusDTO(id: "build-bot", expiresIn: 600, ttl: 600)])
+        #expect(decoded.helper?.availability == "ready")
+        #expect(decoded.helper?.sleepDisabled == true)
+        #expect(decoded.helper?.setByHelper == true)
+        #expect(decoded.helper?.holderCount == 1)
+        #expect(decoded.helper?.callerIsHolder == true)
+        #expect(decoded.helper?.otherUsersHolding == false)
+        #expect(decoded.helper?.lastForcedOffReason == nil)
 
-        let obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        #expect(obj["mode"] as? String == "whileAgentsWorking")
-        #expect(obj["isHolding"] as? Bool == true)
-        #expect(obj["assertionEffective"] as? Bool == true)
-        #expect(obj["lidEffective"] as? Bool == true)
-        #expect(obj["lidPhase"] as? String == "armed")
-        #expect((obj["leases"] as? [[String: Any]])?.first?["id"] as? String == "build-bot")
-        #expect((obj["leases"] as? [[String: Any]])?.first?["expiresIn"] as? Double == 600)
-        #expect((obj["leases"] as? [[String: Any]])?.first?["ttl"] as? Double == 600)
-        let helper = obj["helper"] as? [String: Any]
-        #expect(helper?["availability"] as? String == "ready")
-        #expect(helper?["sleepDisabled"] as? Bool == true)
-        #expect(helper?["setByHelper"] as? Bool == true)
-        #expect(helper?["holderCount"] as? Int == 1)
-        #expect(helper?["callerIsHolder"] as? Bool == true)
-        #expect(helper?["otherUsersHolding"] as? Bool == false)
-        #expect((obj["contributing"] as? [[String: Any]])?.first?["id"] as? String == "lease:build-bot")
+        #expect(decoded.contributing.count == 1)
+        let source = decoded.contributing[0]
+        #expect(source.id == "lease:build-bot")
+        #expect(source.kind == .lease)
+        #expect(source.displayName == "build-bot")
+        #expect(source.detail == "剩 10 分")
+        #expect(source.isWorkingNow)
+        #expect(source.lastWorkingAt == Date(timeIntervalSince1970: 1_700_000_000))
+        #expect(source.health == .ok)
+
+        let encoded = try encoder.encode(decoded)
+        #expect(encoded == fixture)
+
+        // optional 缺席：無 lidPhase／helper／detail／lastWorkingAt
+        let sparseFixture = """
+        {"assertionEffective":false,"contributing":[{"displayName":"agents","health":{"kind":"ok"},"id":"agents","isWorkingNow":false,"kind":"agentActivity"},{"displayName":"orca","health":{"kind":"degraded","reason":"timeout"},"id":"orca","isWorkingNow":false,"kind":"orca"}],"isHolding":false,"leases":[],"lidEffective":false,"mode":"off"}
+        """.data(using: .utf8)!
+        let sparse = try decoder.decode(KeepAwakeStatusResponse.self, from: sparseFixture)
+        #expect(sparse.lidPhase == nil)
+        #expect(sparse.helper == nil)
+        #expect(sparse.contributing[0].detail == nil)
+        #expect(sparse.contributing[0].lastWorkingAt == nil)
+        #expect(sparse.contributing[1].health == .degraded(reason: "timeout"))
+        #expect(try encoder.encode(sparse) == sparseFixture)
     }
 
     @Test("W0-10 ReleaseRequest round-trip is explicit")
