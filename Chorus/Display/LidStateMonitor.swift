@@ -58,12 +58,11 @@ enum LidClamshellPropertyParser {
 }
 
 /// Boot-anchored continuous seconds (advances across sleep; same across process restart).
+/// No `systemUptime` fallback — unavailable clock is explicit failure (W1-10).
 enum LidMonotonicTime {
-    static func seconds() -> Double {
+    static func seconds() -> Double? {
         var ts = timespec()
-        guard clock_gettime(CLOCK_MONOTONIC_RAW, &ts) == 0 else {
-            return ProcessInfo.processInfo.systemUptime
-        }
+        guard clock_gettime(CLOCK_MONOTONIC_RAW, &ts) == 0 else { return nil }
         return Double(ts.tv_sec) + Double(ts.tv_nsec) / 1_000_000_000.0
     }
 
@@ -77,10 +76,19 @@ enum LidMonotonicTime {
     }
 }
 
+/// Explicit restore disposition for C08 (W1-10). `invalid` must be treated as conservative
+/// closed-session (do not reset max-duration latch / do not begin a fresh open-ended duration).
+enum LidSessionRestoreResult: Equatable, Sendable {
+    case absent
+    case valid(sinceContinuous: Double, latched: Bool)
+    /// Corrupt, reboot mismatch, unknown boot, or non-finite clock — fail closed for policy.
+    case invalid
+}
+
 /// Persists continuous lid-closed deadline across App restart / wake (Fi A3 / W1-10).
 ///
 /// Uses monotonic continuous time + boot session UUID. Wall-clock changes cannot
-/// extend or reset the deadline. Reboot / invalid persistence → conservative nil.
+/// extend or reset the deadline. Invalid / reboot persistence is **not** the same as absent.
 struct LidClosedSessionStore: Equatable {
     struct Snapshot: Codable, Equatable {
         var continuousClosedAt: Double
@@ -131,21 +139,42 @@ struct LidClosedSessionStore: Equatable {
         return try? JSONDecoder().decode(Snapshot.self, from: data)
     }
 
-    /// Restore continuous `lidClosedSince` for policy. nil when missing, reboot, or invalid.
+    /// True when defaults contain undecodable / structurally unusable bytes.
+    func hasCorruptPayload() -> Bool {
+        guard let data = defaults.data(forKey: key) else { return false }
+        return (try? JSONDecoder().decode(Snapshot.self, from: data)) == nil
+    }
+
+    /// Explicit restore result for C08 (W1-10). Prefer this over the nil-collapsing helper.
+    func restoreResult(
+        nowContinuous: Double? = LidMonotonicTime.seconds(),
+        bootSessionUUID: String? = LidMonotonicTime.bootSessionUUID()
+    ) -> LidSessionRestoreResult {
+        if hasCorruptPayload() { return .invalid }
+        guard let snap = load() else { return .absent }
+        guard let bootSessionUUID else { return .invalid }
+        guard snap.bootSessionUUID == bootSessionUUID else {
+            // Reboot — prior deadline must not reset the cap; surface invalid for latch.
+            return .invalid
+        }
+        guard let nowContinuous, snap.continuousClosedAt.isFinite, nowContinuous.isFinite else {
+            return .invalid
+        }
+        guard snap.continuousClosedAt <= nowContinuous + 0.5 else { return .invalid }
+        return .valid(sinceContinuous: snap.continuousClosedAt, latched: snap.maxDurationLatched)
+    }
+
+    /// Compatibility helper. Maps `.invalid` to nil — C08 must use `restoreResult` for latch.
     func restoredLidClosedSince(
-        nowContinuous: Double = LidMonotonicTime.seconds(),
+        nowContinuous: Double? = LidMonotonicTime.seconds(),
         bootSessionUUID: String? = LidMonotonicTime.bootSessionUUID()
     ) -> (sinceContinuous: Double, latched: Bool)? {
-        guard let snap = load() else { return nil }
-        guard let bootSessionUUID, snap.bootSessionUUID == bootSessionUUID else {
-            // Reboot or unknown boot → conservative: do not extend prior deadline.
+        switch restoreResult(nowContinuous: nowContinuous, bootSessionUUID: bootSessionUUID) {
+        case let .valid(since, latched):
+            return (since, latched)
+        case .absent, .invalid:
             return nil
         }
-        guard snap.continuousClosedAt.isFinite, nowContinuous.isFinite else { return nil }
-        // Closed-at must not be in the future (corruption / clock anomaly).
-        guard snap.continuousClosedAt <= nowContinuous + 0.5 else { return nil }
-        // Absurdly old within same boot → still usable; policy latches on max duration.
-        return (snap.continuousClosedAt, snap.maxDurationLatched)
     }
 }
 
@@ -245,13 +274,34 @@ final class LidStateMonitor: LidStateObserving {
         reading = next
         switch next {
         case .closed:
-            if sessionStore.load() == nil, let boot = LidMonotonicTime.bootSessionUUID() {
-                sessionStore.save(
-                    continuousClosedAt: LidMonotonicTime.seconds(),
-                    bootSessionUUID: boot,
-                    maxDurationLatched: false,
-                    wallClosedAt: Date() // display only
-                )
+            // W1-10: keep valid same-boot sessions; replace absent/invalid (never retain corrupt).
+            switch sessionStore.restoreResult() {
+            case .valid:
+                break
+            case .absent:
+                if let boot = LidMonotonicTime.bootSessionUUID(),
+                   let continuous = LidMonotonicTime.seconds()
+                {
+                    sessionStore.save(
+                        continuousClosedAt: continuous,
+                        bootSessionUUID: boot,
+                        maxDurationLatched: false,
+                        wallClosedAt: Date() // display only
+                    )
+                }
+            case .invalid:
+                // Conservative: clear corrupt/reboot bytes and latch so C08 cannot reset the cap.
+                sessionStore.clear()
+                if let boot = LidMonotonicTime.bootSessionUUID(),
+                   let continuous = LidMonotonicTime.seconds()
+                {
+                    sessionStore.save(
+                        continuousClosedAt: continuous,
+                        bootSessionUUID: boot,
+                        maxDurationLatched: true,
+                        wallClosedAt: Date()
+                    )
+                }
             }
         case .open:
             sessionStore.clear()

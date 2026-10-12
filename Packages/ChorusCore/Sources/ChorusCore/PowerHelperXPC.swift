@@ -74,6 +74,10 @@ public struct PowerHelperStatus: Codable, Sendable, Equatable {
     public var watchdogSeconds: Int
     public var lastForcedOffReason: String?
     public var lastChangeAt: Date?
+    /// Ledger recovery health for verified unregister (W1-6 / §14.1).
+    public var recoveryBlocked: Bool
+    public var pendingRestore: Bool
+    public var persistRetryNeeded: Bool
 
     public init(
         protocolVersion: Int = PowerHelperConstants.protocolVersion,
@@ -86,7 +90,10 @@ public struct PowerHelperStatus: Codable, Sendable, Equatable {
         otherUsersHolding: Bool = false,
         watchdogSeconds: Int = Int(PowerHelperConstants.watchdogTimeout),
         lastForcedOffReason: String? = nil,
-        lastChangeAt: Date? = nil
+        lastChangeAt: Date? = nil,
+        recoveryBlocked: Bool = false,
+        pendingRestore: Bool = false,
+        persistRetryNeeded: Bool = false
     ) {
         self.protocolVersion = protocolVersion
         self.helperBuild = helperBuild
@@ -99,6 +106,34 @@ public struct PowerHelperStatus: Codable, Sendable, Equatable {
         self.watchdogSeconds = watchdogSeconds
         self.lastForcedOffReason = lastForcedOffReason
         self.lastChangeAt = lastChangeAt
+        self.recoveryBlocked = recoveryBlocked
+        self.pendingRestore = pendingRestore
+        self.persistRetryNeeded = persistRetryNeeded
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion, helperBuild, sleepDisabled, setByHelper
+        case priorValueWasDisabled, holderCount, callerIsHolder, otherUsersHolding
+        case watchdogSeconds, lastForcedOffReason, lastChangeAt
+        case recoveryBlocked, pendingRestore, persistRetryNeeded
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        protocolVersion = try c.decode(Int.self, forKey: .protocolVersion)
+        helperBuild = try c.decode(String.self, forKey: .helperBuild)
+        sleepDisabled = try c.decodeIfPresent(Bool.self, forKey: .sleepDisabled)
+        setByHelper = try c.decode(Bool.self, forKey: .setByHelper)
+        priorValueWasDisabled = try c.decodeIfPresent(Bool.self, forKey: .priorValueWasDisabled)
+        holderCount = try c.decode(Int.self, forKey: .holderCount)
+        callerIsHolder = try c.decode(Bool.self, forKey: .callerIsHolder)
+        otherUsersHolding = try c.decode(Bool.self, forKey: .otherUsersHolding)
+        watchdogSeconds = try c.decode(Int.self, forKey: .watchdogSeconds)
+        lastForcedOffReason = try c.decodeIfPresent(String.self, forKey: .lastForcedOffReason)
+        lastChangeAt = try c.decodeIfPresent(Date.self, forKey: .lastChangeAt)
+        recoveryBlocked = try c.decodeIfPresent(Bool.self, forKey: .recoveryBlocked) ?? false
+        pendingRestore = try c.decodeIfPresent(Bool.self, forKey: .pendingRestore) ?? false
+        persistRetryNeeded = try c.decodeIfPresent(Bool.self, forKey: .persistRetryNeeded) ?? false
     }
 }
 

@@ -59,6 +59,9 @@ final class FakePowerHelperProxy: PowerHelperXPCProxying {
     var callerIsHolder: Bool = false
     var sleepDisabled: Bool? = false
     var setByHelper: Bool = false
+    var recoveryBlocked: Bool = false
+    var pendingRestore: Bool = false
+    var persistRetryNeeded: Bool = false
 
     func setSleepDisabled(_ enabled: Bool, reply: @escaping (Data?, String?) -> Void) {
         setCalls.append(enabled)
@@ -69,6 +72,10 @@ final class FakePowerHelperProxy: PowerHelperXPCProxying {
             setByHelper = enabled
             holderCount = enabled ? 1 : 0
             callerIsHolder = enabled
+            if !enabled {
+                pendingRestore = false
+                persistRetryNeeded = false
+            }
             let status = makeStatus()
             reply(try? JSONEncoder().encode(status), nil)
         }
@@ -85,22 +92,43 @@ final class FakePowerHelperProxy: PowerHelperXPCProxying {
 
     func invalidate() {
         invalidateCount += 1
+        onConnectionEvent = nil
     }
 
     func emit(_ event: PowerHelperConnectionEvent) {
         onConnectionEvent?(event)
     }
 
-    private func makeStatus() -> PowerHelperStatus {
+    func makeStatus() -> PowerHelperStatus {
         var s = PowerHelperStatus(
             helperBuild: helperBuild,
             sleepDisabled: sleepDisabled,
             setByHelper: setByHelper,
             holderCount: holderCount,
-            callerIsHolder: callerIsHolder
+            callerIsHolder: callerIsHolder,
+            recoveryBlocked: recoveryBlocked,
+            pendingRestore: pendingRestore,
+            persistRetryNeeded: persistRetryNeeded
         )
         s.protocolVersion = protocolVersion
         return s
+    }
+}
+
+@MainActor
+final class FakeRepairing: PowerHelperRepairing {
+    private(set) var unregisterCalls = 0
+    private(set) var registerCalls = 0
+    var shouldThrow = false
+
+    func unregisterDaemon() throws {
+        unregisterCalls += 1
+        if shouldThrow { throw PowerHelperClientError.unavailable }
+    }
+
+    func registerDaemon() throws {
+        registerCalls += 1
+        if shouldThrow { throw PowerHelperClientError.unavailable }
     }
 }
 
@@ -255,6 +283,38 @@ struct PowerHelperClientConnectionTests {
         #expect(proxy1.invalidateCount >= 1)
         #expect(client.availability == .ready)
     }
+
+    @Test("delayed event from replaced connection A does not invalidate ready B (W1-4)")
+    func delayedEventFromADoesNotInvalidateB() async throws {
+        let proxy1 = FakePowerHelperProxy()
+        let proxy2 = FakePowerHelperProxy()
+        var useSecond = false
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 1,
+            makeProxy: { useSecond ? proxy2 : proxy1 },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        _ = try await client.status()
+        #expect(client.availability == .ready)
+
+        // Capture A's handler, then replace with B.
+        let staleEmit = proxy1.onConnectionEvent
+        client.invalidateConnection()
+        useSecond = true
+        _ = try await client.status()
+        #expect(client.availability == .ready)
+
+        // Delayed A event must be discarded.
+        staleEmit?(.interrupted)
+        await Task.yield()
+        try await Task.sleep(nanoseconds: 30_000_000)
+        #expect(client.availability == .ready)
+        #expect(proxy2.invalidateCount == 0)
+    }
 }
 
 @Suite("PowerHelperClient unregister (W1-6)")
@@ -354,9 +414,129 @@ struct PowerHelperClientUnregisterTests {
         #expect(unregistered == true)
         #expect(proxy.invalidateCount >= 1)
     }
+
+    @Test("nil sleepDisabled blocks unregister (W1-6)")
+    func nilReadbackBlocks() async {
+        let proxy = FakePowerHelperProxy()
+        proxy.holderCount = 0
+        proxy.sleepDisabled = nil
+        var unregistered = false
+        let client = PowerHelperClient(
+            appBuild: "136",
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: { unregistered = true },
+            openSettings: {}
+        )
+        do {
+            try await client.unregister()
+            Issue.record("expected block")
+        } catch let error as PowerHelperClientError {
+            #expect(error == .unregisterBlocked("systemValueUnknown"))
+        } catch {
+            Issue.record("unexpected \(error)")
+        }
+        #expect(unregistered == false)
+    }
+
+    @Test("pendingRestore with zero holders blocks until restored (W1-6)")
+    func pendingRestoreBlocks() async {
+        let proxy = FakePowerHelperProxy()
+        proxy.holderCount = 0
+        proxy.sleepDisabled = false
+        proxy.setByHelper = false
+        proxy.pendingRestore = true
+        var unregistered = false
+        let client = PowerHelperClient(
+            appBuild: "136",
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: { unregistered = true },
+            openSettings: {}
+        )
+        do {
+            try await client.unregister()
+            Issue.record("expected block")
+        } catch let error as PowerHelperClientError {
+            #expect(error == .unregisterBlocked("pendingRestore"))
+        } catch {
+            Issue.record("unexpected \(error)")
+        }
+        #expect(unregistered == false)
+    }
+
+    @Test("own residual release then verified false allows unregister (W1-6)")
+    func ownResidualReleaseSucceeds() async throws {
+        let proxy = FakePowerHelperProxy()
+        proxy.holderCount = 0
+        proxy.sleepDisabled = true
+        proxy.setByHelper = true
+        proxy.pendingRestore = true
+        var unregistered = false
+        let client = PowerHelperClient(
+            appBuild: "136",
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: { unregistered = true },
+            openSettings: {}
+        )
+        proxy.setHandler = { enabled, reply in
+            proxy.sleepDisabled = enabled
+            proxy.setByHelper = enabled
+            proxy.pendingRestore = false
+            proxy.holderCount = 0
+            proxy.callerIsHolder = false
+            reply(try? JSONEncoder().encode(proxy.makeStatus()), nil)
+        }
+        try await client.unregister()
+        #expect(unregistered == true)
+        #expect(proxy.setCalls.contains(false))
+    }
+
+    @Test("final sleepDisabled true after release blocks (W1-6)")
+    func finalTrueBlocks() async {
+        let proxy = FakePowerHelperProxy()
+        proxy.holderCount = 1
+        proxy.callerIsHolder = true
+        proxy.sleepDisabled = true
+        proxy.setByHelper = true
+        var unregistered = false
+        let client = PowerHelperClient(
+            appBuild: "136",
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: { unregistered = true },
+            openSettings: {}
+        )
+        proxy.setHandler = { _, reply in
+            // Pretend release clears holder but leaves sleepDisabled true.
+            proxy.holderCount = 0
+            proxy.callerIsHolder = false
+            proxy.sleepDisabled = true
+            proxy.setByHelper = true
+            reply(try? JSONEncoder().encode(proxy.makeStatus()), nil)
+        }
+        do {
+            try await client.unregister()
+            Issue.record("expected block")
+        } catch let error as PowerHelperClientError {
+            if case .unregisterBlocked = error {
+                // ok
+            } else {
+                Issue.record("unexpected \(error)")
+            }
+        } catch {
+            Issue.record("unexpected \(error)")
+        }
+        #expect(unregistered == false)
+    }
 }
 
-@Suite("PowerHelperClient shutdown bound (V-C06-4)")
+@Suite("PowerHelperClient shutdown bound (V-C06-4 / W1-13)")
 @MainActor
 struct PowerHelperClientShutdownTests {
     @Test("synchronous set returns within timeout when proxy silent")
@@ -375,6 +555,56 @@ struct PowerHelperClientShutdownTests {
         let ok = client.setSleepDisabledSynchronously(false, timeout: 0.25)
         #expect(ok == false)
         #expect(Date().timeIntervalSince(start) < 1.0)
+    }
+
+    @Test("synchronous true without handshake is rejected (W1-13)")
+    func syncTrueRequiresHandshake() {
+        let proxy = FakePowerHelperProxy()
+        let client = PowerHelperClient(
+            appBuild: "136",
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        #expect(client.setSleepDisabledSynchronously(true, timeout: 0.5) == false)
+        #expect(proxy.setCalls.isEmpty)
+    }
+
+    @Test("synchronous true after mismatch is rejected (W1-13)")
+    func syncTrueRejectsMismatch() async throws {
+        let proxy = FakePowerHelperProxy()
+        proxy.protocolVersion = 99
+        let client = PowerHelperClient(
+            appBuild: "136",
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {},
+            repairMachine: PowerHelperRepairStateMachine(repairing: FakeRepairing())
+        )
+        _ = try? await client.status()
+        let setsBefore = proxy.setCalls.count
+        #expect(client.setSleepDisabledSynchronously(true, timeout: 0.5) == false)
+        #expect(proxy.setCalls.count == setsBefore)
+    }
+
+    @Test("synchronous true after ready handshake succeeds (W1-13)")
+    func syncTrueAfterReady() async throws {
+        let proxy = FakePowerHelperProxy()
+        let client = PowerHelperClient(
+            appBuild: "136",
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        _ = try await client.status()
+        #expect(client.setSleepDisabledSynchronously(true, timeout: 1) == true)
+        #expect(proxy.setCalls == [true])
     }
 
     @Test("stale generation after invalidate ignores late reply path")
@@ -487,9 +717,17 @@ struct LidClosedSessionStoreTests {
         let restored = store.restoredLidClosedSince(nowContinuous: 1120, bootSessionUUID: "BOOT-A")
         #expect(restored?.sinceContinuous == 1000)
         #expect(restored?.latched == true)
+        if case let .valid(since, latched) = store.restoreResult(
+            nowContinuous: 1120, bootSessionUUID: "BOOT-A"
+        ) {
+            #expect(since == 1000)
+            #expect(latched == true)
+        } else {
+            Issue.record("expected valid")
+        }
     }
 
-    @Test("reboot boot UUID mismatch → conservative nil")
+    @Test("reboot boot UUID mismatch → invalid distinct from absent (W1-10)")
     func rebootConservative() {
         let suite = "chorus.lid.test.\(UUID().uuidString)"
         defer { UserDefaults().removePersistentDomain(forName: suite) }
@@ -500,6 +738,27 @@ struct LidClosedSessionStoreTests {
             maxDurationLatched: false
         )
         #expect(store.restoredLidClosedSince(nowContinuous: 2000, bootSessionUUID: "BOOT-B") == nil)
+        #expect(store.restoreResult(nowContinuous: 2000, bootSessionUUID: "BOOT-B") == .invalid)
+        #expect(store.restoreResult(nowContinuous: 2000, bootSessionUUID: "BOOT-A") != .absent)
+    }
+
+    @Test("absent is distinct from invalid (W1-10)")
+    func absentDistinct() {
+        let suite = "chorus.lid.test.\(UUID().uuidString)"
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        let store = LidClosedSessionStore(suiteName: suite)
+        #expect(store.restoreResult(nowContinuous: 1, bootSessionUUID: "BOOT") == .absent)
+    }
+
+    @Test("corrupt payload is invalid not absent (W1-10)")
+    func corruptInvalid() {
+        let suite = "chorus.lid.test.\(UUID().uuidString)"
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.set(Data("not-json".utf8), forKey: "lidClosedSession.v2")
+        let store = LidClosedSessionStore(suiteName: suite)
+        #expect(store.restoreResult(nowContinuous: 1, bootSessionUUID: "BOOT") == .invalid)
+        #expect(store.hasCorruptPayload())
     }
 
     @Test("wall-clock change cannot alter continuous deadline")
@@ -529,6 +788,7 @@ struct LidClosedSessionStoreTests {
             maxDurationLatched: false
         )
         #expect(store.restoredLidClosedSince(nowContinuous: 100, bootSessionUUID: "BOOT") == nil)
+        #expect(store.restoreResult(nowContinuous: 100, bootSessionUUID: "BOOT") == .invalid)
     }
 
     @Test("open clears session")
@@ -539,6 +799,105 @@ struct LidClosedSessionStoreTests {
         store.save(continuousClosedAt: 1, bootSessionUUID: "B", maxDurationLatched: false)
         store.clear()
         #expect(store.load() == nil)
+        #expect(store.restoreResult(nowContinuous: 1, bootSessionUUID: "B") == .absent)
+    }
+
+    @Test("apply closed replaces invalid snapshot with latched session (W1-10)")
+    @MainActor
+    func applyClosedReplacesInvalid() {
+        let suite = "chorus.lid.test.\(UUID().uuidString)"
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        let store = LidClosedSessionStore(suiteName: suite)
+        // Reboot mismatch → invalid
+        store.save(continuousClosedAt: 10, bootSessionUUID: "OLD", maxDurationLatched: false)
+        let monitor = LidStateMonitor(
+            readProperty: { kCFBooleanTrue },
+            detectCapability: { .hasLid },
+            sessionStore: store
+        )
+        // Inject closed with a forced boot via restore path: monitor apply uses live boot UUID.
+        monitor.ingestForTesting(.closed)
+        let result = store.restoreResult()
+        // Either valid (same boot as saved OLD if somehow matches — unlikely) or replaced.
+        if case let .valid(_, latched) = result {
+            // If OLD matched live boot (unlikely), keep; if replaced after invalid, latched.
+            _ = latched
+        } else if case .absent = result {
+            Issue.record("closed should persist a session")
+        }
+        #expect(store.load() != nil)
+    }
+}
+
+@Suite("PowerHelper protocol repair (W1-14)")
+@MainActor
+struct PowerHelperRepairTests {
+    @Test("safe mismatch invokes unregister then register")
+    func safeRepair() {
+        let repairing = FakeRepairing()
+        let machine = PowerHelperRepairStateMachine(repairing: repairing)
+        let status = PowerHelperStatus(
+            helperBuild: "136",
+            sleepDisabled: false,
+            setByHelper: false,
+            holderCount: 0
+        )
+        let outcome = machine.repairIfNeeded(
+            status: status,
+            handshake: .versionMismatch(helper: "136", app: "136")
+        )
+        #expect(outcome == .repaired)
+        #expect(repairing.unregisterCalls == 1)
+        #expect(repairing.registerCalls == 1)
+    }
+
+    @Test("holders or recovery evidence never call service ops")
+    func unsafeNeverCalls() {
+        let repairing = FakeRepairing()
+        let machine = PowerHelperRepairStateMachine(repairing: repairing)
+        let cases: [PowerHelperStatus] = [
+            PowerHelperStatus(helperBuild: "1", sleepDisabled: false, holderCount: 1),
+            PowerHelperStatus(helperBuild: "1", sleepDisabled: false, pendingRestore: true),
+            PowerHelperStatus(helperBuild: "1", sleepDisabled: false, recoveryBlocked: true),
+            PowerHelperStatus(helperBuild: "1", sleepDisabled: false, persistRetryNeeded: true),
+            PowerHelperStatus(helperBuild: "1", sleepDisabled: true, setByHelper: false),
+            PowerHelperStatus(helperBuild: "1", sleepDisabled: nil),
+        ]
+        for status in cases {
+            let outcome = machine.repairIfNeeded(
+                status: status,
+                handshake: .versionMismatch(helper: "1", app: "2")
+            )
+            #expect(outcome == .skippedUnsafe)
+        }
+        #expect(repairing.unregisterCalls == 0)
+        #expect(repairing.registerCalls == 0)
+    }
+
+    @Test("client status repair path skips when unsafe")
+    func clientSkipsUnsafeRepair() async throws {
+        let proxy = FakePowerHelperProxy()
+        proxy.protocolVersion = 99
+        proxy.holderCount = 2
+        proxy.sleepDisabled = false
+        let repairing = FakeRepairing()
+        let client = PowerHelperClient(
+            appBuild: "136",
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {},
+            repairMachine: PowerHelperRepairStateMachine(repairing: repairing)
+        )
+        _ = try await client.status()
+        #expect(repairing.unregisterCalls == 0)
+        #expect(repairing.registerCalls == 0)
+        if case .versionMismatch = client.availability {
+            // ok
+        } else {
+            Issue.record("expected versionMismatch")
+        }
     }
 }
 

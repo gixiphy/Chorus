@@ -192,7 +192,10 @@ struct PowerHelperXPCTests {
             callerIsHolder: true,
             otherUsersHolding: false,
             lastForcedOffReason: "watchdog",
-            lastChangeAt: Date(timeIntervalSince1970: 1_700_000_000)
+            lastChangeAt: Date(timeIntervalSince1970: 1_700_000_000),
+            recoveryBlocked: true,
+            pendingRestore: true,
+            persistRetryNeeded: true
         )
         let data = try JSONEncoder().encode(status)
         let decoded = try JSONDecoder().decode(PowerHelperStatus.self, from: data)
@@ -209,6 +212,9 @@ struct PowerHelperXPCTests {
         #expect(decoded.sleepDisabled == nil)
         #expect(decoded.lastForcedOffReason == nil)
         #expect(decoded.priorValueWasDisabled == nil)
+        #expect(decoded.recoveryBlocked == false)
+        #expect(decoded.pendingRestore == false)
+        #expect(decoded.persistRetryNeeded == false)
     }
 
     @Test("W0-5 Release/Debug requirement selection and SecRequirement syntax")
