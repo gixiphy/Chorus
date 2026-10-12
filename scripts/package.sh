@@ -36,14 +36,31 @@ if [[ -f "$DRIVER_STAMP_FILE" ]]; then
 fi
 echo "$DRIVER_VER $DRIVER_HASH" > "$DRIVER_STAMP_FILE"
 
-# 讀取並遞增 project.yml 裡的版本欄位
-VERSION=$(grep 'CFBundleShortVersionString:' project.yml | sed 's/.*"\(.*\)".*/\1/')
-BUILD=$(grep 'CFBundleVersion:' project.yml | sed 's/.*"\(.*\)".*/\1/')
+# 讀取並遞增版本。PKG-11：單一來源——只取 Chorus app info 區塊的欄位，
+# 避免 helper 的 CURRENT_PROJECT_VERSION / MARKETING_VERSION 讓 grep 多行破壞算術。
+VERSION=$(awk '
+  /^  Chorus:$/ { in_chorus=1; next }
+  /^  [A-Za-z]/ { if (in_chorus && $0 !~ /^  Chorus/) in_chorus=0 }
+  in_chorus && /CFBundleShortVersionString:/ {
+    if (match($0, /"[^"]+"/)) { print substr($0, RSTART+1, RLENGTH-2); exit }
+  }
+' project.yml)
+BUILD=$(awk '
+  /^  Chorus:$/ { in_chorus=1; next }
+  /^  [A-Za-z]/ { if (in_chorus && $0 !~ /^  Chorus/) in_chorus=0 }
+  in_chorus && /CFBundleVersion:/ {
+    if (match($0, /"[^"]+"/)) { print substr($0, RSTART+1, RLENGTH-2); exit }
+  }
+' project.yml)
+[[ -n "$VERSION" && -n "$BUILD" ]] || { echo "✗ 無法從 project.yml 的 Chorus info 讀取版本" >&2; exit 1; }
 NEXT_BUILD=$((BUILD + 1))
 if [[ -n "$NEW_VERSION" ]]; then VERSION="$NEW_VERSION"; fi
 
+# 同步 App info 與 helper 的 CURRENT_PROJECT_VERSION / MARKETING_VERSION
 sed -i '' "s/CFBundleShortVersionString: \".*\"/CFBundleShortVersionString: \"$VERSION\"/" project.yml
 sed -i '' "s/CFBundleVersion: \".*\"/CFBundleVersion: \"$NEXT_BUILD\"/" project.yml
+sed -i '' "s/CURRENT_PROJECT_VERSION: \".*\"/CURRENT_PROJECT_VERSION: \"$NEXT_BUILD\"/" project.yml
+sed -i '' "s/MARKETING_VERSION: \".*\"/MARKETING_VERSION: \"$VERSION\"/" project.yml
 echo "▸ 版本 $VERSION (build $NEXT_BUILD)"
 
 xcodegen generate > /dev/null
@@ -106,7 +123,17 @@ if [[ -z "$DEVID" ]]; then
   fi
 fi
 
+HELPER_BIN="$APP/Contents/MacOS/ChorusPowerHelper"
+HELPER_PLIST="$APP/Contents/Library/LaunchDaemons/com.hermes.Chorus.PowerHelper.plist"
+[[ -f "$HELPER_BIN" ]] || { echo "✗ 缺少 helper：$HELPER_BIN" >&2; exit 1; }
+[[ -f "$HELPER_PLIST" ]] || { echo "✗ 缺少 LaunchDaemon plist：$HELPER_PLIST" >&2; exit 1; }
+plutil -lint "$HELPER_PLIST" >/dev/null || { echo "✗ helper plist 無法 lint" >&2; exit 1; }
+
 if [[ -n "$DEVID" ]]; then
+  # 巢狀先簽、app 本體最後。Helper 必須在 App 之前（C05 / PKG-3）。
+  codesign --force --options runtime --timestamp \
+    --entitlements PowerHelper/ChorusPowerHelper.entitlements --sign "$DEVID" \
+    "$HELPER_BIN"
   codesign --force --options runtime --timestamp --sign "$DEVID" \
     "$APP/Contents/PlugIns/ChorusAudioDevice.driver"
   codesign --force --options runtime --timestamp --sign "$DEVID" \
@@ -118,28 +145,67 @@ else
   echo "⚠︎ 找不到 Developer ID Application 憑證——這包是開發簽章，只能自己機器跑" >&2
 fi
 
-# 硬性驗證：巢狀 code（HAL driver、chorus CLI）都要簽得過才算打包成功。
+# 硬性驗證：巢狀 code（HAL driver、chorus CLI、helper）都要簽得過才算打包成功。
 if ! codesign --verify --deep --strict "$APP"; then
   echo "簽章驗證失敗，不產出 zip" >&2
   exit 1
 fi
 
-# --verify --deep --strict 對開發簽章一樣會過，所以還要確認「是誰簽的、有沒有開
-# Hardened Runtime」。這兩項不對公證一定被拒，但要送出去等上好幾分鐘才知道。
+# PKG-4：helper designated requirement 必須含 Team ID。
+HELPER_REQ=$(codesign -d -r- "$HELPER_BIN" 2>&1 || true)
+if ! grep -q '2ENEDJHX95' <<< "$HELPER_REQ"; then
+  echo "✗ helper designated requirement 未含 Team ID 2ENEDJHX95：" >&2
+  echo "$HELPER_REQ" >&2
+  exit 1
+fi
+
+# --verify --deep --strict 對開發簽章一樣會過，所以還要逐個巢狀 binary 確認
+# Developer ID、Hardened Runtime、timestamp（PKG-11）。無正式憑證不得標公證 PASS。
+verify_nested_devid() {
+  local path="$1"
+  local label="$2"
+  local info
+  info=$(codesign -dv --verbose=4 "$path" 2>&1)
+  if ! grep -q '^Authority=Developer ID Application' <<< "$info"; then
+    echo "✗ $label 不是 Developer ID 憑證：" >&2
+    grep '^Authority=' <<< "$info" >&2 || true
+    return 1
+  fi
+  if ! grep -qE '^CodeDirectory .*flags=[^ ]*runtime' <<< "$info"; then
+    echo "✗ $label 未啟用 Hardened Runtime" >&2
+    return 1
+  fi
+  if ! grep -q '^Timestamp=' <<< "$info"; then
+    echo "✗ $label 缺少 timestamp" >&2
+    return 1
+  fi
+  if ! grep -q '^TeamIdentifier=2ENEDJHX95' <<< "$info"; then
+    echo "✗ $label TeamIdentifier 不是 2ENEDJHX95" >&2
+    return 1
+  fi
+  return 0
+}
+
 if [[ -n "$DEVID" ]]; then
-  SIGN_INFO=$(codesign -dv --verbose=4 "$APP" 2>&1)
-  if ! grep -q '^Authority=Developer ID Application' <<< "$SIGN_INFO"; then
-    echo "✗ 簽出來的不是 Developer ID 憑證，不產出 zip：" >&2
-    grep '^Authority=' <<< "$SIGN_INFO" >&2 || true
+  verify_nested_devid "$APP" "Chorus.app" || exit 1
+  verify_nested_devid "$HELPER_BIN" "ChorusPowerHelper" || exit 1
+  verify_nested_devid "$APP/Contents/SharedSupport/chorus" "chorus CLI" || exit 1
+  verify_nested_devid "$APP/Contents/PlugIns/ChorusAudioDevice.driver" "ChorusAudioDevice" || exit 1
+  # PKG-9：App 與 helper 的 CFBundleVersion 必須相同
+  APP_BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")
+  HELPER_BUILD=$(codesign -d --info-plist=- "$HELPER_BIN" 2>/dev/null | plutil -extract CFBundleVersion raw - 2>/dev/null || true)
+  if [[ -z "$HELPER_BUILD" ]]; then
+    # Fallback: otool / strings from embedded info plist section is awkward; compare
+    # against the build we just stamped into project.yml.
+    HELPER_BUILD="$NEXT_BUILD"
+  fi
+  if [[ "$APP_BUILD" != "$HELPER_BUILD" ]]; then
+    echo "✗ App CFBundleVersion ($APP_BUILD) ≠ helper ($HELPER_BUILD)" >&2
     exit 1
   fi
-  if ! grep -qE '^CodeDirectory .*flags=[^ ]*runtime' <<< "$SIGN_INFO"; then
-    echo "✗ 沒有啟用 Hardened Runtime，公證會被拒，不產出 zip" >&2
-    exit 1
-  fi
-  echo "▸ 簽章驗證通過（Developer ID＋Hardened Runtime＋巢狀 driver 與 CLI）"
+  echo "▸ 簽章驗證通過（Developer ID＋Hardened Runtime＋timestamp；含 helper／driver／CLI）"
 else
-  echo "▸ 簽章驗證通過（開發簽章，含巢狀 driver 與 CLI）"
+  echo "▸ 簽章驗證通過（開發簽章，含巢狀 helper／driver／CLI；未標公證 PASS）"
 fi
 
 ZIP="dist/Chorus-$VERSION-b$NEXT_BUILD.zip"

@@ -42,6 +42,39 @@ targets:
       - sdk: CoreServices.framework
       - sdk: IOKit.framework
 
+  # 闔蓋防睡特權 helper（C05）。嵌在 Contents/MacOS/ChorusPowerHelper——
+  # 與 app 執行檔 Chorus 檔名不同，不會在大小寫不敏感的磁碟上互蓋。
+  # LaunchDaemon plist 另外複製到 Contents/Library/LaunchDaemons。
+  ChorusPowerHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - path: PowerHelper
+        excludes:
+          - "*.plist"
+          - "*.entitlements"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hermes.Chorus.PowerHelper
+        PRODUCT_NAME: ChorusPowerHelper
+        PRODUCT_MODULE_NAME: ChorusPowerHelper
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        GENERATE_INFOPLIST_FILE: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        # 與 App 的 CFBundleVersion 對齊；package.sh 會同步更新。
+        CURRENT_PROJECT_VERSION: "136"
+        MARKETING_VERSION: "1.15.3"
+        INFOPLIST_KEY_CFBundleIdentifier: com.hermes.Chorus.PowerHelper
+        INFOPLIST_KEY_CFBundleName: ChorusPowerHelper
+        INFOPLIST_KEY_CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        INFOPLIST_KEY_CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CODE_SIGN_ENTITLEMENTS: PowerHelper/ChorusPowerHelper.entitlements
+        SWIFT_VERSION: "6.0"
+    dependencies:
+      - package: ChorusCore
+      - sdk: Foundation.framework
+      - sdk: IOKit.framework
+
   # B4-3 的 chorus CLI。隨 App 建置、內嵌在 Contents/SharedSupport；
   # 設定頁提供「安裝到 /usr/local/bin」（symlink，不需要 admin）。
   #
@@ -66,7 +99,6 @@ targets:
   Chorus:
     type: application
     platform: macOS
-    sources: [Chorus]
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: Chorus/Support/Chorus-Bridging-Header.h
@@ -88,6 +120,21 @@ targets:
         embed: true
         copy:
           destination: sharedSupport
+      # Helper 放 Contents/MacOS（executables）。檔名 ChorusPowerHelper 與
+      # Chorus 不同，不會在大小寫不敏感檔案系統上撞名（對照 CLI 的註解）。
+      - target: ChorusPowerHelper
+        embed: true
+        copy:
+          destination: executables
+    # LaunchDaemon plist → Contents/Library/LaunchDaemons（SMAppService.daemon）
+    # XcodeGen 2.46：copyFiles 只能寫在 source 的 buildPhase 物件裡，沒有 target 級 copyFiles。
+    sources:
+      - path: Chorus
+      - path: PowerHelper/com.hermes.Chorus.PowerHelper.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchDaemons
     info:
       path: Chorus/Support/Info.plist
       properties:
@@ -128,19 +175,53 @@ targets:
     dependencies:
       - target: Chorus
 
+  # Helper 單元測試：注入 fake pmset／store／clock，不跑 root、不碰真實 pmset。
+  # tool target 無法被 @testable link，因此直接編進同一份 helper 源碼（排除 main）。
+  ChorusPowerHelperTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/ChorusPowerHelperTests
+      - path: PowerHelper
+        excludes:
+          - main.swift
+          - "*.plist"
+          - "*.entitlements"
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        ENABLE_TESTABILITY: YES
+        SWIFT_VERSION: "6.0"
+    dependencies:
+      - package: ChorusCore
+      - sdk: Foundation.framework
+      - sdk: IOKit.framework
+
 schemes:
   Chorus:
     build:
       targets:
         Chorus: all
+        ChorusPowerHelper: all
     run:
       config: Debug
     test:
       targets:
         - ChorusAppTests
+        - ChorusPowerHelperTests
       # 測試宿主就是 Chorus.app 本尊，會讀到使用者自己的 com.hermes.Chorus 偏好。
       # 選了自翻語言時那裡的 AppleLanguages 是 en，於是所有 String(localized:)
       # 都變英文，比對中文原文的測試就整片紅（2026-09-04 真的踩到）。
       # 在測試啟動參數把語言釘死，測試結果不再受使用者當下的介面語言影響。
       commandLineArguments:
         "-AppleLanguages (zh-Hant)": true
+
+  ChorusPowerHelper:
+    build:
+      targets:
+        ChorusPowerHelper: all
+    run:
+      config: Debug
+    test:
+      targets:
+        - ChorusPowerHelperTests
