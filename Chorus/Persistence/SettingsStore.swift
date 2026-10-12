@@ -564,18 +564,28 @@ final class SettingsStore {
         didSet { defaults.set(keepAwakeAgentIdleMinutes.rawValue, forKey: Key.keepAwakeAgentIdleMinutes) }
     }
 
-    /// 闔蓋防睡設定（spec §8.1）；讀寫時 `normalized()`。
+    /// 闔蓋防睡設定（spec §8.1）；讀寫時 `normalized()`，再套 Fi A3 核准界線（≤3h、AC 也限時）。
     var keepAwakeLidGuard: LidSleepSettings {
         didSet {
-            let normalized = keepAwakeLidGuard.normalized()
-            if normalized != keepAwakeLidGuard {
-                keepAwakeLidGuard = normalized
+            let approved = Self.approvedLidGuardSettings(keepAwakeLidGuard)
+            if approved != keepAwakeLidGuard {
+                keepAwakeLidGuard = approved
                 return
             }
-            if let data = try? JSONEncoder().encode(normalized) {
+            if let data = try? JSONEncoder().encode(approved) {
                 defaults.set(data, forKey: Key.keepAwakeLidGuard)
             }
         }
+    }
+
+    /// Fi A3／C8-3：生產上限 3h（含 AC）；舊存的 4h／AC 豁免保守遷移。
+    static func approvedLidGuardSettings(_ raw: LidSleepSettings) -> LidSleepSettings {
+        var copy = raw.normalized()
+        if copy.maxLidClosedSeconds > 3 * 3600 {
+            copy.maxLidClosedSeconds = 3 * 3600
+        }
+        copy.limitDurationOnAC = true
+        return copy
     }
 
     /// Orca 工作來源（預設開）。
@@ -815,7 +825,7 @@ final class SettingsStore {
         }
         if let data = defaults.data(forKey: Key.keepAwakeLidGuard),
            let decoded = try? JSONDecoder().decode(LidSleepSettings.self, from: data) {
-            keepAwakeLidGuard = decoded.normalized()
+            keepAwakeLidGuard = Self.approvedLidGuardSettings(decoded)
         } else {
             keepAwakeLidGuard = LidSleepSettings()
         }

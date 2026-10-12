@@ -15,6 +15,11 @@ struct LidSleepGuardControllerTests {
         var holderCount = 0
         var otherUsersHolding = false
         var forcedOffReason: String?
+        var recoveryBlocked = false
+        var pendingRestore = false
+        var persistRetryNeeded = false
+        /// When true, status() alone promotes `.connecting` → `.ready` (C8-1).
+        var promoteOnStatus = false
         var setCalls: [Bool] = []
         var statusCalls = 0
         var syncCalls: [(Bool, TimeInterval)] = []
@@ -22,6 +27,8 @@ struct LidSleepGuardControllerTests {
         var hangSet = false
         var hangSync = false
         var setDelay: Duration = .seconds(0)
+        /// After a successful set(true), next status/set returns externalInterference evidence.
+        var tripExternalInterferenceAfterArm = false
 
         func refreshAvailability() {}
         func register() async throws {}
@@ -40,6 +47,15 @@ struct LidSleepGuardControllerTests {
                 failNextSet = false
                 throw PowerHelperClientError.remote("refused")
             }
+            if on, tripExternalInterferenceAfterArm, sleepDisabled {
+                // Heartbeat / re-acquire after external cleared holders.
+                sleepDisabled = false
+                setByHelper = false
+                callerIsHolder = false
+                holderCount = 0
+                forcedOffReason = "externalInterference"
+                return makeStatus()
+            }
             sleepDisabled = on
             setByHelper = on || setByHelper
             callerIsHolder = on
@@ -50,6 +66,10 @@ struct LidSleepGuardControllerTests {
 
         func status() async throws -> PowerHelperStatus {
             statusCalls += 1
+            if promoteOnStatus, case .connecting = availability {
+                availability = .ready
+                onAvailabilityChange?()
+            }
             return makeStatus()
         }
 
@@ -75,8 +95,19 @@ struct LidSleepGuardControllerTests {
                 holderCount: holderCount,
                 callerIsHolder: callerIsHolder,
                 otherUsersHolding: otherUsersHolding,
-                lastForcedOffReason: forcedOffReason
+                lastForcedOffReason: forcedOffReason,
+                recoveryBlocked: recoveryBlocked,
+                pendingRestore: pendingRestore,
+                persistRetryNeeded: persistRetryNeeded
             )
+        }
+
+        func injectExternalInterference() {
+            sleepDisabled = false
+            setByHelper = false
+            callerIsHolder = false
+            holderCount = 0
+            forcedOffReason = "externalInterference"
         }
     }
 
@@ -108,6 +139,7 @@ struct LidSleepGuardControllerTests {
         var released: [(LidBlockReason?, Bool)] = []
         var leftoverRestored = 0
         var leftoverForeign = 0
+        var leftoverRecovery = 0
         var forcedOff: [String] = []
         var helperApproval = 0
 
@@ -119,6 +151,7 @@ struct LidSleepGuardControllerTests {
         func notifyLidGuardHelperNeedsApproval() { helperApproval += 1 }
         func notifyLeftoverRestored() { leftoverRestored += 1 }
         func notifyLeftoverForeign() { leftoverForeign += 1 }
+        func notifyLeftoverRecoveryNeeded() { leftoverRecovery += 1 }
         func notifyHelperForcedOff(reason: String) { forcedOff.append(reason) }
     }
 
@@ -140,7 +173,9 @@ struct LidSleepGuardControllerTests {
         heartbeat: TimeInterval = 0.15
     ) -> (LidSleepGuardController, FakeHelper, FakeLid, FakeNotifier) {
         let store = settings ?? makeSettings()
-        store.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        if settings == nil {
+            store.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        }
         let controller = LidSleepGuardController(
             settings: store,
             helper: helper,
@@ -378,7 +413,7 @@ struct LidSleepGuardControllerTests {
         }
     }
 
-    @Test("armed notification throttled once per busy period / 30min (V-C08-4)")
+    @Test("armed notification throttled once per busy period / 30min (V-C08-4 / C8-5)")
     func armedThrottle() async throws {
         var time = 1_000.0
         let helper = FakeHelper()
@@ -435,6 +470,247 @@ struct LidSleepGuardControllerTests {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(notifier.armed.count == 2)
+    }
+
+    @Test("C8-1 connecting helper handshakes via status() then arms")
+    func connectingHandshakeArms() async throws {
+        let helper = FakeHelper()
+        helper.availability = .connecting
+        helper.promoteOnStatus = true
+        let (controller, _, _, _) = makeController(helper: helper, heartbeat: 60)
+        defer { controller.shutdown() }
+
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        let deadline = ContinuousClock.now + .seconds(3)
+        while helper.setCalls.filter({ $0 }).isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(helper.statusCalls >= 1)
+        #expect(helper.availability == .ready)
+        #expect(helper.setCalls.filter({ $0 }).count >= 1)
+        #expect(controller.wantsSleepDisabled)
+    }
+
+    @Test("C8-1 E2E named instance never handshakes")
+    func e2eNoHandshake() async throws {
+        let helper = FakeHelper()
+        helper.availability = .connecting
+        helper.promoteOnStatus = true
+        let (controller, _, _, _) = makeController(helper: helper, e2e: true)
+        defer { controller.shutdown() }
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(helper.statusCalls == 0)
+        #expect(helper.setCalls.isEmpty)
+    }
+
+    @Test("C8-2 externalInterference latches — no later set(true)")
+    func externalInterferenceLatches() async throws {
+        let helper = FakeHelper()
+        let notifier = FakeNotifier()
+        let (controller, _, _, _) = makeController(
+            helper: helper, notifier: notifier, heartbeat: 0.12
+        )
+        defer { controller.shutdown() }
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        let armDeadline = ContinuousClock.now + .seconds(2)
+        while !controller.isActuallyHoldingSleepDisabled, ContinuousClock.now < armDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(controller.isActuallyHoldingSleepDisabled)
+        let truesBefore = helper.setCalls.filter({ $0 }).count
+
+        helper.injectExternalInterference()
+        await controller.refreshFromHelper()
+        #expect(notifier.forcedOff.contains("externalInterference"))
+        #expect(!controller.isActuallyHoldingSleepDisabled)
+
+        // Multiple heartbeat intervals must not re-compete with set(true).
+        try await Task.sleep(for: .milliseconds(500))
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(helper.setCalls.filter({ $0 }).count == truesBefore)
+        if case let .unavailable(.error(msg)) = controller.phase {
+            #expect(msg == "externalInterference")
+        } else {
+            Issue.record("expected unavailable(externalInterference), got \(controller.phase)")
+        }
+    }
+
+    @Test("C8-3 saved 4h + AC exemption clamped; releases at 3h on AC")
+    func maxThreeHoursIncludingAC() async throws {
+        var time = 1_000.0
+        let store = makeSettings()
+        // Bypass store clamp by writing raw JSON then loading through approved path.
+        store.keepAwakeLidGuard = LidSleepSettings(
+            enabled: true,
+            maxLidClosedSeconds: 4 * 3600,
+            limitDurationOnAC: false
+        )
+        #expect(store.keepAwakeLidGuard.maxLidClosedSeconds == 3 * 3600)
+        #expect(store.keepAwakeLidGuard.limitDurationOnAC)
+
+        let lid = FakeLid()
+        lid.reading = .closed
+        let helper = FakeHelper()
+        let (controller, _, _, _) = makeController(
+            helper: helper, lid: lid, settings: store, now: { time }, heartbeat: 60
+        )
+        defer { controller.shutdown() }
+
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        let armDeadline = ContinuousClock.now + .seconds(2)
+        while helper.setCalls.filter({ $0 }).isEmpty, ContinuousClock.now < armDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(controller.wantsSleepDisabled)
+
+        // Just under 3h — still holding.
+        time += 3 * 3600 - 1
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        #expect(controller.wantsSleepDisabled)
+
+        // At 3h on AC — must release (Fi A3; no AC bypass).
+        time += 2
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        #expect(!controller.wantsSleepDisabled)
+        #expect(controller.state.maxDurationLatched)
+        if case .blocked(.maxDuration) = controller.phase {
+            // ok
+        } else {
+            Issue.record("expected blocked(maxDuration), got \(controller.phase)")
+        }
+    }
+
+    @Test("C8-4 recoveryBlocked leftover is not foreign; no set(true)")
+    func recoveryBlockedLeftover() async throws {
+        let helper = FakeHelper()
+        helper.sleepDisabled = true
+        helper.setByHelper = false
+        helper.holderCount = 0
+        helper.callerIsHolder = false
+        helper.recoveryBlocked = true
+        let notifier = FakeNotifier()
+        let (controller, _, _, _) = makeController(
+            helper: helper, notifier: notifier, probe: { true }
+        )
+        defer { controller.shutdown() }
+        await controller.detectLeftover()
+        #expect(controller.leftover == .recoveryBlocked)
+        #expect(notifier.leftoverRecovery == 1)
+        #expect(notifier.leftoverForeign == 0)
+        #expect(helper.setCalls.filter({ $0 }).isEmpty)
+
+        helper.recoveryBlocked = false
+        helper.pendingRestore = true
+        helper.setCalls = []
+        notifier.leftoverRecovery = 0
+        await controller.detectLeftover()
+        #expect(controller.leftover == .recoveryBlocked)
+        #expect(helper.setCalls.filter({ $0 }).isEmpty)
+
+        helper.pendingRestore = false
+        helper.persistRetryNeeded = true
+        await controller.detectLeftover()
+        #expect(controller.leftover == .recoveryBlocked)
+        #expect(helper.setCalls.filter({ $0 }).isEmpty)
+    }
+
+    @Test("C8-5 continuous busy source change + rearm still one armed notice")
+    func armedOncePerBusyPeriodDespiteSourceChange() async throws {
+        var time = 2_000.0
+        let helper = FakeHelper()
+        let notifier = FakeNotifier()
+        let (controller, _, _, _) = makeController(
+            helper: helper, notifier: notifier, now: { time }, heartbeat: 60
+        )
+        defer { controller.shutdown() }
+
+        controller.update(
+            agentModeActive: true, busy: busyState("a"), power: acPower(), existingFloor: .percent20
+        )
+        let armDeadline = ContinuousClock.now + .seconds(2)
+        while notifier.armed.isEmpty, ContinuousClock.now < armDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(notifier.armed.count == 1)
+
+        // Change contributing IDs while aggregate busy stays true.
+        controller.update(
+            agentModeActive: true, busy: busyState("b"), power: acPower(), existingFloor: .percent20
+        )
+        try await Task.sleep(for: .milliseconds(100))
+
+        // Thermal disarm then rearm after 31 minutes — same busy period.
+        time += 31 * 60
+        controller.update(
+            agentModeActive: true,
+            busy: busyState("b"),
+            power: PowerSnapshot(
+                hasInternalBattery: true, onBattery: false, percent: 80, thermal: .serious
+            ),
+            existingFloor: .percent20
+        )
+        try await Task.sleep(for: .milliseconds(100))
+        controller.update(
+            agentModeActive: true, busy: busyState("c"), power: acPower(), existingFloor: .percent20
+        )
+        let rearmDeadline = ContinuousClock.now + .seconds(2)
+        while !controller.wantsSleepDisabled, ContinuousClock.now < rearmDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(notifier.armed.count == 1)
+    }
+
+    @Test("C8-6 confirmed no-lid capability exposed; saved enabled cannot arm")
+    func noLidCapabilityAndForbidArm() async throws {
+        let helper = FakeHelper()
+        let lid = FakeLid()
+        lid.reading = .noLid
+        let store = makeSettings()
+        store.keepAwakeLidGuard = LidSleepSettings(enabled: false)
+        let controller = LidSleepGuardController(
+            settings: store,
+            helper: helper,
+            lid: lid,
+            notifier: FakeNotifier(),
+            now: { 1_000 },
+            e2eNamedInstance: false,
+            sessionStore: LidClosedSessionStore(suiteName: "nolid-\(UUID().uuidString)"),
+            sleepDisabledProbe: { nil },
+            heartbeatInterval: 60
+        )
+        defer { controller.shutdown() }
+        #expect(controller.isConfirmedNoLid)
+        #expect(controller.lidReading == .noLid)
+
+        store.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        controller.settings = store.keepAwakeLidGuard
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(helper.setCalls.filter({ $0 }).isEmpty)
+        if case .blocked(.noLid) = controller.phase {
+            // ok
+        } else {
+            Issue.record("expected blocked(noLid), got \(controller.phase)")
+        }
     }
 
     @Test("E2E named instance never calls helper (V-C08-6)")

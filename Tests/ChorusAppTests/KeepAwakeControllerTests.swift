@@ -491,4 +491,106 @@ struct KeepAwakeControllerTests {
         await lidGuard.detectLeftover()
         #expect(helper.setCalls.filter { $0 }.isEmpty)
     }
+
+    private func decodeHold(_ response: AutomationHTTPTransport.Response) throws -> KeepAwakeHoldResponse {
+        #expect(response.status == 200)
+        let data = Data(response.json.utf8)
+        return try JSONDecoder().decode(KeepAwakeHoldResponse.self, from: data)
+    }
+
+    private func holdBody(id: String, ttl: Double = 60) -> Data {
+        Data(#"{"id":"\#(id)","ttl":\#(ttl)}"#.utf8)
+    }
+
+    @Test("C8-7 Agent + lidGuardOff + assertion fail → reason lidGuardOff")
+    func holdReasonLidGuardOff() throws {
+        let assertions = FakeAssertions()
+        assertions.failingTypes = [
+            kIOPMAssertionTypePreventUserIdleDisplaySleep,
+            kIOPMAssertionTypePreventUserIdleSystemSleep,
+        ]
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "hold-off-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: false)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        let controller = makeController(assertions: assertions, settings: settings)
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        let held = try decodeHold(controller.handleKeepAwakeHold(body: holdBody(id: "r-lid-off")))
+        #expect(!held.assertionEffective)
+        #expect(!held.lidEffective)
+        #expect(!held.effective)
+        #expect(held.reason == "lidGuardOff")
+    }
+
+    @Test("C8-7 Agent + lowBattery block + assertion fail → blocked:lowBattery")
+    func holdReasonBlockedLowBattery() throws {
+        let assertions = FakeAssertions()
+        assertions.failingTypes = [
+            kIOPMAssertionTypePreventUserIdleDisplaySleep,
+            kIOPMAssertionTypePreventUserIdleSystemSleep,
+        ]
+        let power = FakePowerSource()
+        power.snapshot = PowerSnapshot(
+            hasInternalBattery: true, onBattery: true, percent: 10, thermal: .nominal
+        )
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "hold-batt-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true, batteryFloorPercent: 30)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        let helper = FakeLidHelper()
+        let notifier = FakeNotifier()
+        let lidGuard = makeLidGuard(settings: settings, helper: helper, notifier: notifier)
+        let controller = KeepAwakeController(
+            settings: settings,
+            displayManager: DisplayManager(settings: settings),
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            lidGuard: lidGuard,
+            powerSource: power,
+            assertions: assertions,
+            notifier: notifier
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        let held = try decodeHold(controller.handleKeepAwakeHold(body: holdBody(id: "r-batt")))
+        #expect(!held.assertionEffective)
+        #expect(!held.lidEffective)
+        #expect(held.reason == "blocked:lowBattery")
+    }
+
+    @Test("C8-7 Agent + lid enabled + assertion fail → blocked:assertionFailed")
+    func holdReasonAssertionFailed() throws {
+        let assertions = FakeAssertions()
+        assertions.failingTypes = [
+            kIOPMAssertionTypePreventUserIdleDisplaySleep,
+            kIOPMAssertionTypePreventUserIdleSystemSleep,
+        ]
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "hold-assert-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        // Helper not ready → lid unavailable, but lidGuardOff must not win when enabled.
+        let helper = FakeLidHelper()
+        helper.availability = .notRegistered
+        let controller = makeController(assertions: assertions, settings: settings, lidHelper: helper)
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        let held = try decodeHold(controller.handleKeepAwakeHold(body: holdBody(id: "r-assert")))
+        #expect(!held.assertionEffective)
+        #expect(!held.lidEffective)
+        #expect(held.reason == "blocked:assertionFailed")
+    }
+
+    @Test("C8-7 non-Agent hold → agentModeOff")
+    func holdReasonAgentModeOff() throws {
+        let controller = makeController(assertions: FakeAssertions())
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        let held = try decodeHold(controller.handleKeepAwakeHold(body: holdBody(id: "r-mode")))
+        #expect(!held.effective)
+        #expect(held.reason == "agentModeOff")
+    }
 }

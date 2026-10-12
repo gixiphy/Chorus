@@ -339,20 +339,18 @@ final class KeepAwakeController {
         let result = sourceHub.leases.hold(id: request.id, ttl: request.ttl)
         switch result {
         case let .held(expiresAt, clampedTTL):
+            // Lease notify → hub → reevaluate is sync; re-read effectiveness after.
+            reevaluate()
             let uptime = ProcessInfo.processInfo.systemUptime
             let assertion = assertionEffectiveForLease()
             let lid = lidEffectiveForLease()
-            let reason: String? = {
-                if case .whileAgentsWorking = mode { return nil }
-                return "agentModeOff"
-            }()
             let response = KeepAwakeHoldResponse(
                 id: request.id,
                 expiresIn: max(0, expiresAt - uptime),
                 ttl: clampedTTL,
                 assertionEffective: assertion,
                 lidEffective: lid,
-                reason: reason
+                reason: ineffectiveHoldReason(assertionEffective: assertion, lidEffective: lid)
             )
             return encodeOK(response)
         case .invalidID, .invalidTTL:
@@ -655,6 +653,41 @@ final class KeepAwakeController {
     private func lidEffectiveForLease() -> Bool {
         guard case .whileAgentsWorking = mode, !shutDown else { return false }
         return lidGuard.isActuallyHoldingSleepDisabled
+    }
+
+    /// Spec §4.5 / C8-7: explain accepted-but-ineffective leases.
+    /// Precedence: agentModeOff → lidGuardOff → blocked:<reason>.
+    private func ineffectiveHoldReason(assertionEffective: Bool, lidEffective: Bool) -> String? {
+        if assertionEffective || lidEffective { return nil }
+        if case .whileAgentsWorking = mode, !shutDown {
+            if !lidGuard.settings.enabled {
+                return "lidGuardOff"
+            }
+            if let blocked = lidBlockReasonWire(lidGuard.phase) {
+                return "blocked:\(blocked)"
+            }
+            if pauseReason.isTripped {
+                return "blocked:powerFloor"
+            }
+            if activationFailed || !isHolding {
+                return "blocked:assertionFailed"
+            }
+            return "lidGuardOff"
+        }
+        return "agentModeOff"
+    }
+
+    private func lidBlockReasonWire(_ phase: LidSleepGuardPhase) -> String? {
+        guard case let .blocked(reason) = phase else { return nil }
+        switch reason {
+        case .lowBattery: return "lowBattery"
+        case .thermal: return "thermal"
+        case .maxDuration: return "maxDuration"
+        case .userPaused: return "userPaused"
+        case .noLid: return "noLid"
+        case .lidUnknown: return "lidUnknown"
+        case .unknownPower: return "unknownPower"
+        }
     }
 
     private func encodeOK<T: Encodable>(_ value: T) -> AutomationHTTPTransport.Response {

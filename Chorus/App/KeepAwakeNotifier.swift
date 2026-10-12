@@ -16,6 +16,8 @@ protocol KeepAwakeNotifying: AnyObject {
     func notifyLidGuardHelperNeedsApproval()
     func notifyLeftoverRestored()
     func notifyLeftoverForeign()
+    /// Fi A8：recovery-blocked leftover — 提示手動還原，不宣稱 external tool。
+    func notifyLeftoverRecoveryNeeded()
     func notifyHelperForcedOff(reason: String)
 }
 
@@ -28,6 +30,7 @@ extension KeepAwakeNotifying {
     func notifyLidGuardHelperNeedsApproval() {}
     func notifyLeftoverRestored() {}
     func notifyLeftoverForeign() {}
+    func notifyLeftoverRecoveryNeeded() {}
     func notifyHelperForcedOff(reason: String) { _ = reason }
 }
 
@@ -109,6 +112,15 @@ final class KeepAwakeNotifier: KeepAwakeNotifying {
         content.title = String(localized: "系統目前不會睡眠")
         content.body = String(localized: "SleepDisabled=1 不是 Chorus 設的，可能來自其他工具。")
         deliver(content, prefix: "lid-guard-leftover-foreign")
+    }
+
+    func notifyLeftoverRecoveryNeeded() {
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "無法自動還原睡眠設定")
+        content.body = String(
+            localized: "輔助程序帳本異常，SleepDisabled 仍為 1。請手動執行 sudo pmset -a disablesleep 0。"
+        )
+        deliver(content, prefix: "lid-guard-leftover-recovery")
     }
 
     func notifyHelperForcedOff(reason: String) {

@@ -13,6 +13,8 @@ enum LeftoverSleepDisabled: Equatable, Sendable {
     case otherUserHolding
     /// Helper unavailable while SleepDisabled=1.
     case unknownOwner
+    /// Fi A8 / C8-4: recoveryBlocked／pendingRestore／persistRetryNeeded — manual restore; not foreign.
+    case recoveryBlocked
 }
 
 /// Lid Guard controller (spec §5.5 / §6.6 / §7 / §14.2).
@@ -26,19 +28,24 @@ final class LidSleepGuardController {
     private(set) var contributingSources: [KeepAwakeSourceReport] = []
     /// Last policy `wantsSleepDisabled` request (not confirmation of system hold).
     private(set) var wantsSleepDisabled = false
+    /// U01: confirmed no-lid capability from monitor reading (Fi A3 hide+forbid).
+    private(set) var lidReading: LidClosedReading = .unknown
+    /// True only when reading is confirmed `.noLid` (not transient `.unknown`).
+    var isConfirmedNoLid: Bool { lidReading == .noLid }
 
     /// §5.5: menu “闔蓋也不睡” only when all three hold.
     var isActuallyHoldingSleepDisabled: Bool {
         wantsSleepDisabled
+            && !externalInterferenceLatched
             && helperStatus?.callerIsHolder == true
             && helperStatus?.sleepDisabled == true
     }
 
     var settings: LidSleepSettings {
         didSet {
-            let normalized = settings.normalized()
-            if normalized != settings {
-                settings = normalized
+            let approved = SettingsStore.approvedLidGuardSettings(settings)
+            if approved != settings {
+                settings = approved
                 return
             }
             persistSettings()
@@ -80,14 +87,20 @@ final class LidSleepGuardController {
     @ObservationIgnored private let maxRetryDelay: TimeInterval = 5 * 60
 
     /// Notification throttle state lives on the controller (notifier is stateless).
-    @ObservationIgnored private var armedBusyToken: String?
+    /// C8-5: one armed notice per aggregate-busy period; 30min gate is independent.
+    @ObservationIgnored private var wasAggregateBusy = false
+    @ObservationIgnored private var armedNoticeSentInBusyPeriod = false
     @ObservationIgnored private var lastArmedNotifyAt: Double?
     @ObservationIgnored private var didNotifyHelperApproval = false
     @ObservationIgnored private var didNotifyLeftoverForeign = false
+    @ObservationIgnored private var didNotifyLeftoverRecovery = false
     @ObservationIgnored private var lastForcedOffReason: String?
     @ObservationIgnored private var awaitingArmedConfirm = false
+    /// Fi A2 / C8-2: external write of 0 — release and do not re-compete until safe reset.
+    @ObservationIgnored private var externalInterferenceLatched = false
     /// Local override so a failed set(true) surfaces as unavailable(.error) until retry.
     @ObservationIgnored private var transientHelperError: String?
+    @ObservationIgnored private var handshakeTask: Task<Void, Never>?
 
     #if DEBUG
     /// M-5 / M-12 / M-13 test overrides (Release: absent).
@@ -125,13 +138,16 @@ final class LidSleepGuardController {
         self.sleepDisabledProbe = sleepDisabledProbe
         self.pauseDurationSeconds = pauseDurationSeconds
         self.heartbeatInterval = heartbeatInterval
-        self.settings = settingsStore.keepAwakeLidGuard.normalized()
+        self.settings = SettingsStore.approvedLidGuardSettings(settingsStore.keepAwakeLidGuard)
+        self.lidReading = lid.reading
         applyRestoredSession()
         helper.onAvailabilityChange = { [weak self] in
             self?.scheduleReevaluate()
         }
         lid.onChange = { [weak self] in
-            self?.scheduleReevaluate()
+            guard let self else { return }
+            self.lidReading = self.lid.reading
+            self.scheduleReevaluate()
         }
     }
 
@@ -166,10 +182,17 @@ final class LidSleepGuardController {
         switch leftover {
         case .ownResidual:
             Task { await restoreOwnResidual() }
-        case .foreign, .unknownOwner, .otherUserHolding, .none:
-            // Foreign / unknown: UI copies `sudo pmset -a disablesleep 0` — no auto override (Fi A2).
+        case .foreign, .unknownOwner, .otherUserHolding, .recoveryBlocked, .none:
+            // Foreign / recovery / unknown: UI copies manual pmset — no auto override (Fi A2／A8).
             break
         }
+    }
+
+    /// Clear Fi A2 external-interference latch after a safe reset (settings／Agent／busy off).
+    func clearExternalInterferenceLatchIfSafe() {
+        guard externalInterferenceLatched else { return }
+        guard !settings.enabled || !lastAgentModeActive || !lastBusy.isBusy else { return }
+        externalInterferenceLatched = false
     }
 
     /// Sync set(false); returns within 1s even if helper is silent (§14.2).
@@ -178,6 +201,8 @@ final class LidSleepGuardController {
         stopHeartbeat()
         retryTask?.cancel()
         retryTask = nil
+        handshakeTask?.cancel()
+        handshakeTask = nil
         setGeneration &+= 1
         let shouldRelease =
             wantsSleepDisabled
@@ -214,9 +239,12 @@ final class LidSleepGuardController {
             return
         }
 
-        // SleepDisabled == 1. Only talk to helper when ready — connecting／未允許
-        // 時打 XPC 會在測試 host 觸發隔離失敗；此時視為 unknownOwner（§6.6）。
-        guard case .ready = helper.availability else {
+        // SleepDisabled == 1. Handshake via status() when connecting (C8-1);
+        // notRegistered／requiresApproval／notFound stay unknownOwner without XPC.
+        switch helper.availability {
+        case .ready, .connecting:
+            break
+        default:
             leftover = .unknownOwner
             publish()
             return
@@ -225,27 +253,12 @@ final class LidSleepGuardController {
         do {
             let status = try await helper.status()
             applyHelperStatus(status)
-            if status.holderCount > 0 {
-                // Live holders (incl. same-uid second App) are not leftover (§14.2).
-                if status.otherUsersHolding || !status.callerIsHolder {
-                    leftover = .otherUserHolding
-                } else {
-                    leftover = nil
-                }
-            } else if status.setByHelper, !status.callerIsHolder {
-                leftover = .ownResidual
+            classifyLeftover(from: status)
+            if leftover == .ownResidual {
                 let restored = await restoreOwnResidual()
                 if restored {
                     leftover = nil
                 }
-            } else if !status.setByHelper {
-                leftover = .foreign
-                if !didNotifyLeftoverForeign {
-                    didNotifyLeftoverForeign = true
-                    notifier.notifyLeftoverForeign()
-                }
-            } else {
-                leftover = nil
             }
         } catch {
             leftover = .unknownOwner
@@ -256,12 +269,17 @@ final class LidSleepGuardController {
     func refreshFromHelper() async {
         guard !e2eNamedInstance, !shutDown else { return }
         helper.refreshAvailability()
-        // Avoid opening XPC when helper isn't ready (test host / BTM-off).
-        guard case .ready = helper.availability else { return }
+        switch helper.availability {
+        case .ready, .connecting:
+            break
+        default:
+            return
+        }
         do {
             let status = try await helper.status()
             applyHelperStatus(status)
             handleForcedOffIfNeeded(status)
+            considerExternalInterference(from: status)
             scheduleReevaluate()
         } catch {
             helperStatus = nil
@@ -299,7 +317,33 @@ final class LidSleepGuardController {
         started = true
         if !e2eNamedInstance {
             lid.start()
+            lidReading = lid.reading
             helper.refreshAvailability()
+            // C8-1: enabled helper starts `.connecting` until status() handshakes.
+            ensureHelperHandshake()
+        }
+    }
+
+    /// Bounded status() handshake so production can leave `.connecting` (C8-1).
+    private func ensureHelperHandshake() {
+        guard !e2eNamedInstance, !shutDown else { return }
+        helper.refreshAvailability()
+        guard case .connecting = helper.availability else { return }
+        guard handshakeTask == nil else { return }
+        handshakeTask = Task { @MainActor [weak self] in
+            defer { self?.handshakeTask = nil }
+            guard let self, !self.shutDown else { return }
+            do {
+                let status = try await self.helper.status()
+                guard !self.shutDown else { return }
+                self.applyHelperStatus(status)
+                self.handleForcedOffIfNeeded(status)
+                self.considerExternalInterference(from: status)
+                self.scheduleReevaluate()
+            } catch {
+                // Stay connecting／unavailable; retry path may refresh later.
+                Self.log.notice("Lid Guard helper handshake failed: \(String(describing: error))")
+            }
         }
     }
 
@@ -338,7 +382,8 @@ final class LidSleepGuardController {
             return
         }
 
-        var effectiveSettings = settings.normalized()
+        // Fi A3／C8-3: clamp ≤3h and force AC limit (core still allows 4h／AC-exempt).
+        var effectiveSettings = SettingsStore.approvedLidGuardSettings(settings)
         #if DEBUG
         if let seconds = debugMaxLidClosedSeconds, seconds.isFinite, seconds > 0 {
             effectiveSettings.maxLidClosedSeconds = seconds
@@ -354,9 +399,17 @@ final class LidSleepGuardController {
         let power = lastPower
         #endif
 
-        // noLid: Fi A3 hide+forbid arm even with saved enabled=true.
-        let lidReading = lid.reading
+        lidReading = lid.reading
+        clearExternalInterferenceLatchIfSafe()
+        // Keep trying handshake while enabled/connecting (C8-1).
+        if settings.enabled || lastAgentModeActive {
+            ensureHelperHandshake()
+        }
+
         let helperAvailability: LidHelperAvailability = {
+            if externalInterferenceLatched {
+                return .error("externalInterference")
+            }
             if let transientHelperError { return .error(transientHelperError) }
             return helper.availability
         }()
@@ -367,6 +420,8 @@ final class LidSleepGuardController {
                 notifier.notifyLidGuardHelperNeedsApproval()
             }
         }
+
+        updateBusyPeriodTracking()
 
         let input = LidSleepGuardInput(
             settings: effectiveSettings,
@@ -379,7 +434,23 @@ final class LidSleepGuardController {
             existingBatteryFloor: lastFloor
         )
         let result = LidSleepGuardPolicy.step(state, input: input)
-        applyPolicyResult(state: result.state, wants: result.wantsSleepDisabled, events: result.events)
+        var wants = result.wantsSleepDisabled
+        if externalInterferenceLatched {
+            wants = false
+        }
+        applyPolicyResult(state: result.state, wants: wants, events: result.events)
+    }
+
+    private func updateBusyPeriodTracking() {
+        if lastBusy.isBusy {
+            if !wasAggregateBusy {
+                wasAggregateBusy = true
+                armedNoticeSentInBusyPeriod = false
+            }
+        } else {
+            wasAggregateBusy = false
+            armedNoticeSentInBusyPeriod = false
+        }
     }
 
     private func applyPolicyResult(
@@ -400,20 +471,23 @@ final class LidSleepGuardController {
         }()
         lid.setPollingEnabled(polling)
 
-        if !lastBusy.isBusy {
-            armedBusyToken = nil
-        }
-
         if wants != previousWants {
             if wants {
-                awaitingArmedConfirm = true
-                requestSet(true)
-                startHeartbeat()
+                if externalInterferenceLatched {
+                    wantsSleepDisabled = false
+                } else {
+                    awaitingArmedConfirm = true
+                    requestSet(true)
+                    startHeartbeat()
+                }
             } else {
                 awaitingArmedConfirm = false
                 requestSet(false)
                 stopHeartbeat()
             }
+        } else if wants, externalInterferenceLatched {
+            wantsSleepDisabled = false
+            stopHeartbeat()
         }
 
         handleEvents(events)
@@ -422,21 +496,30 @@ final class LidSleepGuardController {
 
     private func requestSet(_ on: Bool) {
         guard !e2eNamedInstance, !shutDown else { return }
-        // Don't open XPC unless helper already handshook ready (or tests inject .ready).
-        if case .ready = helper.availability {
-            // ok
-        } else if on {
-            transientHelperError = "helper not ready"
-            scheduleRetry()
-            scheduleReevaluate()
+        if on, externalInterferenceLatched { return }
+        switch helper.availability {
+        case .ready:
+            break
+        case .connecting:
+            // C8-1: kick handshake; do not treat connecting as permanent error.
+            ensureHelperHandshake()
+            if on {
+                scheduleRetry()
+            }
             return
-        } else {
+        default:
+            if on {
+                transientHelperError = "helper not ready"
+                scheduleRetry()
+                scheduleReevaluate()
+            }
             return
         }
         setGeneration &+= 1
         let generation = setGeneration
         Task { @MainActor [weak self] in
             guard let self, !self.shutDown, self.setGeneration == generation else { return }
+            if on, self.externalInterferenceLatched { return }
             do {
                 let status = try await self.helper.setSleepDisabled(on)
                 guard self.setGeneration == generation, !self.shutDown else { return }
@@ -446,7 +529,8 @@ final class LidSleepGuardController {
                 }
                 self.applyHelperStatus(status)
                 self.handleForcedOffIfNeeded(status)
-                if on {
+                self.considerExternalInterference(from: status)
+                if on, !self.externalInterferenceLatched {
                     self.maybeNotifyArmedConfirmed()
                 }
                 self.scheduleReevaluate()
@@ -463,26 +547,31 @@ final class LidSleepGuardController {
     }
 
     private func scheduleRetry() {
+        guard !externalInterferenceLatched else { return }
         retryTask?.cancel()
         let delay = nextRetryDelay
         nextRetryDelay = min(nextRetryDelay * 2, maxRetryDelay)
         retryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled, !self.shutDown else { return }
+            guard !self.externalInterferenceLatched else { return }
             // Clear transient error so policy can re-arm and requestSet again.
             self.transientHelperError = nil
             self.helper.refreshAvailability()
+            self.ensureHelperHandshake()
             self.scheduleReevaluate()
         }
     }
 
     private func startHeartbeat() {
         stopHeartbeat()
+        guard !externalInterferenceLatched else { return }
         let interval = heartbeatInterval
         heartbeatTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(interval)) } catch { return }
-                guard let self, !Task.isCancelled, !self.shutDown, self.wantsSleepDisabled else { return }
+                guard let self, !Task.isCancelled, !self.shutDown else { return }
+                guard self.wantsSleepDisabled, !self.externalInterferenceLatched else { return }
                 // Heartbeat on main actor Task — freeze stops heartbeats → helper watchdog.
                 self.requestSet(true)
             }
@@ -508,26 +597,85 @@ final class LidSleepGuardController {
         lastForcedOffReason = reason
         Self.log.notice("Lid Guard helper forcedOff: \(reason)")
         notifier.notifyHelperForcedOff(reason: reason)
+        if reason == "externalInterference" {
+            latchExternalInterference(requestRelease: status.callerIsHolder)
+        }
+    }
+
+    /// C8-2: Fi A2 — release and prompt; do not re-write 1 after external 0.
+    /// Only the helper's `externalInterference` reason latches (not a pre-hold false readback).
+    private func considerExternalInterference(from status: PowerHelperStatus) {
+        guard status.lastForcedOffReason == "externalInterference" else { return }
+        latchExternalInterference(requestRelease: status.callerIsHolder)
+    }
+
+    private func latchExternalInterference(requestRelease: Bool) {
+        guard !externalInterferenceLatched else {
+            stopHeartbeat()
+            retryTask?.cancel()
+            retryTask = nil
+            return
+        }
+        externalInterferenceLatched = true
+        awaitingArmedConfirm = false
+        wantsSleepDisabled = false
+        stopHeartbeat()
+        retryTask?.cancel()
+        retryTask = nil
+        if requestRelease {
+            requestSet(false)
+        }
+        Self.log.notice("Lid Guard latched externalInterference — no further set(true)")
     }
 
     private func maybeNotifyArmedConfirmed() {
         guard awaitingArmedConfirm, isActuallyHoldingSleepDisabled else { return }
         awaitingArmedConfirm = false
+        // 同一段忙碌期只發一次（C8-5；來源集合變更不算新忙碌期）。
+        if armedNoticeSentInBusyPeriod { return }
         let nowTs = now()
-        // 30 分鐘內不重複（Fi A3）。
+        // 新忙碌期仍受 30 分鐘節流（Fi A3）。
         if let last = lastArmedNotifyAt, nowTs - last < Self.armedThrottleSeconds {
             return
         }
-        // 同一段忙碌期只發一次。
-        let token = lastBusy.contributing.map(\.id).sorted().joined(separator: "|")
-        if let armedBusyToken, armedBusyToken == token, !token.isEmpty {
-            return
-        }
-        armedBusyToken = token
+        armedNoticeSentInBusyPeriod = true
         lastArmedNotifyAt = nowTs
         if settings.notificationsEnabled {
             notifier.notifyLidGuardArmed(sources: contributingSources)
         }
+    }
+
+    private func classifyLeftover(from status: PowerHelperStatus) {
+        if status.holderCount > 0 {
+            if status.otherUsersHolding || !status.callerIsHolder {
+                leftover = .otherUserHolding
+            } else {
+                leftover = nil
+            }
+            return
+        }
+        // C8-4 / Fi A8: recovery health beats foreign classification.
+        if status.recoveryBlocked || status.pendingRestore || status.persistRetryNeeded {
+            leftover = .recoveryBlocked
+            if !didNotifyLeftoverRecovery {
+                didNotifyLeftoverRecovery = true
+                notifier.notifyLeftoverRecoveryNeeded()
+            }
+            return
+        }
+        if status.setByHelper, !status.callerIsHolder {
+            leftover = .ownResidual
+            return
+        }
+        if !status.setByHelper {
+            leftover = .foreign
+            if !didNotifyLeftoverForeign {
+                didNotifyLeftoverForeign = true
+                notifier.notifyLeftoverForeign()
+            }
+            return
+        }
+        leftover = nil
     }
 
     private func handleEvents(_ events: [LidSleepGuardEvent]) {
@@ -561,6 +709,11 @@ final class LidSleepGuardController {
     @discardableResult
     private func restoreOwnResidual() async -> Bool {
         guard !e2eNamedInstance else { return false }
+        // Never acquire-as-repair while recovery is blocked (Fi A8 / C8-4).
+        if let status = helperStatus,
+           status.recoveryBlocked || status.pendingRestore || status.persistRetryNeeded {
+            return false
+        }
         do {
             // Normal restore path: acquire then release (§6.6 / ledger exception).
             _ = try await helper.setSleepDisabled(true)
@@ -576,7 +729,7 @@ final class LidSleepGuardController {
     }
 
     private func persistSettings() {
-        settingsStore.keepAwakeLidGuard = settings
+        settingsStore.keepAwakeLidGuard = SettingsStore.approvedLidGuardSettings(settings)
     }
 
     private func applyRestoredSession() {
