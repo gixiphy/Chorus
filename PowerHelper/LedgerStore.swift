@@ -216,132 +216,42 @@ final class LedgerStore: LedgerStoring, @unchecked Sendable {
     // MARK: - Path / fd validation
 
     private func openValidatedDirectory(createIfMissing: Bool) throws -> Int32 {
-        try validateAncestorChain(directoryPath)
-
-        var st = stat()
-        if lstat(directoryPath, &st) == 0 {
-            let type = st.st_mode & S_IFMT
-            if type == S_IFLNK { throw LedgerStoreError.symlinkRejected }
-            try validateStat(&st, expectDirectory: true)
-        } else if errno == ENOENT {
-            guard createIfMissing else { throw LedgerStoreError.unsafeRoot }
-            try createDirectoryTree(directoryPath)
-        } else {
+        let components = (directoryPath as NSString).pathComponents.filter { $0 != "/" }
+        guard directoryPath.hasPrefix("/"), !components.contains("..") else {
             throw LedgerStoreError.unsafeRoot
         }
-
-        // Descriptor walk: open each component with O_NOFOLLOW so intermediate symlinks fail.
-        let dirFD = try openDirectoryNoFollow(path: directoryPath)
-        do {
-            try validateOpenFile(fd: dirFD, expectDirectory: true)
-        } catch {
-            close(dirFD)
-            throw error
-        }
-        return dirFD
-    }
-
-    /// Open `path` by walking components with `openat(..., O_NOFOLLOW)` from `/`.
-    private func openDirectoryNoFollow(path: String) throws -> Int32 {
-        let components = (path as NSString).pathComponents.filter { $0 != "/" }
         var fd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { throw LedgerStoreError.unsafeRoot }
-        for component in components {
-            let next = openat(fd, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            close(fd)
-            if next < 0 {
-                if errno == ELOOP { throw LedgerStoreError.symlinkRejected }
-                throw LedgerStoreError.unsafeRoot
-            }
-            fd = next
-        }
-        return fd
-    }
-
-    private func createDirectoryTree(_ path: String) throws {
-        let components = (path as NSString).pathComponents
-        var built = ""
-        let lastIndex = components.count - 1
-        for (index, component) in components.enumerated() {
-            if index == 0, component == "/" {
-                built = "/"
-                continue
-            }
-            built = (built as NSString).appendingPathComponent(component)
-            let isLeaf = index == lastIndex
-            var st = stat()
-            if lstat(built, &st) == 0 {
-                let type = st.st_mode & S_IFMT
-                if type == S_IFLNK {
-                    throw LedgerStoreError.symlinkRejected
+        do {
+            if policy.requireRootOwner { try validateOpenFile(fd: fd, expectDirectory: true) }
+            for (index, component) in components.enumerated() {
+                var next = openat(fd, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                if next < 0, errno == ENOENT, createIfMissing {
+                    guard mkdirat(fd, component, 0o755) == 0 || errno == EEXIST else {
+                        throw LedgerStoreError.writeFailed
+                    }
+                    next = openat(fd, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
                 }
-                if isLeaf || policy.requireRootOwner {
+                guard next >= 0 else {
+                    if errno == ELOOP { throw LedgerStoreError.symlinkRejected }
+                    var st = stat()
+                    if fstatat(fd, component, &st, AT_SYMLINK_NOFOLLOW) == 0,
+                       st.st_mode & S_IFMT == S_IFLNK { throw LedgerStoreError.symlinkRejected }
+                    throw LedgerStoreError.unsafeRoot
+                }
+                close(fd)
+                fd = next
+                var st = stat()
+                guard fstat(fd, &st) == 0 else { throw LedgerStoreError.unsafeRoot }
+                if policy.requireRootOwner || index == components.count - 1 ||
+                    policy.allowedOwnerUID == UInt32(st.st_uid) {
                     try validateStat(&st, expectDirectory: true)
-                } else if let allowed = policy.allowedOwnerUID, UInt32(st.st_uid) == allowed {
-                    // Testing: only enforce writability on ancestors we own.
-                    guard type == S_IFDIR else { throw LedgerStoreError.notRegularFile }
-                    if st.st_mode & (S_IWGRP | S_IWOTH) != 0 {
-                        throw LedgerStoreError.worldOrGroupWritable
-                    }
-                }
-                continue
-            }
-            if errno != ENOENT { throw LedgerStoreError.unsafeRoot }
-            if mkdir(built, 0o755) != 0 {
-                throw LedgerStoreError.writeFailed
-            }
-            // Re-lstat to reject TOCTOU symlink plant.
-            if lstat(built, &st) != 0 {
-                throw LedgerStoreError.writeFailed
-            }
-            if (st.st_mode & S_IFMT) == S_IFLNK {
-                throw LedgerStoreError.symlinkRejected
-            }
-            try validateStat(&st, expectDirectory: true)
-        }
-    }
-
-    private func validateAncestorChain(_ path: String) throws {
-        let components = (path as NSString).pathComponents
-        var built = ""
-        let lastIndex = components.count - 1
-        for (index, component) in components.enumerated() {
-            if index == 0, component == "/" {
-                built = "/"
-                continue
-            }
-            built = (built as NSString).appendingPathComponent(component)
-            var st = stat()
-            if lstat(built, &st) != 0 {
-                if errno == ENOENT {
-                    // Remaining components will be created; ancestors that exist were checked.
-                    return
-                }
-                throw LedgerStoreError.unsafeRoot
-            }
-            let isLink = (st.st_mode & S_IFMT) == S_IFLNK
-            let isLeaf = index == lastIndex
-            if isLink {
-                // W1-12: never skip intermediate symlinks when rejectAllSymlinks (prod + tests).
-                if policy.rejectAllSymlinks || isLeaf {
-                    throw LedgerStoreError.symlinkRejected
-                }
-                continue
-            }
-            if isLeaf {
-                try validateStat(&st, expectDirectory: true)
-            } else if policy.requireRootOwner {
-                try validateStat(&st, expectDirectory: true)
-            } else {
-                // Testing: still reject group/world-writable ancestors we own under the test root.
-                let type = st.st_mode & S_IFMT
-                guard type == S_IFDIR else { throw LedgerStoreError.notRegularFile }
-                if let allowed = policy.allowedOwnerUID, UInt32(st.st_uid) == allowed {
-                    if st.st_mode & (S_IWGRP | S_IWOTH) != 0 {
-                        throw LedgerStoreError.worldOrGroupWritable
-                    }
                 }
             }
+            return fd
+        } catch {
+            close(fd)
+            throw error
         }
     }
 

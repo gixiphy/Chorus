@@ -111,11 +111,13 @@ enum PowerHelperRepairOutcome: Equatable, Sendable {
 @MainActor
 final class PowerHelperRepairStateMachine {
     private let repairing: PowerHelperRepairing
+    private let authorizeRepair: () -> Bool
     private(set) var unregisterCalls = 0
     private(set) var registerCalls = 0
 
-    init(repairing: PowerHelperRepairing) {
+    init(repairing: PowerHelperRepairing, authorizeRepair: @escaping () -> Bool = { false }) {
         self.repairing = repairing
+        self.authorizeRepair = authorizeRepair
     }
 
     /// Returns whether service ops were invoked. Unsafe evidence never calls unregister/register.
@@ -134,6 +136,7 @@ final class PowerHelperRepairStateMachine {
         if status.setByHelper {
             return .skippedUnsafe
         }
+        guard authorizeRepair() else { return .blocked("authorizationRequired") }
         do {
             unregisterCalls += 1
             try repairing.unregisterDaemon()
@@ -169,6 +172,7 @@ final class PowerHelperClient: PowerHelperClienting {
     private var generation: UInt64 = 0
     /// True only after a successful status() handshake on the current connection (W1-5).
     private var handshakeComplete = false
+    private var recoveryEvidenceComplete = false
     /// At most one automatic repair attempt per client instance (W1-14).
     private var didAttemptProtocolRepair = false
 
@@ -188,7 +192,8 @@ final class PowerHelperClient: PowerHelperClienting {
         registerService: (() throws -> Void)? = nil,
         unregisterService: (() throws -> Void)? = nil,
         openSettings: (() -> Void)? = nil,
-        repairMachine: PowerHelperRepairStateMachine? = nil
+        repairMachine: PowerHelperRepairStateMachine? = nil,
+        authorizeProtocolRepair: @escaping () -> Bool = { false }
     ) {
         self.plistName = plistName
         self.appBuild = appBuild
@@ -210,7 +215,8 @@ final class PowerHelperClient: PowerHelperClienting {
         } else if registerService != nil || unregisterService != nil {
             // Injected test seams — wrap them so repair never touches real SMAppService.
             self.repairMachine = PowerHelperRepairStateMachine(
-                repairing: InjectedRepairing(register: registerService ?? {}, unregister: unregisterService ?? {})
+                repairing: InjectedRepairing(register: registerService ?? {}, unregister: unregisterService ?? {}),
+                authorizeRepair: authorizeProtocolRepair
             )
         } else {
             // Production: repair uses the same daemon APIs (Fi A1; not exercised in verifier).
@@ -218,7 +224,8 @@ final class PowerHelperClient: PowerHelperClienting {
                 repairing: InjectedRepairing(
                     register: { try daemon.register() },
                     unregister: { try daemon.unregister() }
-                )
+                ),
+                authorizeRepair: authorizeProtocolRepair
             )
         }
     }
@@ -254,6 +261,8 @@ final class PowerHelperClient: PowerHelperClienting {
             throw PowerHelperClientError.unregisterBlocked("statusUnavailable")
         }
 
+        try requireRecoveryEvidence()
+
         // Unknown / hard recovery block: do not unregister (preserve connection).
         if snap.recoveryBlocked {
             throw PowerHelperClientError.unregisterBlocked("recoveryBlocked")
@@ -267,11 +276,13 @@ final class PowerHelperClient: PowerHelperClienting {
                 _ = try await setSleepDisabled(false)
             }
             let after = try await status()
+            try requireRecoveryEvidence()
             try Self.verifyUnregisterEvidence(after, phase: .afterRelease)
         } else if snap.sleepDisabled == true, snap.setByHelper || snap.pendingRestore {
             // Own residual / pending restore without live holders — attempt release (W1-6).
             _ = try await setSleepDisabled(false)
             let after = try await status()
+            try requireRecoveryEvidence()
             try Self.verifyUnregisterEvidence(after, phase: .afterRelease)
         } else if snap.sleepDisabled == true {
             throw PowerHelperClientError.unregisterBlocked("foreignSleepDisabled")
@@ -283,12 +294,19 @@ final class PowerHelperClient: PowerHelperClienting {
         }
 
         let finalStatus = try await status()
+        try requireRecoveryEvidence()
         try Self.verifyUnregisterEvidence(finalStatus, phase: .final)
 
         invalidateConnection()
         try unregisterService()
         handshakeComplete = false
         refreshAvailability()
+    }
+
+    private func requireRecoveryEvidence() throws {
+        guard recoveryEvidenceComplete else {
+            throw PowerHelperClientError.unregisterBlocked("recoveryEvidenceUnavailable")
+        }
     }
 
     private enum UnregisterPhase {
@@ -380,7 +398,7 @@ final class PowerHelperClient: PowerHelperClienting {
         guard gen == generation else { throw PowerHelperClientError.timedOut }
         let status = try decodeStatus(data)
         let handshake = PowerHelperHandshakeResult.evaluate(status: status, appBuild: appBuild)
-        if case .versionMismatch = handshake, !didAttemptProtocolRepair {
+        if case .versionMismatch = handshake, recoveryEvidenceComplete, !didAttemptProtocolRepair {
             // W1-14 / A1: automatic repair only when safe; never during unsafe evidence.
             if let repairMachine {
                 didAttemptProtocolRepair = true
@@ -483,6 +501,11 @@ final class PowerHelperClient: PowerHelperClienting {
 
     private func decodeStatus(_ data: Data) throws -> PowerHelperStatus {
         do {
+            let fields = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            recoveryEvidenceComplete = ["recoveryBlocked", "pendingRestore", "persistRetryNeeded"].allSatisfy {
+                guard let value = fields?[$0] as? NSNumber else { return false }
+                return CFGetTypeID(value) == CFBooleanGetTypeID()
+            }
             return try JSONDecoder().decode(PowerHelperStatus.self, from: data)
         } catch {
             throw PowerHelperClientError.decodingFailed

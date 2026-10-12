@@ -46,6 +46,9 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     /// Coalesced read waiters (W1-1): one physical `pmset -g` serves many callers.
     private var readWaiters: [(generation: UInt64, completion: (Bool?) -> Void)] = []
     private var readInFlight = false
+    private var restorationInProgress = false
+    private var deferredDisconnects: Set<UInt64> = []
+    private var pendingSafetyReason: String?
 
     /// Exported per-connection XPC object (separate instance each accept — V-C05 / tasks §4).
     final class ExportedObject: NSObject, ChorusPowerHelperXPC, @unchecked Sendable {
@@ -193,6 +196,15 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
                 self.touchExternalActivityAndRescheduleIdle()
 
                 if enabled {
+                    if self.restorationInProgress {
+                        if let refuse = self.safety.snapshot().refusesAcquire {
+                            self.pendingSafetyReason = refuse.forcedOffReason
+                            reply(nil, refuse.errorCode)
+                        } else {
+                            reply(nil, "restorationInProgress")
+                        }
+                        return
+                    }
                     if let refuse = self.safety.snapshot().refusesAcquire {
                         self.lastForcedOffReason = refuse.forcedOffReason
                         // W1-7 / A3: unsafe heartbeat must release an existing own holding.
@@ -225,6 +237,11 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
                         }
                     }
                 } else {
+                    guard !self.restorationInProgress else {
+                        reply(nil, "restorationInProgress")
+                        return
+                    }
+                    self.restorationInProgress = true
                     let generation = self.beginApply()
                     self.readSystemValue(generation: generation) { systemValue in
                         self.queue.async {
@@ -240,12 +257,13 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
                                     connectionID: connectionID,
                                     currentSystemValue: systemValue
                                 )
-                            } else if self.ledger.setByHelper || self.ledger.pendingRestore {
+                            } else if self.ledger.holders.isEmpty, self.ledger.setByHelper || self.ledger.pendingRestore {
                                 action = self.ledger.forceOff(currentSystemValue: systemValue)
                             } else {
                                 action = .none
                             }
                             self.applyAction(action, generation: generation) { outcome in
+                                self.finishRestoration()
                                 self.finishReply(outcome, connectionID: connectionID, reply: reply)
                             }
                         }
@@ -376,6 +394,11 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             self.whenStartupReady {
+                if self.restorationInProgress {
+                    self.deferredDisconnects.insert(connectionID)
+                    return
+                }
+                self.restorationInProgress = true
                 self.connections.removeValue(forKey: connectionID)
                 let generation = self.beginApply()
                 self.readSystemValue(generation: generation) { systemValue in
@@ -388,6 +411,7 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
                         }
                         self.applyAction(action, generation: generation) { _ in
                             self.queue.async {
+                                self.finishRestoration()
                                 self.touchExternalActivityAndRescheduleIdle()
                             }
                         }
@@ -482,6 +506,8 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
 
     /// Coalesced reads: one physical read drains all waiters (W1-1).
     private func readSystemValue(generation: UInt64, completion: @escaping (Bool?) -> Void) {
+        // Bound admission even while a subprocess is delayed. Unknown evidence fails closed.
+        guard readWaiters.count < 64 else { completion(nil); return }
         readWaiters.append((generation, completion))
         guard !readInFlight else { return }
         readInFlight = true
@@ -514,6 +540,14 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
         completion: @escaping (ApplyOutcome) -> Void
     ) {
         // Must be called from ledger queue.
+        if case .write(false) = action, !restorationInProgress {
+            restorationInProgress = true
+            applyAction(action, generation: generation, rollbackConnectionID: rollbackConnectionID) { outcome in
+                self.finishRestoration()
+                completion(outcome)
+            }
+            return
+        }
         guard generation == applyGeneration else {
             completion(.ok) // superseded — treat as no-op success for caller discard
             return
@@ -652,6 +686,7 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     }
 
     private func runWatchdogTick() {
+        guard startupReady, !restorationInProgress else { return }
         let generation = beginApply()
         // Retry failed persistence without renewing idle (W1-8/9).
         if persistRetryNeeded {
@@ -671,8 +706,16 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
                     self.lastForcedOffReason = "watchdog"
                     self.lastChangeAt = Date()
                 }
+                let protectsRestore: Bool
+                if case .write(false) = action {
+                    protectsRestore = true
+                    self.restorationInProgress = true
+                } else {
+                    protectsRestore = false
+                }
                 self.applyAction(action, generation: generation) { _ in
-                    self.queue.async { self.rearmIdleAfterStateChange() }
+                    if protectsRestore { self.finishRestoration() }
+                    self.rearmIdleAfterStateChange()
                 }
                 // Do NOT touchExternalActivity — watchdog must not reset idle (W1-9).
             }
@@ -697,28 +740,34 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
 
     /// Non-cancellable restoration path for safety / unsafe heartbeat (W1-1 / W1-7).
     private func initiateProtectedForceOff(reason: String, completion: @escaping () -> Void) {
-        let generation = beginApply()
-        readSystemValue(generation: generation) { [weak self] systemValue in
-            guard let self else {
-                completion()
-                return
-            }
-            self.queue.async {
-                guard generation == self.applyGeneration else {
-                    completion()
-                    return
-                }
-                let action = self.ledger.forceOff(currentSystemValue: systemValue)
-                self.lastForcedOffReason = reason
-                self.lastChangeAt = Date()
-                self.applyAction(action, generation: generation) { _ in
-                    self.queue.async {
-                        self.rearmIdleAfterStateChange()
-                        completion()
-                    }
-                }
-            }
+        guard !restorationInProgress else {
+            pendingSafetyReason = reason
+            completion()
+            return
         }
+        restorationInProgress = true
+        let generation = beginApply()
+        // Ownership already decides whether restoration is allowed; no read is needed to
+        // clear holders. Cancel queued acquire immediately, then append at most one write0.
+        let action = ledger.forceOff(currentSystemValue: nil)
+        lastForcedOffReason = reason
+        lastChangeAt = Date()
+        applyAction(action, generation: generation) { _ in
+            self.finishRestoration()
+            self.rearmIdleAfterStateChange()
+            completion()
+        }
+    }
+
+    private func finishRestoration() {
+        restorationInProgress = false
+        if let reason = pendingSafetyReason {
+            pendingSafetyReason = nil
+            initiateProtectedForceOff(reason: reason) {}
+        }
+        let disconnected = deferredDisconnects
+        deferredDisconnects.removeAll()
+        for id in disconnected { handleDisconnect(connectionID: id) }
     }
 
     private func touchExternalActivityAndRescheduleIdle() {
@@ -745,6 +794,10 @@ final class PowerHelperService: NSObject, @unchecked Sendable {
     }
 
     private func evaluateIdleExit() {
+        guard startupReady, !restorationInProgress else {
+            rearmIdleAfterStateChange()
+            return
+        }
         guard ledger.holders.isEmpty else {
             rearmIdleAfterStateChange()
             return

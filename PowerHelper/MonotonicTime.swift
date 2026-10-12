@@ -4,15 +4,13 @@ import Foundation
 /// Boot-anchored continuous time for helper + lid deadline (spec §14.2 / W1-10).
 /// Advances across sleep; does not reset on process restart within the same boot.
 enum MonotonicTime {
-    /// Seconds from `CLOCK_MONOTONIC_RAW` (continues across sleep on Darwin).
+    /// One continuous Darwin clock for every deadline; never switch to systemUptime.
     static func seconds() -> Double {
-        var ts = timespec()
-        let rc = clock_gettime(CLOCK_MONOTONIC_RAW, &ts)
-        guard rc == 0 else {
-            // Conservative fallback — still monotonic within process.
-            return ProcessInfo.processInfo.systemUptime
-        }
-        return Double(ts.tv_sec) + Double(ts.tv_nsec) / 1_000_000_000.0
+        var timebase = mach_timebase_info_data_t()
+        let result = mach_timebase_info(&timebase)
+        precondition(result == KERN_SUCCESS && timebase.denom != 0, "Continuous clock unavailable")
+        return Double(mach_continuous_time()) * Double(timebase.numer) /
+            Double(timebase.denom) / 1_000_000_000.0
     }
 
     /// Same-boot identity for persisted deadlines. nil → treat persistence as invalid.

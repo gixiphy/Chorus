@@ -1,5 +1,6 @@
 import ChorusCore
 import Foundation
+import Darwin
 
 /// Fixed-argv `pmset` runner (spec §6.3 / §11.2). No shell; empty environment.
 ///
@@ -106,11 +107,11 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
 
         let stdoutBox = OutputBox(limit: maxOutputBytes)
         let stderrBox = OutputBox(limit: maxOutputBytes)
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            stdoutBox.append(handle.availableData)
-        }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            stderrBox.append(handle.availableData)
+        let outFD = stdoutPipe.fileHandleForReading.fileDescriptor
+        let errFD = stderrPipe.fileHandleForReading.fileDescriptor
+        guard fcntl(outFD, F_SETFL, O_NONBLOCK) == 0,
+              fcntl(errFD, F_SETFL, O_NONBLOCK) == 0 else {
+            throw PMSetRunnerError.launchFailed
         }
 
         do {
@@ -118,6 +119,9 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
         } catch {
             throw PMSetRunnerError.launchFailed
         }
+
+        try? stdoutPipe.fileHandleForWriting.close()
+        try? stderrPipe.fileHandleForWriting.close()
 
         // Put child in its own process group (best-effort; race if already exited).
         let pid = process.processIdentifier
@@ -127,6 +131,8 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
 
         let deadline = MonotonicTime.seconds() + timeout
         while process.isRunning, MonotonicTime.seconds() < deadline {
+            drainAvailable(fd: outFD, box: stdoutBox)
+            drainAvailable(fd: errFD, box: stderrBox)
             Thread.sleep(forTimeInterval: 0.05)
         }
 
@@ -137,6 +143,8 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
             }
             let termDeadline = MonotonicTime.seconds() + termGraceSeconds
             while process.isRunning, MonotonicTime.seconds() < termDeadline {
+                drainAvailable(fd: outFD, box: stdoutBox)
+                drainAvailable(fd: errFD, box: stderrBox)
                 Thread.sleep(forTimeInterval: 0.05)
             }
             if process.isRunning {
@@ -191,39 +199,40 @@ final class PMSetRunner: PMSetRunning, @unchecked Sendable {
             }
         }
 
-        // Bounded reap on a helper thread — never hang the ledger/io caller on waitUntilExit.
-        if process.isRunning {
-            let pid = process.processIdentifier
-            if pid > 0 {
-                kill(-pid, SIGKILL)
-                kill(pid, SIGKILL)
-            }
-        }
-        let reapSem = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .userInitiated).async {
-            process.waitUntilExit()
-            reapSem.signal()
-        }
-        _ = reapSem.wait(timeout: .now() + drainGraceSeconds + termGraceSeconds)
-
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-        stderrPipe.fileHandleForReading.readabilityHandler = nil
-
+        // Foundation owns child reaping. Never create an indefinitely waiting reap thread.
+        let outFD = stdoutPipe.fileHandleForReading.fileDescriptor
+        let errFD = stderrPipe.fileHandleForReading.fileDescriptor
+        var outEOF = false
+        var errEOF = false
         let drainDeadline = MonotonicTime.seconds() + drainGraceSeconds
-        while MonotonicTime.seconds() < drainDeadline {
-            let outChunk = stdoutPipe.fileHandleForReading.availableData
-            let errChunk = stderrPipe.fileHandleForReading.availableData
-            if outChunk.isEmpty, errChunk.isEmpty {
-                break
-            }
-            stdoutBox.append(outChunk)
-            stderrBox.append(errChunk)
-            if stdoutBox.truncated, stderrBox.truncated {
-                break
-            }
+        repeat {
+            outEOF = drainAvailable(fd: outFD, box: stdoutBox) || outEOF
+            errEOF = drainAvailable(fd: errFD, box: stderrBox) || errEOF
+            if outEOF && errEOF { break }
             Thread.sleep(forTimeInterval: 0.01)
-        }
+        } while MonotonicTime.seconds() < drainDeadline
+        if !outEOF { stdoutBox.markTruncated() }
+        if !errEOF { stderrBox.markTruncated() }
     }
+
+    /// Fixed-size nonblocking reads, with a per-call byte budget so an endless writer
+    /// cannot keep us inside drain beyond the subprocess deadline.
+    @discardableResult
+    private static func drainAvailable(fd: Int32, box: OutputBox) -> Bool {
+        var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+        for _ in 0..<16 {
+            let count = read(fd, &buffer, buffer.count)
+            if count == 0 { return true }
+            if count < 0 {
+                if errno == EINTR { continue }
+                if errno != EAGAIN && errno != EWOULDBLOCK { box.markTruncated() }
+                return false
+            }
+            box.append(Data(buffer.prefix(count)))
+        }
+        return false
+    }
+
 }
 
 private final class OutputBox: @unchecked Sendable {
@@ -234,6 +243,10 @@ private final class OutputBox: @unchecked Sendable {
 
     init(limit: Int) {
         self.limit = limit
+    }
+
+    func markTruncated() {
+        lock.lock(); defer { lock.unlock() }; truncated = true
     }
 
     func append(_ chunk: Data) {

@@ -164,7 +164,7 @@ struct LidClosedSessionStore: Equatable {
         return .valid(sinceContinuous: snap.continuousClosedAt, latched: snap.maxDurationLatched)
     }
 
-    /// Compatibility helper. Maps `.invalid` to nil — C08 must use `restoreResult` for latch.
+    /// Compatibility helper preserves the conservative latch for invalid evidence.
     func restoredLidClosedSince(
         nowContinuous: Double? = LidMonotonicTime.seconds(),
         bootSessionUUID: String? = LidMonotonicTime.bootSessionUUID()
@@ -172,7 +172,9 @@ struct LidClosedSessionStore: Equatable {
         switch restoreResult(nowContinuous: nowContinuous, bootSessionUUID: bootSessionUUID) {
         case let .valid(since, latched):
             return (since, latched)
-        case .absent, .invalid:
+        case .invalid:
+            return (sinceContinuous: 0, latched: true)
+        case .absent:
             return nil
         }
     }
@@ -290,8 +292,8 @@ final class LidStateMonitor: LidStateObserving {
                     )
                 }
             case .invalid:
-                // Conservative: clear corrupt/reboot bytes and latch so C08 cannot reset the cap.
-                sessionStore.clear()
+                // Conservative: replace invalid bytes with a latch when persistence is possible.
+                // Keep invalid evidence if clock/boot identity is unavailable.
                 if let boot = LidMonotonicTime.bootSessionUUID(),
                    let continuous = LidMonotonicTime.seconds()
                 {

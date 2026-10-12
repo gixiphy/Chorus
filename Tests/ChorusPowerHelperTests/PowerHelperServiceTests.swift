@@ -202,6 +202,16 @@ struct PowerHelperServiceCrashWindowTests {
         #expect(service.ledgerSnapshotForTesting().holders.isEmpty)
     }
 
+    @Test("nonholder release cannot force off another live holder (W1-6 r3)")
+    func nonholderReleasePreservesOthers() {
+        let runner = FakePMSetRunner()
+        let service = makeService(runner: runner)
+        #expect(driveSet(service: service, enabled: true, connectionID: 1, uid: 501, pid: 1).error == nil)
+        #expect(driveSet(service: service, enabled: false, connectionID: 2, uid: 502, pid: 2).error == nil)
+        #expect(service.ledgerSnapshotForTesting().holders.count == 1)
+        #expect(runner.writes == [true])
+    }
+
     private func driveSet(
         service: PowerHelperService,
         enabled: Bool,
@@ -421,6 +431,70 @@ struct PowerHelperServiceWatchdogTests {
             Thread.sleep(forTimeInterval: 0.05)
         }
         #expect(service.ledgerSnapshotForTesting().holders.isEmpty || runner.writes.contains(false))
+    }
+
+    @Test("safety cancels a write1 still queued behind I/O admission (W1-1 r3)")
+    func queuedAcquireHasNoSideEffectAfterSafety() {
+        let io = DispatchQueue(label: "test.keepawake.admission")
+        let entered = DispatchSemaphore(value: 0)
+        let unblock = DispatchSemaphore(value: 0)
+        let runner = AdmissionPMSetRunner(io: io, entered: entered, unblock: unblock)
+        let safety = FakeSafety()
+        let service = PowerHelperService(ioQueue: io, runner: runner,
+            store: FakeLedgerStore(), safety: safety, helperBuild: "136", onIdleExit: {})
+        service.start()
+        defer { service.stopTimersForTesting() }
+        let readyDeadline = Date().addingTimeInterval(2)
+        while !service.startupReadyForTesting(), Date() < readyDeadline { Thread.sleep(forTimeInterval: 0.01) }
+        runner.gateNextRead = true
+        let exported = PowerHelperService.ExportedObject(service: service, connectionID: 1, uid: 501, pid: 1)
+        let replied = DispatchSemaphore(value: 0)
+        exported.setSleepDisabled(true) { _, _ in replied.signal() }
+        #expect(entered.wait(timeout: .now() + 2) == .success)
+        let stagedDeadline = Date().addingTimeInterval(2)
+        while service.ledgerSnapshotForTesting().holders.isEmpty, Date() < stagedDeadline { Thread.sleep(forTimeInterval: 0.01) }
+        #expect(service.ledgerSnapshotForTesting().holders.count == 1)
+        safety.snap.thermal = .critical
+        service.runSafetyTickForTesting()
+        #expect(service.ledgerSnapshotForTesting().holders.isEmpty)
+        unblock.signal()
+        #expect(replied.wait(timeout: .now() + 3) == .success)
+        let restoredDeadline = Date().addingTimeInterval(2)
+        while service.ledgerSnapshotForTesting().setByHelper, Date() < restoredDeadline { Thread.sleep(forTimeInterval: 0.01) }
+        #expect(runner.fake.writes == [false])
+        #expect(!service.ledgerSnapshotForTesting().setByHelper)
+    }
+
+    @Test("release acknowledgement survives watchdog and new acquire (W1-1 r3)")
+    func protectedReleaseSurvivesNewWork() {
+        let runner = FakePMSetRunner()
+        let service = PowerHelperService(runner: runner, store: FakeLedgerStore(),
+            safety: FakeSafety(), helperBuild: "136", onIdleExit: {})
+        service.start()
+        defer { service.stopTimersForTesting() }
+        let exported = PowerHelperService.ExportedObject(service: service, connectionID: 1, uid: 501, pid: 1)
+        let acquired = DispatchSemaphore(value: 0)
+        exported.setSleepDisabled(true) { _, _ in acquired.signal() }
+        #expect(acquired.wait(timeout: .now() + 3) == .success)
+        runner.blockNextWrites()
+        let released = DispatchSemaphore(value: 0)
+        let reply = ReplyBox()
+        exported.setSleepDisabled(false) { _, error in reply.error = error; released.signal() }
+        Thread.sleep(forTimeInterval: 0.1)
+        service.runWatchdogTickForTesting()
+        let rejected = DispatchSemaphore(value: 0)
+        exported.setSleepDisabled(true) { _, error in
+            #expect(error == "restorationInProgress")
+            rejected.signal()
+        }
+        #expect(rejected.wait(timeout: .now() + 1) == .success)
+        runner.unblockWrite()
+        #expect(released.wait(timeout: .now() + 3) == .success)
+        #expect(reply.error == nil)
+        let ledger = service.ledgerSnapshotForTesting()
+        #expect(ledger.holders.isEmpty)
+        #expect(!ledger.setByHelper && !ledger.pendingRestore)
+        #expect(runner.writes == [true, false])
     }
 
     @Test("status encodes recovery health fields (W1-6)")
@@ -687,6 +761,15 @@ struct LedgerStoreTests {
             .appendingPathComponent("chorus-ledger-\(UUID().uuidString)\(suffix)", isDirectory: true)
     }
 
+    @Test("descriptor traversal rejects parent escape components (W1-12 r3)")
+    func parentEscapeRejected() throws {
+        let root = try makeResolvedTempDir()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = LedgerStore(directoryPath: root.path + "/../escape", policy: .testing())
+        #expect(throws: LedgerStoreError.unsafeRoot) { try store.save(SleepGuardLedger()) }
+    }
+
     @Test("round-trip metadata without holders; absent initial save")
     func roundTrip() throws {
         let dir = try makeResolvedTempDir()
@@ -898,6 +981,27 @@ struct PMSetRunnerTimeoutTests {
         #expect(elapsed < 2.5) // timeout + term grace + reap, bounded
     }
 
+    @Test("silent descendant retaining pipes cannot block drain (W1-1 r3)")
+    func silentInheritedWriter() throws {
+        let start = MonotonicTime.seconds()
+        let result = try PMSetRunner.runSubprocess(executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "/bin/sleep 2 & exit 0"], timeout: 0.3)
+        #expect(MonotonicTime.seconds() - start < 1.8)
+        #expect(result.truncated)
+    }
+
+    @Test("both saturated pipes are drained and capped (W1-1 r3)")
+    func saturatedBothPipes() throws {
+        let script = "i=0; while [ $i -lt 20000 ]; do printf '0123456789abcdef'; printf '0123456789abcdef' >&2; i=$((i+1)); done"
+        let start = MonotonicTime.seconds()
+        let result = try PMSetRunner.runSubprocess(executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", script], timeout: 10)
+        #expect(MonotonicTime.seconds() - start < 12)
+        #expect(result.stdout.count == PMSetRunner.maxOutputBytes)
+        #expect(result.stderr.count == PMSetRunner.maxOutputBytes)
+        #expect(result.truncated)
+    }
+
     @Test("descendant-held pipes and dual-pipe saturation stay bounded (W1-1)")
     func descendantAndSaturatedPipesBounded() throws {
         let script = """
@@ -978,4 +1082,24 @@ private final class ReplyBox: @unchecked Sendable {
 
 private final class ExpectationFlag: @unchecked Sendable {
     var flag = false
+}
+
+/// Places a barrier after the physical read but before the service can dispatch its write.
+private final class AdmissionPMSetRunner: PMSetRunning, @unchecked Sendable {
+    let fake = FakePMSetRunner()
+    var gateNextRead = false
+    let io: DispatchQueue
+    let entered: DispatchSemaphore
+    let unblock: DispatchSemaphore
+    init(io: DispatchQueue, entered: DispatchSemaphore, unblock: DispatchSemaphore) {
+        self.io = io; self.entered = entered; self.unblock = unblock
+    }
+    func readSleepDisabled() throws -> Bool? {
+        if gateNextRead {
+            gateNextRead = false
+            io.async { [entered, unblock] in entered.signal(); unblock.wait() }
+        }
+        return try fake.readSleepDisabled()
+    }
+    func writeSleepDisabled(_ enabled: Bool) throws { try fake.writeSleepDisabled(enabled) }
 }

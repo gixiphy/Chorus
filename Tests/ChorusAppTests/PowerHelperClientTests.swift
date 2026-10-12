@@ -320,6 +320,25 @@ struct PowerHelperClientConnectionTests {
 @Suite("PowerHelperClient unregister (W1-6)")
 @MainActor
 struct PowerHelperClientUnregisterTests {
+    @Test("legacy status without recovery evidence blocks unregister (W1-6 r3)")
+    func missingRecoveryEvidenceBlocks() async throws {
+        let proxy = FakePowerHelperProxy()
+        var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(proxy.makeStatus())) as? [String: Any])
+        for key in ["recoveryBlocked", "pendingRestore", "persistRetryNeeded"] { json.removeValue(forKey: key) }
+        let data = try JSONSerialization.data(withJSONObject: json)
+        proxy.statusHandler = { reply in reply(data) }
+        var unregistered = false
+        let client = PowerHelperClient(makeProxy: { proxy }, serviceStatus: { .enabled },
+            registerService: {}, unregisterService: { unregistered = true }, openSettings: {})
+        do {
+            try await client.unregister()
+            Issue.record("missing recovery evidence must block removal")
+        } catch let error as PowerHelperClientError {
+            #expect(error == .unregisterBlocked("recoveryEvidenceUnavailable"))
+        }
+        #expect(!unregistered && proxy.invalidateCount == 0)
+    }
+
     @Test("other holders block unregister")
     func otherHoldersBlock() async {
         let proxy = FakePowerHelperProxy()
@@ -737,7 +756,7 @@ struct LidClosedSessionStoreTests {
             bootSessionUUID: "BOOT-A",
             maxDurationLatched: false
         )
-        #expect(store.restoredLidClosedSince(nowContinuous: 2000, bootSessionUUID: "BOOT-B") == nil)
+        #expect(store.restoredLidClosedSince(nowContinuous: 2000, bootSessionUUID: "BOOT-B")?.latched == true)
         #expect(store.restoreResult(nowContinuous: 2000, bootSessionUUID: "BOOT-B") == .invalid)
         #expect(store.restoreResult(nowContinuous: 2000, bootSessionUUID: "BOOT-A") != .absent)
     }
@@ -787,7 +806,7 @@ struct LidClosedSessionStoreTests {
             bootSessionUUID: "BOOT",
             maxDurationLatched: false
         )
-        #expect(store.restoredLidClosedSince(nowContinuous: 100, bootSessionUUID: "BOOT") == nil)
+        #expect(store.restoredLidClosedSince(nowContinuous: 100, bootSessionUUID: "BOOT")?.latched == true)
         #expect(store.restoreResult(nowContinuous: 100, bootSessionUUID: "BOOT") == .invalid)
     }
 
@@ -821,7 +840,7 @@ struct LidClosedSessionStoreTests {
         // Either valid (same boot as saved OLD if somehow matches — unlikely) or replaced.
         if case let .valid(_, latched) = result {
             // If OLD matched live boot (unlikely), keep; if replaced after invalid, latched.
-            _ = latched
+            #expect(latched)
         } else if case .absent = result {
             Issue.record("closed should persist a session")
         }
@@ -832,10 +851,21 @@ struct LidClosedSessionStoreTests {
 @Suite("PowerHelper protocol repair (W1-14)")
 @MainActor
 struct PowerHelperRepairTests {
+    @Test("safe mismatch without per-operation authorization performs zero service operations (W1-14 r3)")
+    func unauthorizedRepairBlocked() {
+        let repairing = FakeRepairing()
+        let machine = PowerHelperRepairStateMachine(repairing: repairing)
+        let outcome = machine.repairIfNeeded(
+            status: PowerHelperStatus(helperBuild: "1", sleepDisabled: false),
+            handshake: .versionMismatch(helper: "1", app: "2"))
+        #expect(outcome == .blocked("authorizationRequired"))
+        #expect(repairing.unregisterCalls == 0 && repairing.registerCalls == 0)
+    }
+
     @Test("safe mismatch invokes unregister then register")
     func safeRepair() {
         let repairing = FakeRepairing()
-        let machine = PowerHelperRepairStateMachine(repairing: repairing)
+        let machine = PowerHelperRepairStateMachine(repairing: repairing, authorizeRepair: { true })
         let status = PowerHelperStatus(
             helperBuild: "136",
             sleepDisabled: false,
@@ -854,7 +884,7 @@ struct PowerHelperRepairTests {
     @Test("holders or recovery evidence never call service ops")
     func unsafeNeverCalls() {
         let repairing = FakeRepairing()
-        let machine = PowerHelperRepairStateMachine(repairing: repairing)
+        let machine = PowerHelperRepairStateMachine(repairing: repairing, authorizeRepair: { true })
         let cases: [PowerHelperStatus] = [
             PowerHelperStatus(helperBuild: "1", sleepDisabled: false, holderCount: 1),
             PowerHelperStatus(helperBuild: "1", sleepDisabled: false, pendingRestore: true),
