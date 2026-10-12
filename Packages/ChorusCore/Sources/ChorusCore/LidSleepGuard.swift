@@ -168,10 +168,10 @@ public enum LidSleepGuardPolicy {
     public static let batteryHysteresisPercent = PowerFloorPolicy.batteryHysteresisPercent
 
     /// 呼叫端合約（PowerSnapshot 無法表達「完全缺樣」時）：
-    /// - `onBattery == nil`：未知電源 → 本 policy 阻擋（`.unknownPower`）。
+    /// - `onBattery == nil`：未知電源 → 本 policy 阻擋（`.unknownPower`），**含無內建電池**（W0-11／Fi A3）。
     /// - `percent == nil` 且已知用電池：低電阻擋。
     /// - `thermal` 為非 optional；取樣失敗／未知 enum 時呼叫端應傳 `.serious` 或依賴 `@unknown default` 阻擋。
-    /// - `hasInternalBattery == false`：無內建電池，跳過電量門檻（仍受未知電源以外規則約束）。
+    /// - `hasInternalBattery == false` 且電源已知：跳過電量百分比門檻。
     public static func step(
         _ previous: LidSleepGuardState,
         input: LidSleepGuardInput
@@ -294,14 +294,14 @@ public enum LidSleepGuardPolicy {
         power: PowerSnapshot,
         existingFloor: KeepAwakeBatteryFloor
     ) -> LidBlockReason? {
+        // Fi A3 / W0-3／W0-11：未知電源在無電池短路之前檢查，不論 hasInternalBattery
+        if power.onBattery == nil {
+            return .unknownPower
+        }
+
         guard power.hasInternalBattery else {
             state.batteryLatched = false
             return nil
-        }
-
-        // Fi A3 / W0-3：未知電源獨立阻擋，不論百分比
-        if power.onBattery == nil {
-            return .unknownPower
         }
 
         // 接上電源：清 latch

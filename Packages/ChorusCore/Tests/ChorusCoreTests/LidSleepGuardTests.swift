@@ -213,6 +213,37 @@ struct LidSleepGuardTests {
         #expect(batWants)
     }
 
+    @Test("W0-11 unknown power with no internal battery refuses; known AC/no-battery positive")
+    func unknownPowerNoBatteryRefuses() {
+        let phases: [LidSleepGuardState] = [
+            .init(),
+            .init(phase: .armed),
+            .init(phase: .holdingLidClosed(sinceUptime: 0), lidClosedSince: 0),
+        ]
+        for previous in phases {
+            let lid: LidClosedReading = {
+                if case .holdingLidClosed = previous.phase { return .closed }
+                return .open
+            }()
+            let (state, wants, _) = run(
+                previous: previous,
+                input: input(
+                    lid: lid,
+                    power: power(battery: false, onBattery: nil, percent: nil)
+                )
+            )
+            #expect(state.phase == .blocked(.unknownPower))
+            #expect(!wants)
+        }
+
+        // 正例：無內建電池 + 已知 AC → 可 arm（跳過電量百分比）
+        let (ac, acWants, _) = run(
+            input: input(power: power(battery: false, onBattery: false, percent: nil))
+        )
+        #expect(ac.phase == .armed)
+        #expect(acWants)
+    }
+
     @Test("V-C02-2 hysteresis 29→34 blocked, 35 clears; AC clears latch")
     func batteryHysteresis() {
         var state = LidSleepGuardState()
@@ -468,6 +499,90 @@ struct LidSleepGuardTests {
                 }()
                 #expect(wants == holding)
             }
+        }
+    }
+
+    @Test("W0-10 explicit predicate priority and continuous-clock wake-jump deadline")
+    func predicatePriorityAndWakeJump() {
+        // 優先序（§5.3／§14.2）：off／agent → pause → helper → busy → thermal → power → duration
+        let paused = LidSleepGuardState(userPausedUntil: t0 + 100)
+        let (pauseWins, pauseWants, _) = run(
+            previous: paused,
+            input: input(busy: false, helper: .notRegistered, power: power(percent: 5, thermal: .critical))
+        )
+        #expect(pauseWins.phase == .blocked(.userPaused(untilUptime: t0 + 100)))
+        #expect(!pauseWants)
+
+        let (helperWins, helperWants, _) = run(
+            input: input(busy: false, helper: .requiresApproval, power: power(thermal: .critical))
+        )
+        #expect(helperWins.phase == .unavailable(.requiresApproval))
+        #expect(!helperWants)
+
+        let (busyWins, busyWants, _) = run(
+            input: input(busy: false, power: power(percent: 5, thermal: .critical))
+        )
+        #expect(busyWins.phase == .idle)
+        #expect(!busyWants)
+
+        let (thermalWins, thermalWants, _) = run(
+            input: input(
+                lid: .closed,
+                power: power(onBattery: nil, percent: nil, thermal: .serious),
+                now: t0 + 10 * 3600
+            )
+        )
+        #expect(thermalWins.phase == .blocked(.thermal))
+        #expect(!thermalWants)
+
+        let (powerWins, powerWants, _) = run(
+            previous: .init(lidClosedSince: t0),
+            input: input(
+                lid: .closed,
+                power: power(onBattery: nil, percent: 100),
+                now: t0 + 10 * 3600
+            )
+        )
+        #expect(powerWins.phase == .blocked(.unknownPower))
+        #expect(!powerWants)
+
+        // continuous-clock deadline：before / at / after 模擬 wake jump
+        let limit = 3 * 3600.0
+        let closedSince = t0
+        let base = LidSleepGuardState(lidClosedSince: closedSince)
+
+        let beforeNow = closedSince + limit - 1
+        let (before, beforeWants, _) = run(
+            previous: base,
+            input: input(lid: .closed, now: beforeNow)
+        )
+        #expect(before.phase == .holdingLidClosed(sinceUptime: closedSince))
+        #expect(beforeWants)
+
+        let atNow = closedSince + limit
+        let (atLimit, atWants, _) = run(
+            previous: before,
+            input: input(lid: .closed, now: atNow)
+        )
+        #expect(atLimit.maxDurationLatched)
+        #expect(!atWants)
+        guard case .blocked(.maxDuration) = atLimit.phase else {
+            Issue.record("expected maxDuration at boundary")
+            return
+        }
+
+        // wake jump：uptime 從 closedSince 附近跳到遠端；latch／since 由呼叫端注入持續
+        let afterWake = closedSince + limit + 50_000
+        let (after, afterWants, _) = run(
+            previous: atLimit,
+            input: input(lid: .closed, now: afterWake)
+        )
+        #expect(after.maxDurationLatched)
+        #expect(after.lidClosedSince == closedSince)
+        #expect(!afterWants)
+        guard case .blocked(.maxDuration) = after.phase else {
+            Issue.record("expected still latched after wake jump")
+            return
         }
     }
 
