@@ -829,4 +829,83 @@ struct KeepAwakeControllerTests {
         // Lid must not acquire from expired-only work before the next periodic tick.
         #expect(helper.setCalls.filter { $0 }.count == acquiresBeforeWake)
     }
+
+    @Test("V01R3 production wake fails closed on lease clock failure", .timeLimit(.minutes(1)))
+    func wakeClockFailureStopsWorkAndRejectsHold() throws {
+        var continuous: Double? = 10_000
+        let leases = KeepAwakeLeaseSource(continuousNow: { continuous })
+        let hub = KeepAwakeSourceHub(
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            leases: leases, tickInterval: .seconds(3_600))
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "wake-clock-\(UUID().uuidString)")!)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        let center = NotificationCenter()
+        let assertions = FakeAssertions()
+        let notifier = FakeNotifier()
+        let controller = KeepAwakeController(
+            settings: settings, displayManager: DisplayManager(settings: settings),
+            agentActivity: hub.agentActivity, sourceHub: hub,
+            lidGuard: makeLidGuard(settings: settings, notifier: notifier),
+            powerSource: FakePowerSource(), assertions: assertions, notifier: notifier,
+            workspaceNotifications: center)
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        #expect(controller.handleKeepAwakeHold(body: holdBody(id: "before-clock-loss")).status == 200)
+        #expect(controller.isHolding)
+        continuous = nil
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        #expect(!controller.sourceHub.isBusy)
+        #expect(!controller.isHolding)
+        #expect(assertions.active.isEmpty)
+        #expect(controller.handleKeepAwakeHold(body: holdBody(id: "bad-clock")).status == 503)
+        continuous = 10_361
+        hub.tick()
+        #expect(!controller.sourceHub.isBusy)
+        #expect(controller.handleKeepAwakeHold(body: holdBody(id: "fresh-clock")).status == 200)
+    }
+
+    @Test("V01R3 transport rejects stale release before real controller mutation", .timeLimit(.minutes(1)))
+    func transportRotationPreservesNewControllerLease() async throws {
+        @MainActor final class Gate {
+            var continuation: CheckedContinuation<Void, Never>?
+            var opened = false
+            func wait() async {
+                if !opened { await withCheckedContinuation { continuation = $0 } }
+            }
+            func release() { opened = true; continuation?.resume(); continuation = nil }
+        }
+        let controller = makeController(assertions: FakeAssertions())
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        let body = try JSONEncoder().encode(KeepAwakeReleaseRequest(id: "same-id"))
+        _ = controller.handleKeepAwakeHold(body: holdBody(id: "same-id"))
+        let gate = Gate()
+        let transport = AutomationHTTPTransport(token: "old", handlers: .init(
+            state: { .init(status: 200, json: "{}") },
+            scenes: { .init(status: 200, json: "[]") },
+            doctor: { .init(status: 200, json: "{}") },
+            execute: { _, _ in .init(status: 200, json: "{}") }, eventStreamsActive: { _ in },
+            keepAwakeHold: { data in MainActor.assumeIsolated { controller.handleKeepAwakeHold(body: data) } },
+            keepAwakeRelease: { data in MainActor.assumeIsolated { controller.handleKeepAwakeRelease(body: data) } }
+        ), keepAwakeMutationGates: .init(afterAdmissionBeforeMainActor: { await gate.wait() }))
+        let stale = Task {
+            await transport.executeKeepAwakeMutationProductionPathForTesting(bearer: "old", body: body, hold: false)
+        }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while gate.continuation == nil, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(gate.continuation != nil)
+        transport.rotateKeepAwakeAuthorization(token: "new")
+        controller.clearKeepAwakeLeases()
+        _ = controller.handleKeepAwakeHold(body: holdBody(id: "same-id"))
+        gate.release()
+        #expect(await stale.value.status == 409)
+        #expect(controller.sourceHub.leases.snapshot().active.first?.id == "same-id")
+        let unauthorized = await transport.executeKeepAwakeMutationProductionPathForTesting(bearer: "old", body: body, hold: false)
+        #expect(unauthorized.status == 401)
+        let authorized = await transport.executeKeepAwakeMutationProductionPathForTesting(bearer: "new", body: body, hold: false)
+        #expect(authorized.status == 200)
+        #expect(controller.sourceHub.leases.snapshot().active.isEmpty)
+    }
 }

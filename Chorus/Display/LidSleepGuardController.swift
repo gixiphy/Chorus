@@ -83,6 +83,8 @@ final class LidSleepGuardController {
     @ObservationIgnored private var suppressOnChange = false
 
     @ObservationIgnored private var setGeneration: UInt64 = 0
+    /// Distinguishes recovery reads/retries even when no policy set was issued.
+    @ObservationIgnored private var recoveryGeneration: UInt64 = 0
     @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
     @ObservationIgnored private var retryTask: Task<Void, Never>?
     @ObservationIgnored private var nextRetryDelay: TimeInterval = 1
@@ -200,12 +202,15 @@ final class LidSleepGuardController {
         switch leftover {
         case .ownResidual:
             recoveryTask?.cancel()
+            recoveryGeneration &+= 1
+            let recovery = recoveryGeneration
             let generation = setGeneration
             recoveryTask = Task { [weak self] in
                 guard let self else { return }
-                let restored = await self.restoreOwnResidual(expectedGeneration: generation)
+                let restored = await self.restoreOwnResidual(expectedGeneration: generation, expectedRecoveryGeneration: recovery)
                 // NEW-2: clear residual presentation only on current-generation success.
-                guard !self.shutDown, self.setGeneration == generation else { return }
+                guard !self.shutDown, self.setGeneration == generation,
+                      self.recoveryGeneration == recovery, !Task.isCancelled else { return }
                 if restored {
                     self.leftover = nil
                     self.publish()
@@ -263,13 +268,15 @@ final class LidSleepGuardController {
     /// Named E2E instances never connect or repair.
     func detectLeftover() async {
         guard !e2eNamedInstance, !shutDown else { return }
+        recoveryGeneration &+= 1
+        let recovery = recoveryGeneration
         helper.refreshAvailability()
         // V1-4: capture lifecycle/generation before the first await so stale
         // probe/status completions cannot overwrite newer recovery evidence.
         let generation = setGeneration
         // V1-3: await off-MainActor probe (default hops via Task.detached).
         let probe = await sleepDisabledProbe()
-        guard !shutDown, setGeneration == generation else { return }
+        guard !shutDown, setGeneration == generation, recoveryGeneration == recovery else { return }
         let registered: Bool = {
             switch helper.availability {
             case .notRegistered: return false
@@ -296,18 +303,18 @@ final class LidSleepGuardController {
 
         do {
             let status = try await helper.status()
-            guard !shutDown, setGeneration == generation else { return }
+            guard !shutDown, setGeneration == generation, recoveryGeneration == recovery else { return }
             applyHelperStatus(status)
             classifyLeftover(from: status)
             if leftover == .ownResidual {
-                let restored = await restoreOwnResidual(expectedGeneration: generation)
-                guard !shutDown, setGeneration == generation else { return }
+                let restored = await restoreOwnResidual(expectedGeneration: generation, expectedRecoveryGeneration: recovery)
+                guard !shutDown, setGeneration == generation, recoveryGeneration == recovery else { return }
                 if restored {
                     leftover = nil
                 }
             }
         } catch {
-            guard !shutDown, setGeneration == generation else { return }
+            guard !shutDown, setGeneration == generation, recoveryGeneration == recovery else { return }
             leftover = .unknownOwner
         }
         publish()
@@ -315,6 +322,8 @@ final class LidSleepGuardController {
 
     func refreshFromHelper() async {
         guard !e2eNamedInstance, !shutDown else { return }
+        recoveryGeneration &+= 1
+        let recovery = recoveryGeneration
         helper.refreshAvailability()
         switch helper.availability {
         case .ready, .connecting:
@@ -325,7 +334,7 @@ final class LidSleepGuardController {
         let generation = setGeneration
         do {
             let status = try await helper.status()
-            guard !shutDown, setGeneration == generation else { return }
+            guard !shutDown, setGeneration == generation, recoveryGeneration == recovery else { return }
             applyHelperStatus(status)
             handleForcedOffIfNeeded(status)
             considerExternalInterference(from: status)
@@ -338,7 +347,7 @@ final class LidSleepGuardController {
             }
             scheduleReevaluate()
         } catch {
-            guard !shutDown, setGeneration == generation else { return }
+            guard !shutDown, setGeneration == generation, recoveryGeneration == recovery else { return }
             helperStatus = nil
             publish()
         }
@@ -882,9 +891,12 @@ final class LidSleepGuardController {
     /// V1-4: direct bounded set(false) for verified own residuals (helper forceOff path).
     /// No new acquire; every await completion gated by lifecycle/generation.
     @discardableResult
-    private func restoreOwnResidual(expectedGeneration: UInt64) async -> Bool {
+    private func restoreOwnResidual(
+        expectedGeneration: UInt64, expectedRecoveryGeneration: UInt64
+    ) async -> Bool {
         guard !e2eNamedInstance, !shutDown else { return false }
-        guard setGeneration == expectedGeneration else { return false }
+        guard setGeneration == expectedGeneration,
+              recoveryGeneration == expectedRecoveryGeneration, !Task.isCancelled else { return false }
         // Never acquire-as-repair while recovery is blocked (Fi A8 / C8-4).
         if let status = helperStatus,
            status.recoveryBlocked || status.pendingRestore || status.persistRetryNeeded {
@@ -892,7 +904,8 @@ final class LidSleepGuardController {
         }
         do {
             let after = try await helper.setSleepDisabled(false)
-            guard !shutDown, setGeneration == expectedGeneration else { return false }
+            guard !shutDown, setGeneration == expectedGeneration,
+                  recoveryGeneration == expectedRecoveryGeneration, !Task.isCancelled else { return false }
             applyHelperStatus(after)
             // Only notify when restore evidence shows SleepDisabled cleared (V-C08-7).
             guard after.sleepDisabled == false else { return false }

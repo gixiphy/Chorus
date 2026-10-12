@@ -73,6 +73,8 @@ public struct KeepAwakeLeaseTable: Sendable, Equatable {
         case invalidID
         case invalidTTL
         case tooMany
+        /// The App source cannot safely admit a lease without a continuous timestamp.
+        case clockUnavailable
     }
 
     public private(set) var leases: [String: Lease] = [:]

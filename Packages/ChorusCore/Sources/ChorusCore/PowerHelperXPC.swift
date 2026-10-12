@@ -296,14 +296,17 @@ public enum PMSetOutputParser {
         guard parts.count > 2 else { return true }
         guard annotatableSettingKeys.contains(key) else { return false }
         let tail = parts[2...].joined(separator: " ")
-        guard tail.first == "(", tail.last == ")", tail.count >= 2 else { return false }
+        guard tail.first == "(", tail.last == ")", tail.count > 2,
+              !tail.dropFirst().dropLast().trimmingCharacters(in: .whitespaces).isEmpty
+        else { return false }
         var depth = 0
-        for character in tail {
+        for (index, character) in tail.enumerated() {
             if character == "(" {
                 depth += 1
             } else if character == ")" {
                 depth -= 1
-                if depth < 0 { return false }
+                // Once the outer group closes, no more text or groups are permitted.
+                if depth < 0 || (depth == 0 && index != tail.count - 1) { return false }
             }
         }
         return depth == 0

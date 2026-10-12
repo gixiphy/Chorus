@@ -594,106 +594,106 @@ enum SleepDisabledProbe {
         arguments: [String],
         timeout: TimeInterval
     ) throws -> (exit: Int32, stdout: Data, truncated: Bool) {
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = arguments
-        process.environment = [:]
+        // Establish the group at spawn time. setpgid after Process.launch races exec
+        // and can fail with EACCES, leaving inherited pipe writers alive.
         let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        try process.launch()
-
+        defer {
+            try? pipe.fileHandleForReading.close()
+            try? pipe.fileHandleForWriting.close()
+        }
         let outFD = pipe.fileHandleForReading.fileDescriptor
-        let box = ProbeOutputBox(limit: maxStdoutBytes)
-        let pid = process.processIdentifier
-        let groupOK = pid > 0 && setpgid(pid, pid) == 0
-
-        // Nonblocking is mandatory — a blocking read bypasses every outer deadline.
+        let writerFD = pipe.fileHandleForWriting.fileDescriptor
         let flags = fcntl(outFD, F_GETFL)
-        guard flags >= 0, fcntl(outFD, F_SETFL, flags | O_NONBLOCK) >= 0 else {
-            terminateProcessTree(process: process, pid: pid, groupOK: groupOK, escalate: true)
-            return (exit: -1, stdout: Data(), truncated: true)
+        guard flags >= 0, fcntl(outFD, F_SETFL, flags | O_NONBLOCK) == 0 else {
+            throw POSIXError(.EIO)
         }
+        let nullFD = open("/dev/null", O_RDWR | O_CLOEXEC)
+        guard nullFD >= 0 else { throw POSIXError(.EIO) }
+        defer { close(nullFD) }
 
+        var actions: posix_spawn_file_actions_t?
+        var attributes: posix_spawnattr_t?
+        func checked(_ code: Int32) throws {
+            guard code == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+            }
+        }
+        try checked(posix_spawn_file_actions_init(&actions))
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        try checked(posix_spawnattr_init(&attributes))
+        defer { posix_spawnattr_destroy(&attributes) }
+        try checked(posix_spawn_file_actions_adddup2(&actions, nullFD, STDIN_FILENO))
+        try checked(posix_spawn_file_actions_adddup2(&actions, writerFD, STDOUT_FILENO))
+        try checked(posix_spawn_file_actions_adddup2(&actions, nullFD, STDERR_FILENO))
+        try checked(posix_spawn_file_actions_addclose(&actions, outFD))
+        try checked(posix_spawn_file_actions_addclose(&actions, writerFD))
+        try checked(posix_spawn_file_actions_addclose(&actions, nullFD))
+        try checked(posix_spawnattr_setpgroup(&attributes, 0))
+        try checked(posix_spawnattr_setflags(&attributes,
+            Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)))
+
+        let strings = ([executableURL.path] + arguments).map { strdup($0) }
+        defer { for string in strings { free(string) } }
+        guard strings.allSatisfy({ $0 != nil }) else { throw POSIXError(.ENOMEM) }
+        var argv = strings + [nil]
+        var environment: [UnsafeMutablePointer<CChar>?] = [nil]
+        var pid: pid_t = 0
+        let spawnError = argv.withUnsafeMutableBufferPointer { argumentsBuffer in
+            environment.withUnsafeMutableBufferPointer { environmentBuffer in
+                posix_spawn(&pid, executableURL.path, &actions, &attributes,
+                    argumentsBuffer.baseAddress!, environmentBuffer.baseAddress!)
+            }
+        }
+        try checked(spawnError)
+        try? pipe.fileHandleForWriting.close()
+
+        let box = ProbeOutputBox(limit: maxStdoutBytes)
+        var waitStatus: Int32 = 0
+        var reaped = false
+        var waitFailed = false
+        func pollChild() -> Bool {
+            if reaped || waitFailed { return true }
+            let result = waitpid(pid, &waitStatus, WNOHANG)
+            if result == pid { reaped = true }
+            else if result < 0, errno != EINTR { waitFailed = true; box.markTruncated() }
+            return reaped || waitFailed
+        }
+        // The spawn attributes guarantee an isolated group. Always clean that group,
+        // even when the direct child exits normally or closes stdout before descendants.
+        defer { kill(-pid, SIGKILL) }
         let runDeadline = ContinuousClock.now + .seconds(timeout)
-        while process.isRunning, ContinuousClock.now < runDeadline {
+        while !pollChild(), ContinuousClock.now < runDeadline {
             _ = drainAvailable(fd: outFD, box: box)
-            Thread.sleep(forTimeInterval: 0.05)
+            Thread.sleep(forTimeInterval: 0.01)
         }
-
-        if process.isRunning {
-            // Timed out while still running — TERM group, then KILL.
-            signalProcessTree(pid: pid, groupOK: groupOK, signal: SIGTERM)
-            process.terminate()
+        let timedOut = !pollChild()
+        if timedOut {
+            kill(-pid, SIGTERM)
             let termDeadline = ContinuousClock.now + .seconds(termGraceSeconds)
-            while process.isRunning, ContinuousClock.now < termDeadline {
+            while !pollChild(), ContinuousClock.now < termDeadline {
                 _ = drainAvailable(fd: outFD, box: box)
-                Thread.sleep(forTimeInterval: 0.05)
+                Thread.sleep(forTimeInterval: 0.01)
             }
-            if process.isRunning {
-                terminateProcessTree(process: process, pid: pid, groupOK: groupOK, escalate: true)
+            // A reaped parent does not prove its descendants respected TERM.
+            kill(-pid, SIGKILL)
+            let reapDeadline = ContinuousClock.now + .seconds(drainGraceSeconds)
+            while !pollChild(), ContinuousClock.now < reapDeadline {
+                _ = drainAvailable(fd: outFD, box: box)
+                Thread.sleep(forTimeInterval: 0.01)
             }
-            boundedReapAndDrain(process: process, outFD: outFD, box: box, pid: pid, groupOK: groupOK)
-            return (exit: -1, stdout: box.data, truncated: true)
-        }
-
-        // Parent exited. Descendants that still hold stdout must be cleaned up too.
-        boundedReapAndDrain(process: process, outFD: outFD, box: box, pid: pid, groupOK: groupOK)
-        return (exit: process.terminationStatus, stdout: box.data, truncated: box.truncated)
-    }
-
-    private static func boundedReapAndDrain(
-        process: Process,
-        outFD: Int32,
-        box: ProbeOutputBox,
-        pid: Int32,
-        groupOK: Bool
-    ) {
-        let reapDeadline = ContinuousClock.now + .seconds(drainGraceSeconds + termGraceSeconds)
-        while process.isRunning, ContinuousClock.now < reapDeadline {
-            Thread.sleep(forTimeInterval: 0.02)
-        }
-        if process.isRunning {
-            terminateProcessTree(process: process, pid: pid, groupOK: groupOK, escalate: true)
         }
         var sawEOF = false
         let drainDeadline = ContinuousClock.now + .seconds(drainGraceSeconds)
         repeat {
-            sawEOF = drainAvailable(fd: outFD, box: box) || sawEOF
+            sawEOF = drainAvailable(fd: outFD, box: box)
             if sawEOF { break }
             Thread.sleep(forTimeInterval: 0.01)
         } while ContinuousClock.now < drainDeadline
-        if !sawEOF {
-            // Inherited writers (exited parent, live descendant) — kill the group and truncate.
-            signalProcessTree(pid: pid, groupOK: groupOK, signal: SIGKILL)
-            box.markTruncated()
-        }
-    }
-
-    private static func signalProcessTree(pid: Int32, groupOK: Bool, signal: Int32) {
-        guard pid > 0 else { return }
-        if groupOK {
-            kill(-pid, signal)
-        }
-        kill(pid, signal)
-    }
-
-    private static func terminateProcessTree(
-        process: Process,
-        pid: Int32,
-        groupOK: Bool,
-        escalate: Bool
-    ) {
-        signalProcessTree(pid: pid, groupOK: groupOK, signal: escalate ? SIGKILL : SIGTERM)
-        if process.isRunning {
-            if escalate {
-                process.terminate()
-                if pid > 0 { kill(pid, SIGKILL) }
-            } else {
-                process.terminate()
-            }
-        }
+        if !sawEOF || !reaped { box.markTruncated() }
+        // waitpid's status is an exit code only for normal exits, never for a signal.
+        let normalExit = reaped && (waitStatus & 0x7f) == 0
+        let exitCode: Int32 = normalExit && !timedOut ? (waitStatus >> 8) & 0xff : -1
+        return (exit: exitCode, stdout: box.data, truncated: box.truncated || timedOut)
     }
 
     @discardableResult

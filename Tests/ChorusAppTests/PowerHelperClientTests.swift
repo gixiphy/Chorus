@@ -1,4 +1,5 @@
 import ChorusCore
+import Darwin
 import Foundation
 import ServiceManagement
 import Testing
@@ -1131,5 +1132,36 @@ struct SleepDisabledProbeTests {
         try contents.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         return url
+    }
+
+    @Test("V01R3 probe closes its writer and accepts complete child output")
+    func completeChildOutputIsNotTruncated() throws {
+        let script = try writeProbeFixture(name: "complete", contents: "#!/bin/sh\nprintf 'SleepDisabled 0\\n'\n")
+        defer { try? FileManager.default.removeItem(at: script) }
+        let result = try SleepDisabledProbe.runSubprocess(executableURL: script, arguments: [], timeout: 1)
+        #expect(result.exit == 0)
+        #expect(!result.truncated)
+        #expect(String(data: result.stdout, encoding: .utf8) == "SleepDisabled 0\n")
+    }
+
+    @Test("V01R3 probe kills inherited writer after parent exit", .timeLimit(.minutes(1)))
+    func inheritedWriterIsActuallyTerminated() throws {
+        let script = try writeProbeFixture(name: "orphan", contents: """
+        #!/bin/sh
+        /bin/sleep 30 &
+        printf '%s\\n' "$!"
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(at: script) }
+        let result = try SleepDisabledProbe.runSubprocess(executableURL: script, arguments: [], timeout: 1)
+        let text = try #require(String(data: result.stdout, encoding: .utf8))
+        let child = try #require(Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)))
+        defer { Darwin.kill(child, SIGKILL) } // Clean up even on the pre-fix failure.
+        let deadline = ContinuousClock.now + .seconds(1)
+        while Darwin.kill(child, 0) == 0, ContinuousClock.now < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        #expect(Darwin.kill(child, 0) == -1 && errno == ESRCH)
+        #expect(result.truncated)
     }
 }

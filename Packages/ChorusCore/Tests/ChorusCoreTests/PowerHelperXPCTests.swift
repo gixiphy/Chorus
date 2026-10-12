@@ -5,6 +5,18 @@ import Testing
 
 @Suite("PMSetOutputParser")
 struct PowerHelperXPCTests {
+    @Test("V01R3 annotation is a single parenthesized group with no trailing garbage")
+    func rejectsGarbageBetweenAnnotationGroups() {
+        for row in [
+            "sleep 0 (valid) garbage (valid)",
+            "displaysleep 10 (valid) (second annotation)",
+            "sleep 0 ()",
+        ] {
+            #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: "System-wide power settings:\n\(row)") == nil)
+        }
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG:
+            "System-wide power settings:\nsleep 0 (sleep prevented by powerd (nested))") == false)
+    }
     @Test("W0-6 header must name a known power source and every output line must validate")
     func rejectsHeaderAndUnknownRowAmbiguity() {
         for sample in [

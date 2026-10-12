@@ -138,8 +138,8 @@ struct KeepAwakeLeaseSourceTests {
         source.stop()
     }
 
-    @Test("V1-7 clock failure freezes last continuous stamp (no systemUptime epoch switch)")
-    func clockFailureFreezesEpoch() {
+    @Test("V01R3 clock failure clears live work without switching epochs")
+    func clockFailureFailsClosed() {
         var continuous: Double? = 5_000
         let source = KeepAwakeLeaseSource(
             graceSeconds: 300,
@@ -153,12 +153,39 @@ struct KeepAwakeLeaseSourceTests {
         continuous = nil // primary clock fails
         #expect(source.currentUptime() == 5_000)
         source.refresh()
-        #expect(source.report.contains { $0.id == "lease:sticky" && $0.isWorkingNow })
+        #expect(source.report.isEmpty)
+        #expect(source.snapshot().active.isEmpty)
+        // No renewal may turn a failed clock into unlimited live work.
+        if case .held = source.hold(id: "sticky", ttl: 120) {
+            Issue.record("hold accepted without a continuous time sample")
+        }
         // Recovery resumes the same continuous epoch — not a different base.
         continuous = 5_030
         #expect(source.currentUptime() == 5_030)
         source.refresh()
-        #expect(source.report.contains { $0.id == "lease:sticky" && $0.isWorkingNow })
+        #expect(source.report.isEmpty)
+        if case .held = source.hold(id: "fresh", ttl: 120) {} else {
+            Issue.record("hold rejected after clock recovery")
+        }
+        #expect(source.report.first?.id == "lease:fresh")
+        source.stop()
+    }
+
+    @Test("V01R3 missing first continuous sample never fabricates a lease epoch")
+    func firstClockSampleUnavailable() {
+        var continuous: Double?
+        let source = KeepAwakeLeaseSource(continuousNow: { continuous })
+        source.start()
+        if case .held = source.hold(id: "unknown-time", ttl: 60) {
+            Issue.record("hold accepted before first valid clock sample")
+        }
+        #expect(source.snapshot().active.isEmpty)
+        continuous = 100
+        source.refresh()
+        #expect(source.report.isEmpty)
+        if case let .held(expiresAt, _) = source.hold(id: "known-time", ttl: 60) {
+            #expect(expiresAt == 160)
+        } else { Issue.record("hold rejected with known clock") }
         source.stop()
     }
 

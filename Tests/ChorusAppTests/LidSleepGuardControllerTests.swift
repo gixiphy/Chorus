@@ -6,6 +6,63 @@ import Testing
 @MainActor
 @Suite("LidSleepGuardController")
 struct LidSleepGuardControllerTests {
+    @MainActor
+    final class RecoveryGate {
+        var continuation: CheckedContinuation<Void, Never>?
+        func wait() async {
+            await withCheckedContinuation { continuation = $0 }
+        }
+        func release() { continuation?.resume(); continuation = nil }
+    }
+
+    @Test("V01R3 older detect failure cannot replace newer detect evidence", .timeLimit(.minutes(1)))
+    func newerDetectionSupersedesOldStatusFailure() async throws {
+        let helper = FakeHelper()
+        helper.sleepDisabled = true
+        let gate = RecoveryGate()
+        helper.statusHandler = {
+            if helper.statusCalls == 1 {
+                await gate.wait()
+                throw PowerHelperClientError.remote("oldFailure")
+            }
+            return helper.makeStatus()
+        }
+        let (controller, _, _, _) = makeController(helper: helper, probe: { true })
+        defer { controller.shutdown() }
+        let old = Task { await controller.detectLeftover() }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while gate.continuation == nil, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(gate.continuation != nil)
+        await controller.detectLeftover()
+        #expect(controller.leftover == .foreign)
+        gate.release()
+        await old.value
+        #expect(controller.leftover == .foreign)
+    }
+
+    @Test("V01R3 older probe cannot clear newer recovery classification", .timeLimit(.minutes(1)))
+    func newerDetectionSupersedesOldProbe() async throws {
+        let helper = FakeHelper()
+        helper.sleepDisabled = true
+        let gate = RecoveryGate()
+        var probes = 0
+        let (controller, _, _, _) = makeController(helper: helper, probe: {
+            probes += 1
+            if probes == 1 { await gate.wait(); return false }
+            return true
+        })
+        defer { controller.shutdown() }
+        let old = Task { await controller.detectLeftover() }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while gate.continuation == nil, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(gate.continuation != nil)
+        await controller.detectLeftover()
+        #expect(controller.leftover == .foreign)
+        gate.release()
+        await old.value
+        #expect(controller.leftover == .foreign)
+    }
+
     final class FakeHelper: PowerHelperClienting {
         var availability: LidHelperAvailability = .ready
         var onAvailabilityChange: (() -> Void)?

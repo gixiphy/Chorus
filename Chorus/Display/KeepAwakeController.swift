@@ -366,6 +366,9 @@ final class KeepAwakeController {
                 status: 429,
                 json: AutomationHTTPTransport.errorJSON("tooManyLeases", "租約數已達上限")
             )
+        case .clockUnavailable:
+            return .init(status: 503,
+                json: AutomationHTTPTransport.errorJSON("clockUnavailable", "無法取得租約時鐘，請重試"))
         }
     }
 

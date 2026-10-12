@@ -60,6 +60,7 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         }
     }
 
+    #if DEBUG
     /// Optional hooks that let tests park between production admission steps (V1-5).
     struct KeepAwakeMutationTestGates: Sendable {
         /// After atomic token+generation admission, before the MainActor hop.
@@ -67,6 +68,7 @@ final class AutomationHTTPTransport: @unchecked Sendable {
         /// On MainActor, after enter, before generation revalidation + mutation.
         var onMainActorBeforeValidate: (@Sendable () -> Void)?
     }
+    #endif
 
     /// 從接受連線到請求讀完的絕對期限——慢慢送一點資料不能無限續命。
     static let requestDeadline: Duration = .seconds(10)
@@ -103,20 +105,32 @@ final class AutomationHTTPTransport: @unchecked Sendable {
     private var admission: AutomationAdmission
     private var connections: [ObjectIdentifier: Connection] = [:]
     private var heartbeat: DispatchSourceTimer?
-    /// Test-only gates for production-path race coverage (nil in production).
-    private let keepAwakeMutationGates: KeepAwakeMutationTestGates?
+    #if DEBUG
+    /// Test gates do not exist in Release (§11.2).
+    private var keepAwakeMutationGates: KeepAwakeMutationTestGates?
+    #endif
 
     init(
         token: String,
         handlers: Handlers,
-        limits: AutomationAdmission.Limits = .init(),
-        keepAwakeMutationGates: KeepAwakeMutationTestGates? = nil
+        limits: AutomationAdmission.Limits = .init()
     ) {
         self.authorization = Mutex(AuthorizationState(token: token, keepAwakeGeneration: 0))
         self.handlers = handlers
-        self.keepAwakeMutationGates = keepAwakeMutationGates
         admission = AutomationAdmission(limits: limits)
     }
+
+    #if DEBUG
+    convenience init(
+        token: String,
+        handlers: Handlers,
+        limits: AutomationAdmission.Limits = .init(),
+        keepAwakeMutationGates: KeepAwakeMutationTestGates?
+    ) {
+        self.init(token: token, handlers: handlers, limits: limits)
+        self.keepAwakeMutationGates = keepAwakeMutationGates
+    }
+    #endif
 
     /// Bump generation only (stop path when transport is about to die).
     func invalidateKeepAwakeAuthorization() {
@@ -387,13 +401,19 @@ final class AutomationHTTPTransport: @unchecked Sendable {
                 json: Self.errorJSON("unauthorized", "缺少或錯誤的 Bearer token")
             )
         }
+        #if DEBUG
         if let gate = keepAwakeMutationGates?.afterAdmissionBeforeMainActor {
             await gate()
         }
+        #endif
         let handlers = self.handlers
+        #if DEBUG
         let gates = keepAwakeMutationGates
+        #endif
         return await MainActor.run { [self] in
+            #if DEBUG
             gates?.onMainActorBeforeValidate?()
+            #endif
             let current = self.authorization.withLock { $0.keepAwakeGeneration }
             guard current == expectedGeneration else {
                 return Response(

@@ -54,6 +54,8 @@ struct KeepAwakeLeaseHTTPTests {
                         status: 429,
                         json: AutomationHTTPTransport.errorJSON("tooManyLeases", "租約數已達上限")
                     )
+                case .clockUnavailable:
+                    return .init(status: 503, json: "{}")
                 }
             },
             keepAwakeRelease: { body in
