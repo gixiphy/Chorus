@@ -1,8 +1,9 @@
 import ChorusCore
+import Darwin
 import Foundation
 import IOKit
 
-/// Lid / clamshell observation (spec §5.6 / §14.2).
+/// Lid / clamshell observation (spec §5.6 / §14.2 / W1-10 / W1-11).
 @MainActor
 protocol LidStateObserving: AnyObject {
     /// nil: no built-in display or unreadable.
@@ -14,6 +15,16 @@ protocol LidStateObserving: AnyObject {
     func stop()
     /// Armed/holding → 5s poll; otherwise off (spec §5.6).
     func setPollingEnabled(_ enabled: Bool)
+}
+
+/// Capability detection vs transient property failure (W1-11 / Fi A3 / research Q10).
+enum LidCapability: Equatable, Sendable {
+    /// IOPMrootDomain present and `AppleClamshellState` key exists.
+    case hasLid
+    /// IOPMrootDomain present and `AppleClamshellState` key confirmed absent (desktop).
+    case noLid
+    /// Could not open IOPMrootDomain or other transient failure — not evidence of noLid.
+    case unknown
 }
 
 /// Parses `AppleClamshellState` CF property (V-C06 / tasks).
@@ -46,20 +57,43 @@ enum LidClamshellPropertyParser {
     }
 }
 
-/// Persists continuous lid-closed deadline across App restart / wake (Fi A3).
+/// Boot-anchored continuous seconds (advances across sleep; same across process restart).
+enum LidMonotonicTime {
+    static func seconds() -> Double {
+        var ts = timespec()
+        guard clock_gettime(CLOCK_MONOTONIC_RAW, &ts) == 0 else {
+            return ProcessInfo.processInfo.systemUptime
+        }
+        return Double(ts.tv_sec) + Double(ts.tv_nsec) / 1_000_000_000.0
+    }
+
+    static func bootSessionUUID() -> String? {
+        var size = 0
+        sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0)
+        guard size > 1 else { return nil }
+        var buffer = [CChar](repeating: 0, count: Int(size))
+        guard sysctlbyname("kern.bootsessionuuid", &buffer, &size, nil, 0) == 0 else { return nil }
+        return String(cString: buffer)
+    }
+}
+
+/// Persists continuous lid-closed deadline across App restart / wake (Fi A3 / W1-10).
 ///
-/// Policy uses uptime-based `lidClosedSince`. Across process restart uptime resets,
-/// so we anchor on wall clock and re-project into the current uptime domain.
+/// Uses monotonic continuous time + boot session UUID. Wall-clock changes cannot
+/// extend or reset the deadline. Reboot / invalid persistence → conservative nil.
 struct LidClosedSessionStore: Equatable {
     struct Snapshot: Codable, Equatable {
-        var wallClosedAt: Date
+        var continuousClosedAt: Double
+        var bootSessionUUID: String
         var maxDurationLatched: Bool
+        /// Display-only; never used for deadline math.
+        var wallClosedAt: Date?
     }
 
     private let suiteName: String?
     private let key: String
 
-    init(suiteName: String? = nil, key: String = "lidClosedSession.v1") {
+    init(suiteName: String? = nil, key: String = "lidClosedSession.v2") {
         self.suiteName = suiteName
         self.key = key
     }
@@ -71,8 +105,18 @@ struct LidClosedSessionStore: Equatable {
         return .standard
     }
 
-    func save(wallClosedAt: Date, maxDurationLatched: Bool) {
-        let snap = Snapshot(wallClosedAt: wallClosedAt, maxDurationLatched: maxDurationLatched)
+    func save(
+        continuousClosedAt: Double,
+        bootSessionUUID: String,
+        maxDurationLatched: Bool,
+        wallClosedAt: Date = Date()
+    ) {
+        let snap = Snapshot(
+            continuousClosedAt: continuousClosedAt,
+            bootSessionUUID: bootSessionUUID,
+            maxDurationLatched: maxDurationLatched,
+            wallClosedAt: wallClosedAt
+        )
         if let data = try? JSONEncoder().encode(snap) {
             defaults.set(data, forKey: key)
         }
@@ -87,14 +131,21 @@ struct LidClosedSessionStore: Equatable {
         return try? JSONDecoder().decode(Snapshot.self, from: data)
     }
 
-    /// Convert persisted wall closed-at into current uptime `lidClosedSince`.
-    /// Returns nil when no session or elapsed would be negative (clock skew).
-    func restoredLidClosedSince(nowUptime: Double, wallNow: Date = Date()) -> (sinceUptime: Double, latched: Bool)? {
+    /// Restore continuous `lidClosedSince` for policy. nil when missing, reboot, or invalid.
+    func restoredLidClosedSince(
+        nowContinuous: Double = LidMonotonicTime.seconds(),
+        bootSessionUUID: String? = LidMonotonicTime.bootSessionUUID()
+    ) -> (sinceContinuous: Double, latched: Bool)? {
         guard let snap = load() else { return nil }
-        let elapsed = wallNow.timeIntervalSince(snap.wallClosedAt)
-        guard elapsed.isFinite, elapsed >= 0 else { return nil }
-        let since = nowUptime - elapsed
-        return (since, snap.maxDurationLatched)
+        guard let bootSessionUUID, snap.bootSessionUUID == bootSessionUUID else {
+            // Reboot or unknown boot → conservative: do not extend prior deadline.
+            return nil
+        }
+        guard snap.continuousClosedAt.isFinite, nowContinuous.isFinite else { return nil }
+        // Closed-at must not be in the future (corruption / clock anomaly).
+        guard snap.continuousClosedAt <= nowContinuous + 0.5 else { return nil }
+        // Absurdly old within same boot → still usable; policy latches on max duration.
+        return (snap.continuousClosedAt, snap.maxDurationLatched)
     }
 }
 
@@ -115,26 +166,34 @@ final class LidStateMonitor: LidStateObserving {
     private var rootDomain: io_service_t = 0
     private var confirmedNoLid = false
     private let readProperty: @MainActor () -> CFTypeRef?
-    private let detectNoLid: @MainActor () -> Bool
+    private let detectCapability: @MainActor () -> LidCapability
     let sessionStore: LidClosedSessionStore
 
     init(
         readProperty: @escaping @MainActor () -> CFTypeRef? = { LidStateMonitor.readAppleClamshellState() },
-        detectNoLid: @escaping @MainActor () -> Bool = { LidStateMonitor.defaultDetectNoLid() },
+        detectCapability: @escaping @MainActor () -> LidCapability = { LidStateMonitor.detectLidCapability() },
         sessionStore: LidClosedSessionStore = LidClosedSessionStore()
     ) {
         self.readProperty = readProperty
-        self.detectNoLid = detectNoLid
+        self.detectCapability = detectCapability
         self.sessionStore = sessionStore
     }
 
     func start() {
         guard !running else { return }
         running = true
-        confirmedNoLid = detectNoLid()
-        if confirmedNoLid {
+        switch detectCapability() {
+        case .noLid:
+            confirmedNoLid = true
             apply(.noLid)
             return
+        case .hasLid:
+            confirmedNoLid = false
+        case .unknown:
+            // Transient failure — do not claim noLid; policy sees .unknown (W1-11).
+            confirmedNoLid = false
+            apply(.unknown)
+            // Still attempt notifications/polling so a later success can recover.
         }
         refresh()
         installInterestNotification()
@@ -164,17 +223,35 @@ final class LidStateMonitor: LidStateObserving {
             apply(.noLid)
             return
         }
+        // Re-check capability if previously unknown.
+        if reading == .unknown || reading == .noLid {
+            switch detectCapability() {
+            case .noLid:
+                confirmedNoLid = true
+                apply(.noLid)
+                return
+            case .hasLid:
+                confirmedNoLid = false
+            case .unknown:
+                break
+            }
+            // continue to property read below
+        }
         apply(LidClamshellPropertyParser.reading(from: readProperty()))
     }
 
     private func apply(_ next: LidClosedReading) {
         let previous = reading
         reading = next
-        // Persist continuous closed session for restart (Fi A3). Only confirmed open clears.
         switch next {
         case .closed:
-            if sessionStore.load() == nil {
-                sessionStore.save(wallClosedAt: Date(), maxDurationLatched: false)
+            if sessionStore.load() == nil, let boot = LidMonotonicTime.bootSessionUUID() {
+                sessionStore.save(
+                    continuousClosedAt: LidMonotonicTime.seconds(),
+                    bootSessionUUID: boot,
+                    maxDurationLatched: false,
+                    wallClosedAt: Date() // display only
+                )
             }
         case .open:
             sessionStore.clear()
@@ -197,7 +274,8 @@ final class LidStateMonitor: LidStateObserving {
     }
 
     private func installInterestNotification() {
-        // Best-effort; constant availability is UNCONFIRMED (Q10). Polling covers gaps.
+        // Research Q10: kIOPMMessageClamshellStateChange on IOPMrootDomain.
+        // M1 lid behavior UNCONFIRMED on this host; polling covers gaps.
         rootDomain = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
         guard rootDomain != 0 else { return }
         let port = IONotificationPortCreate(kIOMainPortDefault)
@@ -256,11 +334,27 @@ final class LidStateMonitor: LidStateObserving {
         )?.takeRetainedValue()
     }
 
-    /// Heuristic: no built-in display / clamshell property absent persistently.
-    static func defaultDetectNoLid() -> Bool {
-        // Prefer explicit absence of AppleClamshellState on machines without a lid.
-        // Reading nil once is not enough (transient failure → .unknown, not .noLid).
-        // C08 / Fi A3: policy still refuses arm on .noLid; this flag is opt-in via settings later.
-        false
+    /// Confirmed desktop = IOPMrootDomain reachable and `AppleClamshellState` key absent (Q10).
+    /// Service lookup failure → `.unknown` (transient MacBook / IOKit blip), never `.noLid`.
+    /// M1 lid notification timing remains UNCONFIRMED pending hardware tests.
+    nonisolated static func detectLidCapability() -> LidCapability {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard service != 0 else { return .unknown }
+        defer { IOObjectRelease(service) }
+        let present = IORegistryEntryCreateCFProperty(
+            service,
+            "AppleClamshellState" as CFString,
+            kCFAllocatorDefault,
+            0
+        )?.takeRetainedValue() != nil
+        return LidCapabilityClassifier.classify(serviceOK: true, clamshellPropertyPresent: present)
+    }
+}
+
+/// Pure lid capability classification (W1-11); not MainActor-bound.
+enum LidCapabilityClassifier {
+    static func classify(serviceOK: Bool, clamshellPropertyPresent: Bool) -> LidCapability {
+        guard serviceOK else { return .unknown }
+        return clamshellPropertyPresent ? .hasLid : .noLid
     }
 }

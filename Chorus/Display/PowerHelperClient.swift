@@ -2,7 +2,7 @@ import ChorusCore
 import Foundation
 import ServiceManagement
 
-/// App ↔ ChorusPowerHelper XPC client (spec §6.4 / §6.5 / §14.2).
+/// App ↔ ChorusPowerHelper XPC client (spec §6.4 / §6.5 / §14.2 / W1-4..6).
 @MainActor
 protocol PowerHelperClienting: AnyObject {
     var availability: LidHelperAvailability { get }
@@ -26,10 +26,11 @@ enum PowerHelperAvailabilityMapping {
         case .notRegistered:
             return .notRegistered
         case .enabled:
+            // W1-4: enabled alone is never `.ready` without a fresh handshake.
             if let handshake {
                 return handshake.availability
             }
-            return .ready
+            return .connecting
         case .requiresApproval:
             return .requiresApproval
         case .notFound:
@@ -72,6 +73,8 @@ enum PowerHelperClientError: Error, Equatable {
     case remote(String)
     case decodingFailed
     case notConnected
+    case unregisterBlocked(String)
+    case versionMismatch
 }
 
 /// Injectable XPC proxy for tests (V-C06-3 / V-C06-4).
@@ -79,6 +82,14 @@ enum PowerHelperClientError: Error, Equatable {
 protocol PowerHelperXPCProxying: AnyObject {
     func setSleepDisabled(_ enabled: Bool, reply: @escaping (Data?, String?) -> Void)
     func status(reply: @escaping (Data) -> Void)
+    /// Optional: real connections notify interruption/invalidation (W1-4).
+    var onConnectionEvent: ((PowerHelperConnectionEvent) -> Void)? { get set }
+    func invalidate()
+}
+
+enum PowerHelperConnectionEvent: Sendable {
+    case interrupted
+    case invalidated
 }
 
 @MainActor
@@ -98,6 +109,8 @@ final class PowerHelperClient: PowerHelperClienting {
 
     private var proxy: PowerHelperXPCProxying?
     private var generation: UInt64 = 0
+    /// True only after a successful status() handshake on the current connection (W1-5).
+    private var handshakeComplete = false
 
     init(
         plistName: String = PowerHelperConstants.daemonPlistName,
@@ -134,7 +147,15 @@ final class PowerHelperClient: PowerHelperClienting {
     }
 
     func refreshAvailability() {
-        let mapped = PowerHelperAvailabilityMapping.availability(from: serviceStatus())
+        let mapped = PowerHelperAvailabilityMapping.availability(
+            from: serviceStatus(),
+            handshake: handshakeComplete ? .ready : nil
+        )
+        // If SM says enabled but we have no handshake, stay connecting (W1-4).
+        if case .enabled = serviceStatus(), !handshakeComplete {
+            applyAvailability(.connecting)
+            return
+        }
         applyAvailability(mapped)
     }
 
@@ -145,9 +166,54 @@ final class PowerHelperClient: PowerHelperClienting {
         _ = try await status()
     }
 
+    /// Verified removal (W1-6 / §14.1 / Fi A1): confirm own release, readback, no other holders,
+    /// no recovery error — gather evidence before invalidating / unregistering.
     func unregister() async throws {
+        // Evidence first — do not invalidate yet.
+        let snap: PowerHelperStatus
+        do {
+            snap = try await status()
+        } catch {
+            throw PowerHelperClientError.unregisterBlocked("statusUnavailable")
+        }
+
+        if snap.holderCount > 0 {
+            if snap.callerIsHolder {
+                _ = try await setSleepDisabled(false)
+            }
+            let after = try await status()
+            if after.holderCount > 0 {
+                throw PowerHelperClientError.unregisterBlocked("otherHolders")
+            }
+            if after.sleepDisabled == true, after.setByHelper {
+                throw PowerHelperClientError.unregisterBlocked("restoreFailed")
+            }
+            if after.sleepDisabled == true, after.setByHelper == false {
+                // Foreign value — still block auto-remove per Fi A1 conservatism when we cannot prove safe.
+                throw PowerHelperClientError.unregisterBlocked("foreignSleepDisabled")
+            }
+        } else if snap.sleepDisabled == true, snap.setByHelper {
+            // Own residual without live holders — attempt release.
+            _ = try await setSleepDisabled(false)
+            let after = try await status()
+            if after.sleepDisabled == true {
+                throw PowerHelperClientError.unregisterBlocked("restoreFailed")
+            }
+        } else if snap.sleepDisabled == true {
+            throw PowerHelperClientError.unregisterBlocked("foreignSleepDisabled")
+        }
+
+        let finalStatus = try await status()
+        if finalStatus.holderCount > 0 {
+            throw PowerHelperClientError.unregisterBlocked("otherHolders")
+        }
+        if case .versionMismatch = availability {
+            // A1: protocol mismatch repair is allowed only when safe (verified above).
+        }
+
         invalidateConnection()
         try unregisterService()
+        handshakeComplete = false
         refreshAvailability()
     }
 
@@ -156,6 +222,16 @@ final class PowerHelperClient: PowerHelperClienting {
     }
 
     func setSleepDisabled(_ on: Bool) async throws -> PowerHelperStatus {
+        if on {
+            // W1-5: handshake each connection before acquire.
+            try await ensureHandshake()
+            if case .versionMismatch = availability {
+                throw PowerHelperClientError.versionMismatch
+            }
+            guard case .ready = availability else {
+                throw PowerHelperClientError.unavailable
+            }
+        }
         let gen = beginGeneration()
         let proxy = try ensureProxy()
         let data: Data = try await withTimeout(callTimeout) { continuation in
@@ -184,6 +260,7 @@ final class PowerHelperClient: PowerHelperClienting {
         guard gen == generation else { throw PowerHelperClientError.timedOut }
         let status = try decodeStatus(data)
         let handshake = PowerHelperHandshakeResult.evaluate(status: status, appBuild: appBuild)
+        handshakeComplete = (handshake == .ready)
         applyAvailability(handshake.availability)
         return status
     }
@@ -203,16 +280,39 @@ final class PowerHelperClient: PowerHelperClienting {
         return result == .success && box.ok
     }
 
+    private func ensureHandshake() async throws {
+        if handshakeComplete, case .ready = availability { return }
+        _ = try await status()
+    }
+
     private func ensureProxy() throws -> PowerHelperXPCProxying {
         if let proxy { return proxy }
         guard let created = makeProxy() else { throw PowerHelperClientError.notConnected }
+        created.onConnectionEvent = { [weak self] event in
+            Task { @MainActor in
+                self?.handleConnectionEvent(event)
+            }
+        }
         proxy = created
+        handshakeComplete = false
         applyAvailability(.connecting)
         return created
     }
 
+    private func handleConnectionEvent(_ event: PowerHelperConnectionEvent) {
+        // W1-4: interruption/invalidation without another RPC — clear ready immediately.
+        generation += 1
+        handshakeComplete = false
+        proxy?.invalidate()
+        proxy = nil
+        applyAvailability(.connecting)
+        _ = event
+    }
+
     func invalidateConnection() {
         generation += 1
+        handshakeComplete = false
+        proxy?.invalidate()
         proxy = nil
         applyAvailability(.connecting)
     }
@@ -314,13 +414,27 @@ enum SleepDisabledProbe {
 @MainActor
 final class RealPowerHelperXPCProxy: PowerHelperXPCProxying {
     private let connection: NSXPCConnection
+    var onConnectionEvent: ((PowerHelperConnectionEvent) -> Void)?
 
     init(machServiceName: String, requirement: String) {
         let connection = NSXPCConnection(machServiceName: machServiceName, options: .privileged)
         connection.remoteObjectInterface = NSXPCInterface(with: ChorusPowerHelperXPC.self)
         connection.setCodeSigningRequirement(requirement)
-        connection.resume()
         self.connection = connection
+        // Handlers after stored properties are initialized (cannot capture self earlier).
+        connection.invalidationHandler = { [weak self] in
+            let handler = self?.onConnectionEvent
+            Task { @MainActor in
+                handler?(.invalidated)
+            }
+        }
+        connection.interruptionHandler = { [weak self] in
+            let handler = self?.onConnectionEvent
+            Task { @MainActor in
+                handler?(.interrupted)
+            }
+        }
+        connection.resume()
     }
 
     func setSleepDisabled(_ enabled: Bool, reply: @escaping (Data?, String?) -> Void) {
@@ -343,6 +457,12 @@ final class RealPowerHelperXPCProxy: PowerHelperXPCProxying {
             return
         }
         helper.status(withReply: reply)
+    }
+
+    func invalidate() {
+        connection.invalidationHandler = nil
+        connection.interruptionHandler = nil
+        connection.invalidate()
     }
 }
 
