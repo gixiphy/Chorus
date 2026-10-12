@@ -1,0 +1,181 @@
+import Foundation
+import Testing
+@testable import ChorusCore
+
+@Suite("SleepGuardLedger")
+struct SleepGuardLedgerTests {
+    @Test("V-C03-2 first acquire: system 0 → write(true); system 1 foreign → none, release does not write 0")
+    func firstAcquireOwnership() {
+        var ledger = SleepGuardLedger()
+        let a1 = ledger.acquire(connectionID: 1, uid: 501, pid: 100, now: 0, currentSystemValue: false)
+        #expect(a1 == .write(true))
+        #expect(ledger.setByHelper)
+        ledger.acknowledgeWrite(true)
+
+        var foreign = SleepGuardLedger()
+        let a2 = foreign.acquire(connectionID: 1, uid: 501, pid: 100, now: 0, currentSystemValue: true)
+        #expect(a2 == .none)
+        #expect(!foreign.setByHelper)
+        #expect(foreign.priorValueWasDisabled == true)
+        let rel = foreign.release(connectionID: 1, currentSystemValue: true)
+        #expect(rel == .none)
+        #expect(!foreign.setByHelper)
+    }
+
+    @Test("V-C03-5 two holders: first release none; last release write(false)")
+    func twoHolders() {
+        var ledger = SleepGuardLedger()
+        _ = ledger.acquire(connectionID: 1, uid: 501, pid: 1, now: 0, currentSystemValue: false)
+        ledger.acknowledgeWrite(true)
+        _ = ledger.acquire(connectionID: 2, uid: 502, pid: 2, now: 1, currentSystemValue: true)
+        let first = ledger.release(connectionID: 1, currentSystemValue: true)
+        #expect(first == .none)
+        #expect(ledger.holders.count == 1)
+        let last = ledger.release(connectionID: 2, currentSystemValue: true)
+        #expect(last == .write(false))
+        #expect(ledger.setByHelper) // 確認前不清
+        ledger.acknowledgeWrite(false)
+        #expect(!ledger.setByHelper)
+    }
+
+    @Test("V-C03-5 same-uid holders cannot release each other")
+    func sameUIDIndependent() {
+        var ledger = SleepGuardLedger()
+        _ = ledger.acquire(connectionID: 1, uid: 501, pid: 1, now: 0, currentSystemValue: false)
+        ledger.acknowledgeWrite(true)
+        _ = ledger.acquire(connectionID: 2, uid: 501, pid: 2, now: 1, currentSystemValue: true)
+        let other = ledger.release(connectionID: 99, currentSystemValue: true)
+        #expect(other == .none)
+        #expect(ledger.holders.count == 2)
+    }
+
+    @Test("dropConnection equivalent to release")
+    func dropEquivalent() {
+        var a = SleepGuardLedger()
+        _ = a.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false)
+        a.acknowledgeWrite(true)
+        let r1 = a.dropConnection(1, currentSystemValue: true)
+
+        var b = SleepGuardLedger()
+        _ = b.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false)
+        b.acknowledgeWrite(true)
+        let r2 = b.release(connectionID: 1, currentSystemValue: true)
+        #expect(r1 == r2)
+        #expect(r1 == .write(false))
+    }
+
+    @Test("V-C03-4 expire: 59s keep, 61s remove; only timed-out holder")
+    func expireWatchdog() {
+        var ledger = SleepGuardLedger()
+        _ = ledger.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false)
+        ledger.acknowledgeWrite(true)
+        _ = ledger.acquire(connectionID: 2, uid: 1, pid: 2, now: 0, currentSystemValue: true)
+        // renew holder 2 at t=50
+        _ = ledger.acquire(connectionID: 2, uid: 1, pid: 2, now: 50, currentSystemValue: true)
+
+        let (none, expiredEarly) = ledger.expire(now: 59, timeout: 60, currentSystemValue: true)
+        #expect(none == .none)
+        #expect(expiredEarly.isEmpty)
+        #expect(ledger.holders.count == 2)
+
+        let (action, expired) = ledger.expire(now: 61, timeout: 60, currentSystemValue: true)
+        #expect(expired == [1])
+        #expect(ledger.holders.keys.sorted() == [2])
+        #expect(action == .none)
+    }
+
+    @Test("V-C03-6 forceOff: clears holders; helper-owned → write(false); foreign → none")
+    func forceOff() {
+        var owned = SleepGuardLedger()
+        _ = owned.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false)
+        owned.acknowledgeWrite(true)
+        #expect(owned.forceOff(currentSystemValue: true) == .write(false))
+        #expect(owned.holders.isEmpty)
+
+        var foreign = SleepGuardLedger()
+        _ = foreign.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: true)
+        #expect(foreign.forceOff(currentSystemValue: true) == .none)
+    }
+
+    @Test("V-C03-3 own residual: setByHelper+system1+no holders → acquire then release writes 0")
+    func ownResidual() {
+        var ledger = SleepGuardLedger(priorValueWasDisabled: false, setByHelper: true)
+        let acq = ledger.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: true)
+        #expect(acq == .none)
+        #expect(ledger.setByHelper)
+        #expect(ledger.priorValueWasDisabled == false)
+        let rel = ledger.release(connectionID: 1, currentSystemValue: true)
+        #expect(rel == .write(false))
+    }
+
+    @Test("V-C03-8 heartbeats seeing 1 never clear setByHelper; final release writes 0")
+    func heartbeatsKeepOwnership() {
+        var ledger = SleepGuardLedger()
+        #expect(
+            ledger.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false)
+                == .write(true)
+        )
+        ledger.acknowledgeWrite(true)
+        for t in [20.0, 40.0, 60.0] {
+            let action = ledger.acquire(
+                connectionID: 1, uid: 1, pid: 1, now: t, currentSystemValue: true
+            )
+            #expect(action == .none)
+            #expect(ledger.setByHelper)
+        }
+        #expect(ledger.release(connectionID: 1, currentSystemValue: true) == .write(false))
+    }
+
+    @Test("Fi A2: renew when system forced to 0 → release, do not rewrite true")
+    func externalZeroReleases() {
+        var ledger = SleepGuardLedger()
+        _ = ledger.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: false)
+        ledger.acknowledgeWrite(true)
+        let action = ledger.acquire(
+            connectionID: 1, uid: 1, pid: 1, now: 20, currentSystemValue: false
+        )
+        #expect(action == .write(false))
+        #expect(ledger.holders.isEmpty)
+        #expect(ledger.setByHelper) // pending restore until ack
+    }
+
+    @Test("V-C03-6 reconcileOnLaunch four combinations")
+    func reconcileMatrix() {
+        let cases: [(SleepGuardLedger?, Bool?, SleepGuardLedger.Action, Bool)] = [
+            (nil, false, .none, false),
+            (nil, true, .none, false),
+            (SleepGuardLedger(setByHelper: false), false, .none, false),
+            (SleepGuardLedger(setByHelper: false), true, .none, false),
+            (SleepGuardLedger(setByHelper: true), false, .none, true),
+            (SleepGuardLedger(setByHelper: true), true, .write(false), true),
+        ]
+        for (persisted, system, expectedAction, expectSetByHelper) in cases {
+            let (ledger, action) = SleepGuardLedger.reconcileOnLaunch(
+                persisted: persisted,
+                currentSystemValue: system
+            )
+            #expect(action == expectedAction)
+            #expect(ledger.setByHelper == expectSetByHelper)
+            #expect(ledger.holders.isEmpty)
+        }
+    }
+
+    @Test("§14.1 nil system value refuses first acquire")
+    func nilSystemRefusesFirstAcquire() {
+        var ledger = SleepGuardLedger()
+        #expect(
+            ledger.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: nil)
+                == .none
+        )
+        #expect(ledger.holders.isEmpty)
+    }
+
+    @Test("Codable round-trip")
+    func codableRoundTrip() throws {
+        var ledger = SleepGuardLedger(priorValueWasDisabled: false, setByHelper: true)
+        _ = ledger.acquire(connectionID: 9, uid: 501, pid: 42, now: 12.5, currentSystemValue: true)
+        let data = try JSONEncoder().encode(ledger)
+        let decoded = try JSONDecoder().decode(SleepGuardLedger.self, from: data)
+        #expect(decoded == ledger)
+    }
+}
