@@ -308,6 +308,8 @@ private struct AutoBrightnessRow: View {
 /// 「連系統待機一起擋」放設定頁，避免選單長出一排開關。
 private struct KeepAwakeRow: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.openSettings) private var openSettings
+    @State private var showingLidRecovery = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -347,6 +349,36 @@ private struct KeepAwakeRow: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 2)
+            if let lidStatus {
+                HStack(alignment: .top, spacing: 6) {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: lidStatus.symbol)
+                        if lidStatus.showsHoldingBadge {
+                            Circle().frame(width: 4, height: 4).offset(x: 2, y: -1)
+                        }
+                    }
+                    Text(lidStatus.text).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    switch lidStatus.action {
+                    case .allow:
+                        Button("允許…") { appState.keepAwake.lidGuard.openHelperApprovalSettings() }
+                    case .pause:
+                        Button("暫停闔蓋防睡 1 小時") { appState.keepAwake.lidGuard.pauseForOneHour() }
+                    case .resume:
+                        Button("恢復") { resumeLidGuard() }
+                    case .manage:
+                        Button("處理…") { showingLidRecovery.toggle() }
+                    case nil: EmptyView()
+                    }
+                }
+                .font(.caption2)
+                .controlSize(.mini)
+                .help(lidStatus.help)
+                .padding(.leading, 2)
+                if showingLidRecovery {
+                    lidRecoveryControls
+                }
+            }
             if appState.keepAwake.mode == .whileAgentsWorking,
                appState.keepAwake.agentActivity.chromiumThrottleWarning {
                 Text("Chrome 未關閉背景節流 — browser-use 可能變慢")
@@ -355,6 +387,50 @@ private struct KeepAwakeRow: View {
                     .padding(.leading, 2)
             }
         }
+    }
+
+    private var lidStatus: LidMenuStatusFormatter.Presentation? {
+        let keepAwake = appState.keepAwake
+        let guardController = keepAwake.lidGuard
+        let status = guardController.helperStatus
+        let held = guardController.isActuallyHoldingSleepDisabled
+            && status?.setByHelper == true
+            && status?.recoveryBlocked == false
+            && status?.pendingRestore == false
+            && status?.persistRetryNeeded == false
+        return LidMenuStatusFormatter.format(
+            phase: guardController.phase, enabled: guardController.settings.enabled,
+            agentModeActive: keepAwake.mode == .whileAgentsWorking,
+            confirmedHolding: held, leftover: LidMenuStatusFormatter.visibleLeftover(guardController.leftover, helperStatus: status),
+            sources: guardController.contributingSources,
+            nowUptime: LidMonotonicTime.seconds() ?? ProcessInfo.processInfo.systemUptime,
+            wallNow: Date(), maxDurationSeconds: guardController.settings.maxLidClosedSeconds,
+            releaseAt: keepAwake.sourceHub.busy.releaseAt
+        )
+    }
+
+    @ViewBuilder
+    private var lidRecoveryControls: some View {
+        let guardController = appState.keepAwake.lidGuard
+        let leftover = LidMenuStatusFormatter.visibleLeftover(guardController.leftover, helperStatus: guardController.helperStatus)
+        if leftover == .ownResidual {
+            Button("還原 Chorus 的睡眠設定") { appState.keepAwake.lidGuard.restoreLeftover() }
+                .controlSize(.mini)
+        } else if leftover == .otherUserHolding {
+            Text("其他 Chorus 連線仍在持有，請先在該連線解除；這裡不會覆寫。")
+                .font(.caption2).foregroundStyle(.secondary)
+        } else if leftover != nil {
+            Text("請先確認沒有其他工具正在防睡眠，再於終端機手動執行：")
+                .font(.caption2).foregroundStyle(.secondary)
+            Text(verbatim: "sudo pmset -a disablesleep 0")
+                .font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
+        }
+        Button("開啟闔蓋防睡設定") { openSettings() }.controlSize(.mini)
+    }
+
+    private func resumeLidGuard() {
+        // C08 owner supplies the pause reset API; UI must not edit private controller state.
+        appState.keepAwake.lidGuard.resumeAfterPause()
     }
 
     /// Agent 模式用 CPU 圖示辨識觸發來源，填滿代表保護已生效。

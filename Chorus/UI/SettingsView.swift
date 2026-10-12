@@ -191,6 +191,7 @@ private struct DisplaySettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 AgentDetectionControls()
+                LidSleepSettingsSection()
                 Toggle("Agent 閒置時熄屏", isOn: Binding(
                     get: { appState.keepAwake.agentIdleBlankEnabled },
                     set: { appState.keepAwake.agentIdleBlankEnabled = $0 }

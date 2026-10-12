@@ -104,6 +104,7 @@ enum StatusIconRenderer {
             drawSpeaker(state.volume, muted: state.isMuted, in: context)
         }
         drawBottomArc(arcs.bottom, in: context)
+        if state.lidSleepDisabled { drawLidHoldingBadge(in: context) }
 
         var x = side
         if let battery = state.battery, batteryWidth > 0 {
@@ -117,6 +118,19 @@ enum StatusIconRenderer {
             context.setAlpha(1)
             draw(badge: badge.text, in: CGRect(x: x, y: 0, width: badgeWidth, height: side))
         }
+    }
+
+    /// A solid dot cut out from the ring at the upper right; recognizable in either template color.
+    /// It keeps the legacy image width and leaves countdown / readout / battery unchanged.
+    private static func drawLidHoldingBadge(in context: CGContext) {
+        let center = CGPoint(x: side - 3.5, y: side - 3.5)
+        context.saveGState()
+        context.setAlpha(1)
+        context.setBlendMode(.clear)
+        context.fillEllipse(in: CGRect(x: center.x - 3.5, y: center.y - 3.5, width: 7, height: 7))
+        context.setBlendMode(.normal)
+        context.fillEllipse(in: CGRect(x: center.x - 2.5, y: center.y - 2.5, width: 5, height: 5))
+        context.restoreGState()
     }
 
     // MARK: 主弧（平常是音量；調整當下是讀數）
@@ -358,6 +372,7 @@ enum StatusIconRenderer {
 
     private static func accessibilityDescription(_ state: StatusIconState) -> String {
         var parts: [String] = []
+        if state.lidSleepDisabled { parts.append(String(localized: "闔蓋也不睡")) }
         if let brightness = state.brightness {
             parts.append(String(localized: "亮度 \(Int((brightness * 100).rounded()))%"))
         }

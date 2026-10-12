@@ -151,3 +151,35 @@ struct StatusOutputGlyphTests {
         #expect(StatusBattery(HeadsetBattery(main: 50, left: nil, right: nil, chargingCase: nil))?.percent == 50)
     }
 }
+
+@Suite("Lid holding badge")
+struct LidStatusIconTests {
+    @Test func badgeRequiresFreshConfirmedOwnership() {
+        for wants in [false, true] {
+            for caller: Bool? in [nil, false, true] {
+                for sleep: Bool? in [nil, false, true] {
+                    for owner: Bool? in [nil, false, true] {
+                        for ready in [false, true] {
+                            for recovery in [false, true] {
+                                #expect(StatusIcon.lidHoldConfirmed(wantsSleepDisabled: wants,
+                                    callerIsHolder: caller, sleepDisabled: sleep, setByHelper: owner,
+                                    helperReady: ready, recoveryBlocked: recovery)
+                                    == (wants && caller == true && sleep == true && owner == true && ready && !recovery))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test func legacyStateDefaultsToNoBadgeAndHoldingChangesIdentity() {
+        let base = StatusIconState(brightness: 0.5, volume: 0.5, isMuted: false, badge: nil)
+        #expect(!base.lidSleepDisabled)
+        var held = base
+        held.lidSleepDisabled = true
+        #expect(held != base)
+        #expect(held.brightness == base.brightness)
+        #expect(held.badge == base.badge)
+    }
+}

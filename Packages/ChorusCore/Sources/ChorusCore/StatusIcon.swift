@@ -24,11 +24,14 @@ public struct StatusIconState: Equatable, Sendable {
     /// 選單列多一格是使用者可關的（設定開關）：常駐顯示電量有用，
     /// 但選單列的空間是使用者的，不是我們的。
     public var battery: StatusBattery?
+    /// Helper-confirmed own SleepDisabled hold; an independent monochrome corner badge.
+    public var lidSleepDisabled: Bool
 
     public init(
         brightness: Double?, volume: Double?, isMuted: Bool,
         output: StatusOutputGlyph = .speaker, badge: StatusBadge?,
-        readout: StatusReadout? = nil, battery: StatusBattery? = nil
+        readout: StatusReadout? = nil, battery: StatusBattery? = nil,
+        lidSleepDisabled: Bool = false
     ) {
         self.brightness = brightness
         self.volume = volume
@@ -37,6 +40,7 @@ public struct StatusIconState: Equatable, Sendable {
         self.badge = badge
         self.readout = readout
         self.battery = battery
+        self.lidSleepDisabled = lidSleepDisabled
     }
 }
 
@@ -163,6 +167,15 @@ public struct StatusBadge: Sendable, Equatable, Hashable {
 }
 
 public enum StatusIcon {
+    /// A pending, stale, foreign, or recovery-blocked helper never earns the own-hold badge.
+    public static func lidHoldConfirmed(
+        wantsSleepDisabled: Bool, callerIsHolder: Bool?, sleepDisabled: Bool?,
+        setByHelper: Bool?, helperReady: Bool, recoveryBlocked: Bool = false
+    ) -> Bool {
+        wantsSleepDisabled && callerIsHolder == true && sleepDisabled == true
+            && setByHelper == true && helperReady && !recoveryBlocked
+    }
+
     /// 亮度／音量各自量化成幾階。拖曳滑桿時值會以每秒數十次的頻率變動，
     /// 但 18pt 的圖示上根本畫不出 1% 的差別——量化到 2.5% 一階，
     /// SwiftUI 才不會為了看不見的差異一直重畫。

@@ -40,7 +40,24 @@ struct MenuBarLabel: View {
                 focusRemaining: nil
             ),
             readout: appState.statusReadout.readout,
-            battery: battery
+            battery: battery,
+            lidSleepDisabled: confirmedLidHold
+        )
+    }
+
+    private var confirmedLidHold: Bool {
+        let guardController = appState.keepAwake.lidGuard
+        let ready: Bool
+        switch guardController.phase {
+        case .armed, .holdingLidClosed: ready = true
+        default: ready = false
+        }
+        let status = guardController.helperStatus
+        return StatusIcon.lidHoldConfirmed(
+            wantsSleepDisabled: guardController.isActuallyHoldingSleepDisabled,
+            callerIsHolder: status?.callerIsHolder, sleepDisabled: status?.sleepDisabled,
+            setByHelper: status?.setByHelper, helperReady: ready,
+            recoveryBlocked: status.map { $0.recoveryBlocked || $0.pendingRestore || $0.persistRetryNeeded } ?? true
         )
     }
 

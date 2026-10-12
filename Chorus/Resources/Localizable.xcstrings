@@ -9932,6 +9932,12 @@
             "state" : "translated",
             "value" : "正常"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正常"
+          }
         }
       }
     },
@@ -16359,6 +16365,1519 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "；%lld 项不会自动恢复"
+          }
+        }
+      }
+    },
+    "%@ 等 %lld 個" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ and others (%lld total)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 等 %lld 個"
+          }
+        }
+      }
+    },
+    "%@（%@）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (%@)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@（%@）"
+          }
+        }
+      }
+    },
+    "Agent 工作時，闔上螢幕也不睡（需安裝輔助程序）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep awake with the lid closed while agents work (requires a helper)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 工作時，闔上螢幕也不睡（需安裝輔助程序）"
+          }
+        }
+      }
+    },
+    "CLI 安裝與 token 設定在「診斷」分頁的「自動化介面」。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CLI installation and token settings are in the Automation interface section of the Diagnostics tab."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CLI 安裝與 token 設定在「診斷」分頁的「自動化介面」。"
+          }
+        }
+      }
+    },
+    "CLI：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CLI: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CLI：%@"
+          }
+        }
+      }
+    },
+    "Chorus 或輔助程序當掉時可能留下防睡眠設定，需依 README 手動還原。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A Chorus or helper crash can leave sleep disabled. Follow the README to restore it manually."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus 或輔助程序當掉時可能留下防睡眠設定，需依 README 手動還原。"
+          }
+        }
+      }
+    },
+    "Chorus 的睡眠設定尚未還原" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus sleep settings have not been restored"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus 的睡眠設定尚未還原"
+          }
+        }
+      }
+    },
+    "Claude 桌面 App 的簽章尚未確認，目前只使用既有 log 與行程偵測。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Claude desktop signing identity is unconfirmed. Only existing log and process detection is used for now."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude 桌面 App 的簽章尚未確認，目前只使用既有 log 與行程偵測。"
+          }
+        }
+      }
+    },
+    "Codex／Claude 桌面 App" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex / Claude desktop apps"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex／Claude 桌面 App"
+          }
+        }
+      }
+    },
+    "Grok Bot App 開著時保持清醒" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep awake while Grok Bot is open"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grok Bot App 開著時保持清醒"
+          }
+        }
+      }
+    },
+    "Grok Bot 的運算在雲端，Mac 端看不出它有沒有在工作；勾選後只要 App 開著就不睡，直到時限或電量底線。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grok Bot runs in the cloud, so your Mac cannot tell whether it is working. When enabled, keeping the app open keeps your Mac awake until the time or battery limit is reached."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grok Bot 的運算在雲端，Mac 端看不出它有沒有在工作；勾選後只要 App 開著就不睡，直到時限或電量底線。"
+          }
+        }
+      }
+    },
+    "Orca：讀取 worktree 狀態（orca worktree ps）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orca: read worktree status (orca worktree ps)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orca：讀取 worktree 狀態（orca worktree ps）"
+          }
+        }
+      }
+    },
+    "來源無法使用：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Source unavailable: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "來源無法使用：%@"
+          }
+        }
+      }
+    },
+    "修復…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Repair…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修復…"
+          }
+        }
+      }
+    },
+    "修復輔助程序" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Repair helper"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修復輔助程序"
+          }
+        }
+      }
+    },
+    "允許…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許…"
+          }
+        }
+      }
+    },
+    "其他 Chorus 連線仍在持有，請先在該連線解除；這裡不會覆寫。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Another Chorus connection is still holding. Release it from that connection; this one will not override it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "其他 Chorus 連線仍在持有，請先在該連線解除；這裡不會覆寫。"
+          }
+        }
+      }
+    },
+    "其他 Chorus 連線正保持系統清醒" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Another Chorus connection is keeping the system awake"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "其他 Chorus 連線正保持系統清醒"
+          }
+        }
+      }
+    },
+    "前往自動化介面" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Automation interface"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前往自動化介面"
+          }
+        }
+      }
+    },
+    "只在 Agent 模式生效。輔助程序會以管理員權限修改系統睡眠設定；Chorus 或輔助程序當掉時可能需要手動還原，請參閱 README。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Applies in Agent mode. The helper changes system sleep settings with administrator privileges. If Chorus or the helper crashes, manual restoration may be needed; see the README."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只在 Agent 模式生效。輔助程序會以管理員權限修改系統睡眠設定；Chorus 或輔助程序當掉時可能需要手動還原，請參閱 README。"
+          }
+        }
+      }
+    },
+    "安裝並開啟" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install and enable"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝並開啟"
+          }
+        }
+      }
+    },
+    "安裝輔助程序…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install helper…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝輔助程序…"
+          }
+        }
+      }
+    },
+    "尚未安裝" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not installed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未安裝"
+          }
+        }
+      }
+    },
+    "心跳租約需開啟「自動化介面」。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Heartbeat leases require the Automation interface."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "心跳租約需開啟「自動化介面」。"
+          }
+        }
+      }
+    },
+    "心跳租約（chorus keepawake hold）：%lld 個有效" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Heartbeat leases (chorus keepawake hold): %lld active"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "心跳租約（chorus keepawake hold）：%lld 個有效"
+          }
+        }
+      }
+    },
+    "恢復" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resume"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢復"
+          }
+        }
+      }
+    },
+    "打開「登入項目與延伸功能」" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Login Items & Extensions"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開「登入項目與延伸功能」"
+          }
+        }
+      }
+    },
+    "找不到輔助程序" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper not found"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "找不到輔助程序"
+          }
+        }
+      }
+    },
+    "找不到輔助程序，請修復" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper not found; please repair"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "找不到輔助程序，請修復"
+          }
+        }
+      }
+    },
+    "接上電源時也套用時間上限；最長 3 小時。溫度達「嚴重」即解除。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The time limit also applies on AC power, up to 3 hours. Protection is released at serious thermal pressure."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接上電源時也套用時間上限；最長 3 小時。溫度達「嚴重」即解除。"
+          }
+        }
+      }
+    },
+    "暫停闔蓋防睡 1 小時" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pause lid keep-awake for 1 hour"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暫停闔蓋防睡 1 小時"
+          }
+        }
+      }
+    },
+    "正在啟用闔蓋防睡…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enabling lid keep-awake…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在啟用闔蓋防睡…"
+          }
+        }
+      }
+    },
+    "正在連線…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在連線…"
+          }
+        }
+      }
+    },
+    "正在連線至輔助程序…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting to the helper…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在連線至輔助程序…"
+          }
+        }
+      }
+    },
+    "此 Mac 沒有螢幕蓋，無法啟用闔蓋防睡" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Mac has no lid; lid keep-awake is unavailable"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 Mac 沒有螢幕蓋，無法啟用闔蓋防睡"
+          }
+        }
+      }
+    },
+    "無法移除輔助程序：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to remove helper: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法移除輔助程序：%@"
+          }
+        }
+      }
+    },
+    "版本不相容" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incompatible version"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版本不相容"
+          }
+        }
+      }
+    },
+    "用電池時最低電量" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Minimum battery level"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用電池時最低電量"
+          }
+        }
+      }
+    },
+    "睡眠設定還原尚未確認，請處理" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sleep restoration is unconfirmed; action required"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "睡眠設定還原尚未確認，請處理"
+          }
+        }
+      }
+    },
+    "確認移除" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirm removal"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認移除"
+          }
+        }
+      }
+    },
+    "移除前會先解除 Chorus 的持有；其他使用者仍在持有或還原失敗時會停止移除。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chorus releases its hold before removal. Removal stops if another user is holding or restoration fails."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除前會先解除 Chorus 的持有；其他使用者仍在持有或還原失敗時會停止移除。"
+          }
+        }
+      }
+    },
+    "移除輔助程序…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove helper…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除輔助程序…"
+          }
+        }
+      }
+    },
+    "等待允許" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Awaiting approval"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待允許"
+          }
+        }
+      }
+    },
+    "等待權限（permission）也算工作中" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Count permission requests as working"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待權限（permission）也算工作中"
+          }
+        }
+      }
+    },
+    "等待確認" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Awaiting confirmation"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待確認"
+          }
+        }
+      }
+    },
+    "系統目前不會睡眠（SleepDisabled=1）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "System sleep is currently disabled (SleepDisabled=1)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系統目前不會睡眠（SleepDisabled=1）"
+          }
+        }
+      }
+    },
+    "自動尋找" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find automatically"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動尋找"
+          }
+        }
+      }
+    },
+    "自動尋找 orca" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find orca automatically"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動尋找 orca"
+          }
+        }
+      }
+    },
+    "處理…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resolve…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "處理…"
+          }
+        }
+      }
+    },
+    "請先確認沒有其他工具正在防睡眠，再於終端機手動執行：" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First make sure no other tool is preventing sleep, then run this manually in Terminal:"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先確認沒有其他工具正在防睡眠，再於終端機手動執行："
+          }
+        }
+      }
+    },
+    "輔助程序尚未安裝" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper is not installed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程序尚未安裝"
+          }
+        }
+      }
+    },
+    "輔助程序已啟用（build %@）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper enabled (build %@)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程序已啟用（build %@）"
+          }
+        }
+      }
+    },
+    "輔助程序操作失敗：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper operation failed: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程序操作失敗：%@"
+          }
+        }
+      }
+    },
+    "輔助程序會以管理員權限修改系統睡眠設定。闔蓋後請勿把 Mac 放進包包，以免過熱。用電池時至少保留 30% 電量，溫度達「嚴重」即解除；接電也最多保持 3 小時。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The helper changes system sleep settings with administrator privileges. Keep your Mac out of bags with the lid closed to avoid overheating. On battery, at least 30% is reserved. Protection is released at serious thermal pressure and is limited to 3 hours, including on AC power."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程序會以管理員權限修改系統睡眠設定。闔蓋後請勿把 Mac 放進包包，以免過熱。用電池時至少保留 30% 電量，溫度達「嚴重」即解除；接電也最多保持 3 小時。"
+          }
+        }
+      }
+    },
+    "輔助程序無法保障外部設定的睡眠；Chorus 不會自動覆寫。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The helper cannot restore sleep disabled by another tool. Chorus will not override it automatically."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程序無法保障外部設定的睡眠；Chorus 不會自動覆寫。"
+          }
+        }
+      }
+    },
+    "輔助程序版本不相容，請修復" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper version is incompatible; please repair"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程序版本不相容，請修復"
+          }
+        }
+      }
+    },
+    "輔助程序等待允許" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper is awaiting approval"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程序等待允許"
+          }
+        }
+      }
+    },
+    "輔助程序進階選項" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advanced helper options"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程序進階選項"
+          }
+        }
+      }
+    },
+    "輔助程序錯誤：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper error: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程序錯誤：%@"
+          }
+        }
+      }
+    },
+    "選取的檔案無法執行，請選擇 orca CLI。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The selected file is not executable. Choose the orca CLI."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選取的檔案無法執行，請選擇 orca CLI。"
+          }
+        }
+      }
+    },
+    "還原 Chorus 的睡眠設定" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore Chorus sleep settings"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還原 Chorus 的睡眠設定"
+          }
+        }
+      }
+    },
+    "開啟自動化介面" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Automation interface"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟自動化介面"
+          }
+        }
+      }
+    },
+    "開啟闔蓋防睡設定" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open lid keep-awake settings"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟闔蓋防睡設定"
+          }
+        }
+      }
+    },
+    "闔上螢幕時" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When the lid is closed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔上螢幕時"
+          }
+        }
+      }
+    },
+    "闔蓋中保持清醒 · 剩 %@（時限）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Staying awake with lid closed · %@ left (time limit)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋中保持清醒 · 剩 %@（時限）"
+          }
+        }
+      }
+    },
+    "闔蓋也不睡" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stays awake with the lid closed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋也不睡"
+          }
+        }
+      }
+    },
+    "闔蓋也不睡 · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stays awake with the lid closed · %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋也不睡 · %@"
+          }
+        }
+      }
+    },
+    "闔蓋已達 %lld 小時上限，開蓋後重新計算" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The %lld-hour lid limit was reached; open the lid to reset it"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋已達 %lld 小時上限，開蓋後重新計算"
+          }
+        }
+      }
+    },
+    "闔蓋最長時間" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maximum time with lid closed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋最長時間"
+          }
+        }
+      }
+    },
+    "闔蓋會睡（沒有工作中的來源）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closing the lid will sleep (no working sources)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋會睡（沒有工作中的來源）"
+          }
+        }
+      }
+    },
+    "闔蓋會睡：溫度過高" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closing the lid will sleep: temperature too high"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋會睡：溫度過高"
+          }
+        }
+      }
+    },
+    "闔蓋會睡：讀不到螢幕蓋狀態" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closing the lid will sleep: lid state unavailable"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋會睡：讀不到螢幕蓋狀態"
+          }
+        }
+      }
+    },
+    "闔蓋會睡：讀不到電源狀態" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closing the lid will sleep: power state unavailable"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋會睡：讀不到電源狀態"
+          }
+        }
+      }
+    },
+    "闔蓋會睡：讀不到電量（底線 %lld%%）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closing the lid will sleep: battery unavailable (minimum %lld%%)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋會睡：讀不到電量（底線 %lld%%）"
+          }
+        }
+      }
+    },
+    "闔蓋會睡：輔助程序待允許" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closing the lid will sleep: helper needs approval"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋會睡：輔助程序待允許"
+          }
+        }
+      }
+    },
+    "闔蓋會睡：輔助程序無法使用（%@）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closing the lid will sleep: helper unavailable (%@)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋會睡：輔助程序無法使用（%@）"
+          }
+        }
+      }
+    },
+    "闔蓋會睡：電量 %lld%%（底線 %lld%%）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closing the lid will sleep: battery %lld%% (minimum %lld%%)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋會睡：電量 %lld%%（底線 %lld%%）"
+          }
+        }
+      }
+    },
+    "闔蓋防睡已暫停（至 %@）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lid keep-awake paused (until %@)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋防睡已暫停（至 %@）"
+          }
+        }
+      }
+    },
+    "闔蓋防睡通知" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lid keep-awake notifications"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋防睡通知"
+          }
+        }
+      }
+    },
+    "闔蓋防睡需要系統輔助程序" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lid keep-awake requires a system helper"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "闔蓋防睡需要系統輔助程序"
+          }
+        }
+      }
+    },
+    "降級：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Degraded: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "降級：%@"
+          }
+        }
+      }
+    },
+    "額外的工作來源" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Additional work sources"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "額外的工作來源"
+          }
+        }
+      }
+    },
+    "顯示還原指令" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show restore command"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "顯示還原指令"
+          }
+        }
+      }
+    },
+    "（收工後 %@ 解除）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : " (releases %@ after work ends)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "（收工後 %@ 解除）"
+          }
+        }
+      }
+    },
+    "輔助程序狀態尚未確認，或另有持有／還原作業；請稍後再移除。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper status is unconfirmed, or another hold or restoration is active. Try removing it later."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "輔助程序狀態尚未確認，或另有持有／還原作業；請稍後再移除。"
+          }
+        }
+      }
+    },
+    "目前：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current status: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前：%@"
+          }
+        }
+      }
+    },
+    "%lld%%" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld%%"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld%%"
+          }
+        }
+      }
+    },
+    "%lld 小時" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld hours"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 小時"
+          }
+        }
+      }
+    },
+    "變更…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Change…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "變更…"
           }
         }
       }
