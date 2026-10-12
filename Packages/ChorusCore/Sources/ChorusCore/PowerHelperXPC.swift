@@ -122,16 +122,12 @@ public enum PMSetOutputParser {
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        guard hasCompleteStructure(trimmed) else { return nil }
+        guard let rows = parseValidatedRows(trimmed) else { return nil }
 
         var seen: Bool?
-        for line in trimmed.split(whereSeparator: \.isNewline) {
-            let parts = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            guard let first = parts.first, first == "SleepDisabled" else { continue }
-            // 恰好兩欄：鍵 + 0/1；多餘 token 或垃圾 → nil
-            guard parts.count == 2 else { return nil }
+        for row in rows where row.key == "SleepDisabled" {
             let value: Bool
-            switch parts[1] {
+            switch row.value {
             case "1": value = true
             case "0": value = false
             default: return nil
@@ -145,28 +141,89 @@ public enum PMSetOutputParser {
         return seen ?? false
     }
 
-    /// 要求可辯護的完整輸出：標頭／區塊 + 至少一列已知設定鍵值。
-    private static func hasCompleteStructure(_ text: String) -> Bool {
-        let hasHeader = text.contains("System-wide power settings:")
-            || text.contains("Currently on")
-        guard hasHeader else {
-            // 允許無標頭但含多列已知鍵的精簡樣本（測試用單行 SleepDisabled 需搭配其他鍵）
-            return knownSettingLineCount(text) >= 2
-                || (knownSettingLineCount(text) >= 1 && text.contains("SleepDisabled"))
-        }
-        // 僅有標頭、沒有任何設定列 → 截斷，回 nil
-        return knownSettingLineCount(text) >= 1
+    private struct SettingRow: Equatable {
+        var key: String
+        var value: String
     }
 
-    private static func knownSettingLineCount(_ text: String) -> Int {
-        var count = 0
-        for line in text.split(whereSeparator: \.isNewline) {
-            let parts = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            guard let key = parts.first, knownSettingKeys.contains(key) else { continue }
-            // 設定列至少要有鍵與一個值 token
-            guard parts.count >= 2 else { continue }
-            count += 1
+    /// 嚴格標頭＋列文法；失敗回 nil。
+    ///
+    /// 完整輸出：至少一條合法標頭列，且 ≥1 條合法已知設定列；任何畸形已知鍵列 → nil。
+    /// 精簡文法（無標頭）：每一非空列都必須是合法已知設定列，且
+    /// （含 SleepDisabled）或（≥2 列）。不得靠 substring 僞標頭過關。
+    private static func parseValidatedRows(_ text: String) -> [SettingRow]? {
+        let lines = text.split(whereSeparator: \.isNewline).map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }.filter { !$0.isEmpty }
+
+        guard !lines.isEmpty else { return nil }
+
+        var hasHeader = false
+        var rows: [SettingRow] = []
+        var otherLineCount = 0
+
+        for line in lines {
+            if isHeaderLine(line) {
+                hasHeader = true
+                continue
+            }
+            switch classifySettingLine(line) {
+            case .valid(let row):
+                rows.append(row)
+            case .malformedKnownKey:
+                return nil
+            case .other:
+                otherLineCount += 1
+            }
         }
-        return count
+
+        if hasHeader {
+            // 僅標頭、或只有無法辨識列 → 截斷／歧義
+            guard !rows.isEmpty else { return nil }
+            return rows
+        }
+
+        // 精簡文法：禁止夾雜非設定列；不得用 contains 僞標頭
+        guard otherLineCount == 0, !rows.isEmpty else { return nil }
+        let hasSleepDisabled = rows.contains { $0.key == "SleepDisabled" }
+        guard hasSleepDisabled || rows.count >= 2 else { return nil }
+        return rows
+    }
+
+    private static func isHeaderLine(_ line: String) -> Bool {
+        if line == "System-wide power settings:" {
+            return true
+        }
+        // 例如 "Currently on Battery Power:"／"Currently on UPS Power:"
+        return line.hasPrefix("Currently on ") && line.hasSuffix(":") && !line.contains("\n")
+    }
+
+    private enum LineClass {
+        case valid(SettingRow)
+        case malformedKnownKey
+        case other
+    }
+
+    private static func classifySettingLine(_ line: String) -> LineClass {
+        let parts = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard let key = parts.first else { return .other }
+        guard knownSettingKeys.contains(key) else { return .other }
+        // 恰好兩欄：鍵 + 值；多餘 token、缺值、或值不符文法 → 畸形
+        guard parts.count == 2, isValidSettingValue(key: key, value: parts[1]) else {
+            return .malformedKnownKey
+        }
+        return .valid(SettingRow(key: key, value: parts[1]))
+    }
+
+    /// SleepDisabled 僅 0／1；路徑鍵允許以 `/` 開頭；其餘鍵為整數。
+    private static func isValidSettingValue(key: String, value: String) -> Bool {
+        if key == "SleepDisabled" {
+            return value == "0" || value == "1"
+        }
+        if key == "hibernatefile" {
+            return value.hasPrefix("/") && value.count > 1
+        }
+        return value.unicodeScalars.allSatisfy { CharacterSet.decimalDigits.contains($0) }
+            && !value.isEmpty
     }
 }

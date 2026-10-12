@@ -167,13 +167,43 @@ struct SleepGuardLedgerTests {
             #expect(ledger2.pendingRestore)
         }
 
-        // foreign session（未擁有）：系統 0 的新 acquire 可正常寫 true
-        var foreign = SleepGuardLedger()
-        _ = foreign.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: true)
-        #expect(!foreign.setByHelper)
-        // foreign 持有中系統變 0：非 owned session，不走干擾；release 不寫
-        let rel = foreign.release(connectionID: 1, currentSystemValue: false)
-        #expect(rel == .none)
+        // foreign session（未擁有）：仍有 holder 時見外部 0 → 干擾、shouldRestore=false、不寫
+        for secondUID: UInt32 in [1, 502] {
+            var foreignRenew = SleepGuardLedger()
+            _ = foreignRenew.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: true)
+            #expect(!foreignRenew.setByHelper)
+            #expect(foreignRenew.holders.count == 1)
+            _ = foreignRenew.acquire(connectionID: 2, uid: secondUID, pid: 2, now: 1, currentSystemValue: true)
+            #expect(foreignRenew.holders.count == 2)
+
+            let viaRenew = foreignRenew.acquire(
+                connectionID: 1, uid: 1, pid: 1, now: 20, currentSystemValue: false
+            )
+            #expect(viaRenew == .externalInterference(shouldRestore: false))
+            #expect(foreignRenew.holders.isEmpty)
+            #expect(!foreignRenew.pendingRestore)
+            #expect(!foreignRenew.setByHelper)
+
+            var foreignNew = SleepGuardLedger()
+            _ = foreignNew.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: true)
+            _ = foreignNew.acquire(connectionID: 2, uid: secondUID, pid: 2, now: 1, currentSystemValue: true)
+            let viaNew = foreignNew.acquire(
+                connectionID: 3, uid: 503, pid: 3, now: 30, currentSystemValue: false
+            )
+            #expect(viaNew == .externalInterference(shouldRestore: false))
+            #expect(foreignNew.holders.isEmpty)
+            #expect(!foreignNew.setByHelper)
+        }
+
+        // foreign 干擾後 holders 空：新 acquire 見系統 0 可正常寫 true（C05 仍須先處理通知）
+        var afterForeign = SleepGuardLedger()
+        _ = afterForeign.acquire(connectionID: 1, uid: 1, pid: 1, now: 0, currentSystemValue: true)
+        _ = afterForeign.acquire(connectionID: 1, uid: 1, pid: 1, now: 20, currentSystemValue: false)
+        #expect(afterForeign.holders.isEmpty)
+        let reacquire = afterForeign.acquire(
+            connectionID: 9, uid: 1, pid: 9, now: 40, currentSystemValue: false
+        )
+        #expect(reacquire == .write(true))
     }
 
     @Test("V-C03-6 reconcileOnLaunch four combinations")
@@ -265,7 +295,19 @@ struct SleepGuardLedgerTests {
         ledger.noteWriteFailure()
         #expect(ledger.pendingRestore)
         #expect(ledger.setByHelper)
-        // 重試仍可再 write(false) 路徑：forceOff 或空表 finalize 已發過；ack 後才清
+
+        // nil-read during pending restoration：意圖存活，且可再取得 write(false) 重試
+        let (nilReadRetry, _) = ledger.expire(now: 100, timeout: 60, currentSystemValue: nil)
+        #expect(nilReadRetry == .write(false))
+        #expect(ledger.pendingRestore)
+        #expect(ledger.setByHelper)
+
+        let forceRetry = ledger.forceOff(currentSystemValue: nil)
+        #expect(forceRetry == .write(false))
+        #expect(ledger.pendingRestore)
+        #expect(ledger.setByHelper)
+
+        // 確認還原後才清 ownership
         ledger.acknowledgeWrite(false)
         #expect(!ledger.setByHelper)
         #expect(!ledger.pendingRestore)

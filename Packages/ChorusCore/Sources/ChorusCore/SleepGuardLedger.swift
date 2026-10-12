@@ -76,8 +76,9 @@ public struct SleepGuardLedger: Codable, Sendable, Equatable {
 
         let isRenewal = holders[connectionID] != nil
 
-        // Fi A2 / W0-1：既有持有 session 期間看到外部 0 → 全域干擾，清空所有 holder，不寫 true
-        if hasOwnedHoldingSession, currentSystemValue == false {
+        // Fi A2 / W0-1：任何既有 holding session（含 foreign／未 setByHelper）見外部 0
+        // → 全域清空所有 holder 並回報干擾；foreign 的 shouldRestore=false，不寫任何值。
+        if !holders.isEmpty, currentSystemValue == false {
             return invalidateForExternalInterference()
         }
 
@@ -207,13 +208,9 @@ public struct SleepGuardLedger: Codable, Sendable, Equatable {
 
     // MARK: - Private
 
-    /// 我們擁有的持有 session：setByHelper 且尚有 holder（或 pending 還原中仍算 session 結束後的恢復）。
-    private var hasOwnedHoldingSession: Bool {
-        setByHelper && !holders.isEmpty
-    }
-
     private mutating func invalidateForExternalInterference() -> Action {
         holders.removeAll()
+        // 只有自己寫過的才需要 restore；foreign session 只清 holder、不碰系統值。
         let shouldRestore = setByHelper
         if shouldRestore {
             pendingRestore = true
