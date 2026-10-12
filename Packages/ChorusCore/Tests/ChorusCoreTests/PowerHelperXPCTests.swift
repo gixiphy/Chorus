@@ -5,6 +5,24 @@ import Testing
 
 @Suite("PMSetOutputParser")
 struct PowerHelperXPCTests {
+    @Test("W0-6 header must name a known power source and every output line must validate")
+    func rejectsHeaderAndUnknownRowAmbiguity() {
+        for sample in [
+            "Currently on nonsense:\ndisksleep 10",
+            "Currently on :\ndisksleep 10",
+            "System-wide power settings:\ndisksleep 10\nSleepDisabled: 1",
+            "System-wide power settings:\ndisksleep 10\ngarbage",
+            "System-wide power settings:\nCurrently on nonsense:\ndisksleep 10",
+        ] {
+            #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: sample) == nil)
+        }
+        for source in ["AC", "Battery", "UPS"] {
+            let absent = "System-wide power settings:\nCurrently on \(source) Power:\ndisksleep 10\nsleep 1"
+            #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: absent) == false)
+            #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: absent + "\nSleepDisabled 1") == true)
+        }
+    }
+
     @Test("V-C03-1 SleepDisabled tab-1 → true; space-0 → false")
     func parseFlags() {
         #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: "SleepDisabled\t\t1") == true)

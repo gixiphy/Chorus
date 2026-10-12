@@ -148,7 +148,7 @@ public enum PMSetOutputParser {
 
     /// 嚴格標頭＋列文法；失敗回 nil。
     ///
-    /// 完整輸出：至少一條合法標頭列，且 ≥1 條合法已知設定列；任何畸形已知鍵列 → nil。
+    /// 完整輸出：至少一條合法標頭列，且 ≥1 條合法已知設定列；任何無法驗證的列 → nil。
     /// 精簡文法（無標頭）：每一非空列都必須是合法已知設定列，且
     /// （含 SleepDisabled）或（≥2 列）。不得靠 substring 僞標頭過關。
     private static func parseValidatedRows(_ text: String) -> [SettingRow]? {
@@ -178,8 +178,9 @@ public enum PMSetOutputParser {
         }
 
         if hasHeader {
-            // 僅標頭、或只有無法辨識列 → 截斷／歧義
-            guard !rows.isEmpty else { return nil }
+            // 標頭不能替未知／畸形列背書（例如 SleepDisabled: 1）。
+            // 未確認的新系統格式保守回 nil，待有實機樣本再擴充文法。
+            guard otherLineCount == 0, !rows.isEmpty else { return nil }
             return rows
         }
 
@@ -194,8 +195,7 @@ public enum PMSetOutputParser {
         if line == "System-wide power settings:" {
             return true
         }
-        // 例如 "Currently on Battery Power:"／"Currently on UPS Power:"
-        return line.hasPrefix("Currently on ") && line.hasSuffix(":") && !line.contains("\n")
+        return ["Currently on AC Power:", "Currently on Battery Power:", "Currently on UPS Power:"].contains(line)
     }
 
     private enum LineClass {
