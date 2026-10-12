@@ -27,13 +27,23 @@ public struct LidSleepSettings: Sendable, Equatable, Codable {
         self.notificationsEnabled = notificationsEnabled
     }
 
-    /// 產生有限且在允許範圍內的設定（§14.2：處理 NaN／infinity／負值）。
+    /// 產生有限且在允許範圍內的設定（§14.2：處理 NaN／infinity／負值／極端 Int）。
     public func normalized() -> LidSleepSettings {
         var copy = self
+        // W0-9：不對極端 Int 做減法／abs（Int.min 溢位會 trap）
         let floors = Self.allowedBatteryFloors
-        let floor = floors.contains(batteryFloorPercent)
-            ? batteryFloorPercent
-            : floors.min(by: { abs($0 - batteryFloorPercent) < abs($1 - batteryFloorPercent) }) ?? 30
+        let lo = floors.first ?? 30
+        let hi = floors.last ?? 50
+        let floor: Int
+        if floors.contains(batteryFloorPercent) {
+            floor = batteryFloorPercent
+        } else if batteryFloorPercent <= lo {
+            floor = lo
+        } else if batteryFloorPercent >= hi {
+            floor = hi
+        } else {
+            floor = floors.min(by: { abs($0 - batteryFloorPercent) < abs($1 - batteryFloorPercent) }) ?? 30
+        }
         copy.batteryFloorPercent = max(floor, 30)
 
         let hours = Self.allowedMaxHours
@@ -71,6 +81,8 @@ public enum LidBlockReason: Sendable, Equatable, Codable {
     case noLid
     /// 蓋子狀態讀取失敗：§14.2 不新建持有、既有持有保守解除。
     case lidUnknown
+    /// 電源狀態未知（`onBattery == nil`）：Fi A3 拒絕新 acquire 並解除既有持有。
+    case unknownPower
 }
 
 public enum LidSleepGuardPhase: Sendable, Equatable {
@@ -155,6 +167,11 @@ public enum LidSleepGuardEvent: Sendable, Equatable {
 public enum LidSleepGuardPolicy {
     public static let batteryHysteresisPercent = PowerFloorPolicy.batteryHysteresisPercent
 
+    /// 呼叫端合約（PowerSnapshot 無法表達「完全缺樣」時）：
+    /// - `onBattery == nil`：未知電源 → 本 policy 阻擋（`.unknownPower`）。
+    /// - `percent == nil` 且已知用電池：低電阻擋。
+    /// - `thermal` 為非 optional；取樣失敗／未知 enum 時呼叫端應傳 `.serious` 或依賴 `@unknown default` 阻擋。
+    /// - `hasInternalBattery == false`：無內建電池，跳過電量門檻（仍受未知電源以外規則約束）。
     public static func step(
         _ previous: LidSleepGuardState,
         input: LidSleepGuardInput
@@ -222,7 +239,7 @@ public enum LidSleepGuardPolicy {
             return finish(previous: previous, state: state, wants: false, lid: input.lid)
         }
 
-        // §5.3.7 電量
+        // §5.3.7 電量／電源（Fi A3：未知電源拒絕）
         if let batteryBlock = evaluateBattery(
             previous: &state,
             settings: settings,
@@ -233,7 +250,7 @@ public enum LidSleepGuardPolicy {
             return finish(previous: previous, state: state, wants: false, lid: input.lid)
         }
 
-        // §5.3.8 時限
+        // §5.3.8 時限（W0-2：既有 latch 優先於 AC 豁免）
         if let durationBlock = evaluateMaxDuration(
             state: &state,
             settings: settings,
@@ -282,13 +299,18 @@ public enum LidSleepGuardPolicy {
             return nil
         }
 
+        // Fi A3 / W0-3：未知電源獨立阻擋，不論百分比
+        if power.onBattery == nil {
+            return .unknownPower
+        }
+
         // 接上電源：清 latch
         if power.onBattery == false {
             state.batteryLatched = false
             return nil
         }
 
-        // onBattery == true 或 nil（讀不到）→ 視為用電池
+        // onBattery == true → 用電池
         let floor = max(settings.batteryFloorPercent, 30, existingFloor.rawValue)
 
         guard let percent = power.percent else {
@@ -317,14 +339,21 @@ public enum LidSleepGuardPolicy {
         power: PowerSnapshot,
         now: Double
     ) -> LidBlockReason? {
+        let limit = settings.maxLidClosedSeconds
+
+        // W0-2 / §14.2：既有 latch 在確認開蓋前持續有效，AC 豁免不可繞過
+        if state.maxDurationLatched {
+            return .maxDuration(limitSeconds: limit)
+        }
+
         guard lid == .closed else { return nil }
-        let applyOnAC = settings.limitDurationOnAC
-        let onBatteryOrUnknown = power.onBattery != false
-        guard onBatteryOrUnknown || applyOnAC else { return nil }
+        // 僅豁免「新」達到時限；未知電源已在電量步驟擋下
+        if power.onBattery == false && !settings.limitDurationOnAC {
+            return nil
+        }
 
         let since = state.lidClosedSince ?? now
-        let limit = settings.maxLidClosedSeconds
-        if state.maxDurationLatched || (now - since) >= limit {
+        if (now - since) >= limit {
             state.maxDurationLatched = true
             return .maxDuration(limitSeconds: limit)
         }

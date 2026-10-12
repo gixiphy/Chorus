@@ -155,7 +155,7 @@ struct LidSleepGuardTests {
         #expect(critical.phase == .blocked(.thermal))
     }
 
-    @Test("V-C02-2 battery floor = max(30, settings, existing); nil percent blocked; onBattery nil as battery")
+    @Test("V-C02-2 battery floor = max(30, settings, existing); nil percent blocked on known battery")
     func batteryFloor() {
         // existing 20 → effective 30
         let (a, _, _) = run(input: input(
@@ -173,16 +173,44 @@ struct LidSleepGuardTests {
         ))
         #expect(b.phase == .blocked(.lowBattery(percent: 39, floor: 40)))
 
-        let (nilPct, _, _) = run(input: input(power: power(percent: nil)))
+        let (nilPct, _, _) = run(input: input(power: power(onBattery: true, percent: nil)))
         guard case let .blocked(.lowBattery(percent, floor)) = nilPct.phase else {
             Issue.record("expected lowBattery")
             return
         }
         #expect(percent == nil)
         #expect(floor == 30)
+    }
 
-        let (unknownPower, _, _) = run(input: input(power: power(onBattery: nil, percent: 10)))
-        #expect(unknownPower.phase == .blocked(.lowBattery(percent: 10, floor: 30)))
+    @Test("W0-3 / Fi A3 unknown power refuses from off, armed, and holding")
+    func unknownPowerRefuses() {
+        let cases: [(LidSleepGuardState, Int?)] = [
+            (.init(), nil),
+            (.init(), 100),
+            (.init(), 10),
+            (.init(phase: .armed), 100),
+            (.init(phase: .holdingLidClosed(sinceUptime: 0), lidClosedSince: 0), 100),
+        ]
+        for (previous, percent) in cases {
+            let lid: LidClosedReading = {
+                if case .holdingLidClosed = previous.phase { return .closed }
+                return .open
+            }()
+            let (state, wants, _) = run(
+                previous: previous,
+                input: input(lid: lid, power: power(onBattery: nil, percent: percent))
+            )
+            #expect(state.phase == .blocked(.unknownPower))
+            #expect(!wants)
+        }
+
+        // 已知 AC／電池正例
+        let (ac, acWants, _) = run(input: input(power: power(onBattery: false, percent: 100)))
+        #expect(ac.phase == .armed)
+        #expect(acWants)
+        let (bat, batWants, _) = run(input: input(power: power(onBattery: true, percent: 80)))
+        #expect(bat.phase == .armed)
+        #expect(batWants)
     }
 
     @Test("V-C02-2 hysteresis 29→34 blocked, 35 clears; AC clears latch")
@@ -253,6 +281,59 @@ struct LidSleepGuardTests {
         #expect(wants)
     }
 
+    @Test("W0-2 latched duration stays blocked after AC + limitDurationOnAC=false; only open unlocks")
+    func latchedBeatsACExemption() {
+        // 電池上達時限
+        let closedSince = t0
+        var state = LidSleepGuardState(lidClosedSince: closedSince)
+        let (blocked, wants, _) = run(
+            previous: state,
+            input: input(lid: .closed, power: power(onBattery: true, percent: 80), now: t0 + 3 * 3600)
+        )
+        #expect(blocked.maxDurationLatched)
+        #expect(!wants)
+
+        // 接 AC、關閉 AC 時限、仍闔蓋 → 仍 blocked
+        let (still, stillWants, _) = run(
+            previous: blocked,
+            input: input(
+                settings: settings(limitOnAC: false),
+                lid: .closed,
+                power: power(onBattery: false, percent: 100),
+                now: t0 + 3 * 3600 + 10
+            )
+        )
+        #expect(still.maxDurationLatched)
+        #expect(!stillWants)
+        guard case .blocked(.maxDuration) = still.phase else {
+            Issue.record("expected maxDuration while latched on AC")
+            return
+        }
+
+        // busy／mode／option 切換亦不解除
+        let (busyOff, _, _) = run(previous: still, input: input(busy: false, lid: .closed, power: power(onBattery: false)))
+        #expect(busyOff.maxDurationLatched)
+        let (optOff, _, _) = run(
+            previous: still,
+            input: input(settings: settings(enabled: false, limitOnAC: false), lid: .closed, power: power(onBattery: false))
+        )
+        #expect(optOff.maxDurationLatched)
+        let (agentOff, _, _) = run(
+            previous: still,
+            input: input(agent: false, lid: .closed, power: power(onBattery: false))
+        )
+        #expect(agentOff.maxDurationLatched)
+
+        // 只有確認開蓋才解除
+        let (opened, openWants, _) = run(
+            previous: still,
+            input: input(settings: settings(limitOnAC: false), lid: .open, power: power(onBattery: false), now: t0 + 4 * 3600)
+        )
+        #expect(!opened.maxDurationLatched)
+        #expect(opened.phase == .armed)
+        #expect(openWants)
+    }
+
     @Test("V-C02-7 mode/option/busy/AC switch does not reset closed-session latch")
     func latchSurvivesModeSwitch() {
         let latched = LidSleepGuardState(
@@ -271,6 +352,19 @@ struct LidSleepGuardTests {
             Issue.record("still latched blocked")
             return
         }
+
+        // W0-10：獨立切 busy／mode／AC
+        let (busy, _, _) = run(previous: latched, input: input(busy: false, lid: .closed))
+        #expect(busy.maxDurationLatched)
+        let (ac, _, _) = run(
+            previous: latched,
+            input: input(settings: settings(limitOnAC: false), lid: .closed, power: power(onBattery: false))
+        )
+        #expect(ac.maxDurationLatched)
+        #expect(ac.phase == .blocked(.maxDuration(limitSeconds: 3 * 3600)) || {
+            if case .blocked(.maxDuration) = ac.phase { return true }
+            return false
+        }())
     }
 
     @Test("Fi A3 / §14.2 noLid forbids arm")
@@ -328,24 +422,70 @@ struct LidSleepGuardTests {
 
     // MARK: wantsSleepDisabled exhaustive
 
-    @Test("V-C02-5 wantsSleepDisabled only for armed/holding")
+    @Test("V-C02-5 / W0-10 wantsSleepDisabled only for armed/holding across phases × inputs")
     func wantsExhaustive() {
-        let phases: [(LidSleepGuardInput, LidSleepGuardPhase, Bool)] = [
-            (input(settings: settings(enabled: false)), .off, false),
-            (input(helper: .notRegistered), .unavailable(.notRegistered), false),
-            (input(busy: false), .idle, false),
-            (input(lid: .open), .armed, true),
-            (input(lid: .closed), .holdingLidClosed(sinceUptime: t0), true),
-            (input(power: power(thermal: .serious)), .blocked(.thermal), false),
+        let previousPhases: [LidSleepGuardPhase] = [
+            .off,
+            .unavailable(.connecting),
+            .idle,
+            .armed,
+            .holdingLidClosed(sinceUptime: 0),
+            .blocked(.thermal),
+            .blocked(.unknownPower),
+            .blocked(.maxDuration(limitSeconds: 3 * 3600)),
         ]
-        for (inp, expectedPhase, expectedWants) in phases {
-            let (state, wants, _) = run(input: inp)
-            #expect(state.phase == expectedPhase)
-            #expect(wants == expectedWants)
-            #expect(wants == (expectedPhase == .armed || {
-                if case .holdingLidClosed = expectedPhase { return true }
-                return false
-            }()))
+        let inputs: [LidSleepGuardInput] = [
+            input(settings: settings(enabled: false)),
+            input(agent: false),
+            input(helper: .notRegistered),
+            input(busy: false),
+            input(lid: .open),
+            input(lid: .closed),
+            input(lid: .noLid),
+            input(lid: .unknown),
+            input(power: power(thermal: .serious)),
+            input(power: power(thermal: .critical)),
+            input(power: power(onBattery: nil, percent: 100)),
+            input(power: power(percent: 10)),
+            input(power: power(onBattery: false, percent: 100)),
+        ]
+        for previousPhase in previousPhases {
+            var previous = LidSleepGuardState(phase: previousPhase)
+            if case .holdingLidClosed = previousPhase {
+                previous.lidClosedSince = 0
+            }
+            if case .blocked(.maxDuration) = previousPhase {
+                previous.maxDurationLatched = true
+                previous.lidClosedSince = 0
+            }
+            for inp in inputs {
+                let (state, wants, _) = run(previous: previous, input: inp)
+                let holding: Bool = {
+                    switch state.phase {
+                    case .armed, .holdingLidClosed: return true
+                    default: return false
+                    }
+                }()
+                #expect(wants == holding)
+            }
+        }
+    }
+
+    @Test("W0-10 true→unknown→true latch sequence preserves maxDuration")
+    func trueUnknownTrueLatch() {
+        let latched = LidSleepGuardState(
+            phase: .blocked(.maxDuration(limitSeconds: 3 * 3600)),
+            lidClosedSince: 0,
+            maxDurationLatched: true
+        )
+        let (unknown, _, _) = run(previous: latched, input: input(lid: .unknown, now: 10))
+        #expect(unknown.maxDurationLatched)
+        let (closedAgain, wants, _) = run(previous: unknown, input: input(lid: .closed, now: 20))
+        #expect(closedAgain.maxDurationLatched)
+        #expect(!wants)
+        guard case .blocked(.maxDuration) = closedAgain.phase else {
+            Issue.record("expected still latched")
+            return
         }
     }
 
@@ -365,6 +505,36 @@ struct LidSleepGuardTests {
 
         let neg = LidSleepSettings(maxLidClosedSeconds: -1).normalized()
         #expect(neg.maxLidClosedSeconds == 3 * 3600)
+    }
+
+    @Test("W0-9 Int.min/Int.max floors and non-finite duration never trap")
+    func normalizedExtremeValues() throws {
+        let minFloor = LidSleepSettings(batteryFloorPercent: Int.min).normalized()
+        #expect(LidSleepSettings.allowedBatteryFloors.contains(minFloor.batteryFloorPercent))
+        #expect(minFloor.batteryFloorPercent >= 30)
+
+        let maxFloor = LidSleepSettings(batteryFloorPercent: Int.max).normalized()
+        #expect(LidSleepSettings.allowedBatteryFloors.contains(maxFloor.batteryFloorPercent))
+
+        let inf = LidSleepSettings(maxLidClosedSeconds: .infinity).normalized()
+        #expect(inf.maxLidClosedSeconds == 3 * 3600)
+        let ninf = LidSleepSettings(maxLidClosedSeconds: -.infinity).normalized()
+        #expect(ninf.maxLidClosedSeconds == 3 * 3600)
+
+        // NaN 不能進預設 JSONEncoder；用有限非法秒數驗證 Codable 路徑
+        let encoded = try JSONEncoder().encode(LidSleepSettings(batteryFloorPercent: Int.min, maxLidClosedSeconds: -1))
+        let decoded = try JSONDecoder().decode(LidSleepSettings.self, from: encoded).normalized()
+        #expect(decoded.batteryFloorPercent >= 30)
+        #expect(LidSleepSettings.allowedMaxHours.contains(decoded.maxLidClosedSeconds / 3600))
+
+        // policy 也不因極端設定陷阱
+        let (state, wants, _) = run(input: input(settings: LidSleepSettings(
+            enabled: true,
+            batteryFloorPercent: Int.min,
+            maxLidClosedSeconds: .infinity
+        )))
+        #expect(state.phase == .armed)
+        #expect(wants)
     }
 
     // MARK: State diagram edges (V-C02-6)
