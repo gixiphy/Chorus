@@ -25,35 +25,53 @@ struct KeepAwakeSourceSettings: Equatable, Sendable {
 /// §14.3：未來 mtime 在第一次觀察時 clamp；同一份未變 raw 不可每 tick 重送「剛剛」。
 struct KeepAwakeMtimeClampCache: Sendable {
     private var entries: [String: (raw: Date, clamped: Date)] = [:]
-    /// 有界：避免長期檔案 churn 無界成長；保留仍在 liveKeys 內的條目。
+    /// 有界：live pruning 與容量淘汰均保留不延長 grace 的摘要。
     private let maxEntries: Int
+    // Compact conservative tombstone: an evicted unchanged raw can never normalize later.
+    // This may suppress new evidence below the ceiling; it cannot extend grace.
+    private var retiredRawCeiling: Date?
+    private var retiredClampFloor: Date?
 
     init(maxEntries: Int = 256) {
-        self.maxEntries = maxEntries
+        self.maxEntries = max(1, maxEntries)
     }
 
     mutating func stabilize(id: String, raw: Date, now: Date) -> Date {
         if let existing = entries[id], existing.raw == raw {
             return existing.clamped
         }
-        let clamped = KeepAwakeBusyAggregator.normalizedLastWorkingAt(raw, now: now)
+        var clamped = KeepAwakeBusyAggregator.normalizedLastWorkingAt(raw, now: now)
+        if let ceiling = retiredRawCeiling, let floor = retiredClampFloor, raw <= ceiling {
+            clamped = min(clamped, floor)
+        }
         entries[id] = (raw, clamped)
         if entries.count > maxEntries {
-            // 丟掉任意多餘項；未變 raw 的 live 條目若被誤刪，下次觀察會重建 clamp（可接受）。
+            // Retire the normalization before eviction, including live entries.
             let overflow = entries.count - maxEntries
-            for key in entries.keys.prefix(overflow) {
-                entries.removeValue(forKey: key)
+            for key in Array(entries.keys.prefix(overflow)) {
+                if let entry = entries.removeValue(forKey: key) { retire(entry) }
             }
         }
         return clamped
     }
 
     mutating func retainIds(_ ids: Set<String>) {
-        entries = entries.filter { ids.contains($0.key) }
+        for key in Array(entries.keys) where !ids.contains(key) {
+            if let entry = entries.removeValue(forKey: key) { retire(entry) }
+        }
+    }
+
+    private mutating func retire(_ entry: (raw: Date, clamped: Date)) {
+        // Ordinary past evidence normalizes to itself and needs no tombstone.
+        guard entry.clamped < entry.raw else { return }
+        retiredRawCeiling = max(retiredRawCeiling ?? entry.raw, entry.raw)
+        retiredClampFloor = min(retiredClampFloor ?? entry.clamped, entry.clamped)
     }
 
     mutating func removeAll() {
         entries.removeAll()
+        retiredRawCeiling = nil
+        retiredClampFloor = nil
     }
 }
 

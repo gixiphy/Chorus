@@ -286,7 +286,58 @@ struct AgentActivityMonitorTests {
         #expect(!monitor.chromiumThrottleWarning)
     }
 
+    @Test("C7-2 stop/configure discard an existing monitor's suspended scan")
+    func suspendedMonitorLifecycle() async {
+        for stop in [false, true] {
+            let gate = AsyncTestGate()
+            let sampler = GatedMonitorSampler(gate: gate)
+            let instant = Date(timeIntervalSince1970: 8_000_000)
+            let monitor = AgentActivityMonitor(sources: [], processSampler: sampler, now: { instant })
+            monitor.chromiumThrottleWarningOverride = false
+            var notifications = 0
+            monitor.onWorkingChanged = { notifications += 1 }
+            let task = Task { await monitor.refresh() }
+            await gate.waitUntilEntered()
+            if stop { monitor.stop() } else {
+                monitor.configureProcessDetection(enabled: false, customProcessNames: [])
+            }
+            await gate.open()
+            await task.value
+            #expect(monitor.working.isEmpty)
+            #expect(notifications == 0)
+            monitor.stop()
+        }
+    }
+
     // MARK: - C07 sourceReport()
+
+    @Test("C7-10 agents adapter cannot renew 600 unchanged live future samples")
+    func largeFutureSampleSet() async {
+        let first = Date(timeIntervalSince1970: 8_100_000)
+        let samples = (1...600).map {
+            AgentProcessSample(pid: Int32($0), engine: "Codex", agentID: "codex", treeCPUSeconds: 1)
+        }
+        let sampler = FakeProcessSampler([
+            snapshot(samples, at: first.addingTimeInterval(3_600))
+        ])
+        let monitor = AgentActivityMonitor(sources: [], processSampler: sampler, now: { first })
+        monitor.chromiumThrottleWarningOverride = false
+        await monitor.refresh()
+        #expect(monitor.working.count == 600)
+        let initial = monitor.sourceReport(now: first)
+        #expect(initial?.lastWorkingAt == first)
+        for second in [30, 299, 300, 600] {
+            let instant = first.addingTimeInterval(Double(second))
+            let report = monitor.sourceReport(now: instant)
+            #expect(report?.lastWorkingAt == first)
+            let state = KeepAwakeBusyAggregator.evaluate(report.map { [$0] } ?? [], now: instant)
+            #expect(state.isBusy == (second < 300))
+            #expect(state.releaseAt == (second < 300 ? first.addingTimeInterval(300) : nil))
+        }
+        // Existing agents detector can still list future samples; the adapter expires them.
+        #expect(monitor.isWorking)
+        monitor.stop()
+    }
 
     @Test("sourceReport returns nil when working is empty")
     func sourceReportNilWhenIdle() {
@@ -341,5 +392,15 @@ struct AgentActivityMonitorTests {
         clock = now.addingTimeInterval(30)
         let second = monitor.sourceReport(now: clock)?.lastWorkingAt
         #expect(second == first)
+    }
+}
+
+struct GatedMonitorSampler: AgentProcessSampling {
+    let gate: AsyncTestGate
+    func snapshot(matcher: AgentProcessMatcher) async -> AgentProcessSnapshot {
+        await gate.wait()
+        return AgentProcessSnapshot(samples: [
+            AgentProcessSample(pid: 42, engine: "Codex", agentID: "codex", treeCPUSeconds: 1)
+        ], sampledAt: Date(timeIntervalSince1970: 8_000_000))
     }
 }

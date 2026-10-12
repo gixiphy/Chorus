@@ -203,10 +203,7 @@ struct DesktopAgentSourceTests {
         source.start(schedulePolling: false)
         let task = Task { await source.refresh() }
         // list 在 detached utility 上阻塞；稍等進入閘門。
-        for _ in 0..<50 {
-            if gate.isWaitingForTest { break }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        await gate.waitUntilEntered()
         source.stop()
         #expect(source.report.isEmpty)
         gate.open()
@@ -240,6 +237,64 @@ struct DesktopAgentSourceTests {
         #expect(source.report.isEmpty)
         source.stop()
     }
+    @Test("C7-4 metadata changes during argv reads reject the candidate")
+    func metadataIdentityRace() {
+        var start = 1.0
+        let candidate = SystemDesktopAgentProcessLister.stableCandidate(
+            pid: 42, comm: "codex", currentUID: selfUID,
+            identity: { (start, selfUID) },
+            arguments: { start = 2; return [codexPath, "app-server"] },
+            path: { codexPath }
+        )
+        #expect(candidate == nil)
+        var reads = 0
+        let exec = SystemDesktopAgentProcessLister.stableCandidate(
+            pid: 42, comm: "codex", currentUID: selfUID,
+            identity: { (1, selfUID) }, arguments: { [codexPath, "app-server"] },
+            path: { reads += 1; return reads == 1 ? codexPath : "/tmp/other" }
+        )
+        #expect(exec == nil)
+    }
+
+    @Test("C7-4 exec/exit during signature or transcript invalidates attribution and cache")
+    func suspendedIdentityChanges() async {
+        for stage in 0..<5 {
+            let clock = Date(timeIntervalSince1970: 7_500_000)
+            let gate = SyncGate()
+            let lister = LockedDesktopLister([codexProcess()])
+            let scanner = GatedTranscriptScanner(mtime: clock)
+            let verifier = GatedSignatureVerifier()
+            let source = DesktopAgentSource(lister: lister, verifier: verifier,
+                                            transcripts: scanner, now: { clock })
+            source.start(schedulePolling: false)
+            if stage == 2 || stage == 3 {
+                await source.refresh() // populate accepted cache
+                #expect(source.signatureCacheCount == 1)
+                if stage == 2 {
+                    lister.gate = gate
+                    lister.gateCall = lister.calls + 2 // live recheck on cache hit
+                } else {
+                    scanner.gate = gate // cached success must also survive transcript read
+                }
+            } else if stage == 0 {
+                verifier.gate = gate
+            } else {
+                scanner.gate = gate
+            }
+            let task = Task { await source.refresh() }
+            await gate.waitUntilEntered()
+            var changed = codexProcess()
+            changed.executablePath = "/tmp/other" // exec can preserve PID/start/uid
+            changed.arguments = ["/tmp/other"]
+            lister.set(stage == 4 ? [] : [changed])
+            gate.open()
+            await task.value
+            #expect(source.report.isEmpty)
+            #expect(source.signatureCacheCount == 0)
+            source.stop()
+        }
+    }
+
 }
 
 // MARK: - Test helpers
@@ -251,5 +306,42 @@ struct GatedDesktopLister: DesktopAgentProcessListing {
     func listDesktopCandidates() -> [DesktopAgentProcess] {
         gate.enterAndWait()
         return processes
+    }
+}
+
+final class LockedDesktopLister: DesktopAgentProcessListing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var processes: [DesktopAgentProcess]
+    private(set) var calls = 0
+    var gate: SyncGate?
+    var gateCall = 0
+    init(_ processes: [DesktopAgentProcess]) { self.processes = processes }
+    func set(_ processes: [DesktopAgentProcess]) {
+        lock.lock(); self.processes = processes; lock.unlock()
+    }
+    func listDesktopCandidates() -> [DesktopAgentProcess] {
+        lock.lock()
+        calls += 1
+        let pending = calls == gateCall ? gate : nil
+        lock.unlock()
+        pending?.enterAndWait()
+        lock.lock(); defer { lock.unlock() }
+        return processes
+    }
+}
+final class GatedSignatureVerifier: CodeSignatureVerifying, @unchecked Sendable {
+    var gate: SyncGate?
+    func teamIdentifierMatches(pid: Int32, teamID: String) -> Bool {
+        gate?.enterAndWait()
+        return true
+    }
+}
+final class GatedTranscriptScanner: DesktopTranscriptScanning, @unchecked Sendable {
+    let mtime: Date
+    var gate: SyncGate?
+    init(mtime: Date) { self.mtime = mtime }
+    func latestMtimes(kind: DesktopAgentKind) -> [(id: String, mtime: Date)] {
+        gate?.enterAndWait()
+        return [("/fake/rollout.jsonl", mtime)]
     }
 }

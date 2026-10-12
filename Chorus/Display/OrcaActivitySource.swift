@@ -107,7 +107,6 @@ enum OrcaCLILocator {
 /// 執行期間並行排空 pipe；超限丟棄後續位元組；讀取有上限等待。
 enum OrcaPipeDrain {
     static let stderrCap = 2_048
-    static let readerJoinBoundNanoseconds: UInt64 = 1_000_000_000
 
     final class Buffer: @unchecked Sendable {
         private let lock = NSLock()
@@ -137,12 +136,60 @@ enum OrcaPipeDrain {
         }
     }
 
-    static func drain(handle: FileHandle, into buffer: Buffer) {
-        while true {
-            let chunk = handle.readData(ofLength: 65_536)
-            if chunk.isEmpty { break }
-            buffer.append(chunk)
+    enum ReadResult { case bytes(Data), eof, wouldBlock, failed }
+
+    /// A bounded nonblocking turn; EOF is distinct from EAGAIN and errors.
+    static func drain(into buffer: Buffer, read: () -> ReadResult) -> ReadResult {
+        for _ in 0..<64 {
+            switch read() {
+            case let .bytes(data): buffer.append(data)
+            case .eof: return .eof
+            case .wouldBlock: return .wouldBlock
+            case .failed: return .failed
+            }
         }
+        return .wouldBlock
+    }
+
+    static func readAvailable(_ descriptor: Int32) -> ReadResult {
+        var bytes = [UInt8](repeating: 0, count: 65_536)
+        let count = Darwin.read(descriptor, &bytes, bytes.count)
+        if count > 0 { return .bytes(Data(bytes.prefix(count))) }
+        if count == 0 { return .eof }
+        if errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR { return .wouldBlock }
+        return .failed
+    }
+
+}
+
+/// Monotonic cleanup policy, independent of Process and pipes for deterministic tests.
+struct OrcaCommandLifecycle {
+    enum Action: Equatable { case wait, terminate, kill, finish(incomplete: Bool) }
+    let timeout: Duration
+    private var termAt: Duration?
+    private var exitedAt: Duration?
+    private(set) var timedOut = false
+    private(set) var killed = false
+
+    mutating func step(elapsed: Duration, childRunning: Bool, drainsComplete: Bool) -> Action {
+        if childRunning {
+            if termAt == nil, elapsed >= timeout {
+                timedOut = true
+                termAt = elapsed
+                return .terminate
+            }
+            if let termAt, elapsed >= termAt + .seconds(1), !killed {
+                killed = true
+                return .kill
+            }
+            return .wait // even after KILL: ownership ends only after confirmed exit
+        }
+        if drainsComplete { return .finish(incomplete: false) }
+        if exitedAt == nil { exitedAt = elapsed }
+        if let exitedAt, elapsed >= exitedAt + .seconds(1) {
+            return .finish(incomplete: true)
+        }
+        return .wait
     }
 }
 
@@ -198,50 +245,52 @@ struct ProcessOrcaCommandRunner: OrcaCommandRunning {
         let stdoutHandle = stdoutPipe.fileHandleForReading
         let stderrHandle = stderrPipe.fileHandleForReading
 
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            OrcaPipeDrain.drain(handle: stdoutHandle, into: stdoutBuffer)
-            group.leave()
+        // Only this utility worker owns the descriptors. No blocking Foundation reads,
+        // no reader queues to abandon, and no close underneath an active reader.
+        let descriptors = [stdoutHandle.fileDescriptor, stderrHandle.fileDescriptor]
+        defer {
+            try? stdoutHandle.close()
+            try? stderrHandle.close()
         }
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            OrcaPipeDrain.drain(handle: stderrHandle, into: stderrBuffer)
-            group.leave()
+        guard descriptors.allSatisfy({ fcntl($0, F_SETFL, O_NONBLOCK) != -1 }) else {
+            kill(process.processIdentifier, SIGKILL)
+            process.waitUntilExit()
+            return OrcaCommandRunResult(exitCode: nil, stdout: Data(), stderr: Data(),
+                                       timedOut: true, killed: true)
         }
-
-        let seconds = Double(timeout.components.seconds)
-            + Double(timeout.components.attoseconds) / 1e18
-        // 單調時基：不受牆鐘調整影響。
+        try? stdoutPipe.fileHandleForWriting.close()
+        try? stderrPipe.fileHandleForWriting.close()
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(seconds))
-        var timedOut = false
-        var killed = false
-
-        while process.isRunning, clock.now < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        if process.isRunning {
-            timedOut = true
-            process.terminate() // SIGTERM
-            let killDeadline = clock.now.advanced(by: .seconds(1))
-            while process.isRunning, clock.now < killDeadline {
-                Thread.sleep(forTimeInterval: 0.05)
-            }
-            if process.isRunning {
-                killed = true
-                kill(process.processIdentifier, SIGKILL)
-                let reapDeadline = clock.now.advanced(by: .seconds(1))
-                while process.isRunning, clock.now < reapDeadline {
-                    Thread.sleep(forTimeInterval: 0.05)
+        let origin = clock.now
+        var lifecycle = OrcaCommandLifecycle(timeout: timeout)
+        var completed = [false, false]
+        var drainFailed = false
+        let buffers = [stdoutBuffer, stderrBuffer]
+        while true {
+            for index in 0..<2 where !completed[index] {
+                switch OrcaPipeDrain.drain(into: buffers[index], read: {
+                    OrcaPipeDrain.readAvailable(descriptors[index])
+                }) {
+                case .eof: completed[index] = true
+                case .failed: completed[index] = true; drainFailed = true
+                default: break
                 }
             }
+            let action = lifecycle.step(elapsed: origin.duration(to: clock.now),
+                                        childRunning: process.isRunning,
+                                        drainsComplete: completed.allSatisfy { $0 })
+            switch action {
+            case .terminate: process.terminate()
+            case .kill: kill(process.processIdentifier, SIGKILL)
+            case let .finish(incomplete): drainFailed = drainFailed || incomplete
+            case .wait: break
+            }
+            if case .finish = action { break }
+            Thread.sleep(forTimeInterval: 0.01)
         }
-
-        // 關閉讀端以解除仍被後代佔住的 writer；讀取本身有 join 上限。
-        try? stdoutHandle.close()
-        try? stderrHandle.close()
-        _ = group.wait(timeout: .now() + .seconds(1))
+        process.waitUntilExit()
+        let timedOut = lifecycle.timedOut || drainFailed
+        let killed = lifecycle.killed
 
         let (stdout, overflowed) = stdoutBuffer.snapshot()
         let (stderr, _) = stderrBuffer.snapshot()
@@ -280,6 +329,7 @@ final class OrcaActivitySource: KeepAwakeSource {
     private var running = false
     private var pollTask: Task<Void, Never>?
     /// 目前持有的 in-flight 代號；完成前不清除，確保最多一個子行程（C7-2）。
+    private var pendingRefresh = false
     private var activeFlight: UInt64?
     private var nextFlight: UInt64 = 0
     private var generation: UInt64 = 0
@@ -288,8 +338,11 @@ final class OrcaActivitySource: KeepAwakeSource {
     private var lastClassification: OrcaClassification?
     /// 測試／排程斷言：最近一次非 immediate 排程的間隔。
     private(set) var lastScheduledInterval: Duration?
+    private var observerGeneration: UInt64 = 0
+    var workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
     private var observers: [NSObjectProtocol] = []
 
+    var sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     private let runner: any OrcaCommandRunning
     private let presence: any OrcaPresenceChecking
     private let now: () -> Date
@@ -303,9 +356,12 @@ final class OrcaActivitySource: KeepAwakeSource {
     var cliPathResolver: (() -> String?)?
     /// 測試縫：覆寫 presence 檢查（可丟到 utility）。
     var presenceResolver: (() -> Bool)?
+    var asyncPresenceResolver: (() async -> Bool)?
+    var asyncCLIPathResolver: (() async -> String?)?
 
     init(
         runner: any OrcaCommandRunning = ProcessOrcaCommandRunner(),
+        workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
         presence: any OrcaPresenceChecking = WorkspaceOrcaPresenceChecker(),
         now: @escaping () -> Date = Date.init,
         normalInterval: Duration = .seconds(30),
@@ -314,6 +370,7 @@ final class OrcaActivitySource: KeepAwakeSource {
         graceSeconds: Double = KeepAwakeBusyAggregator.defaultGraceSeconds
     ) {
         self.runner = runner
+        self.workspaceCenter = workspaceCenter
         self.presence = presence
         self.now = now
         self.normalInterval = normalInterval
@@ -351,9 +408,13 @@ final class OrcaActivitySource: KeepAwakeSource {
     func stop() {
         generation &+= 1
         running = false
+        pendingRefresh = false
         pollTask?.cancel()
         pollTask = nil
         removeWorkspaceObservers()
+        lastWorkingAt = nil
+        lastClassification = nil
+        consecutiveFailures = 0
         // 不清除 activeFlight：舊子行程完成後自行釋放，避免雙重 child（C7-2）。
         report = []
     }
@@ -378,11 +439,30 @@ final class OrcaActivitySource: KeepAwakeSource {
 
     /// Hub tick：Orca 不在時推進／清除收工寬限（C7-8）。
     func refreshAbsenceGraceIfNeeded() {
-        guard enabled, running else { return }
-        let present = resolvePresence()
-        if !present {
-            applyAbsence(notify: false)
+        let gen = generation
+        Task { [weak self] in
+            guard let self, self.generation == gen else { return }
+            await self.reevaluatePresence()
         }
+    }
+
+    func reevaluatePresence() async {
+        let gen = generation
+        guard enabled, running else { return }
+        let present = await checkPresence()
+        guard generation == gen, enabled, running else { return }
+        if !present {
+            generation &+= 1 // invalidate any command/preflight that observed presence
+            applyAbsence(notify: true)
+        }
+    }
+
+    private func checkPresence() async -> Bool {
+        if let asyncPresenceResolver { return await asyncPresenceResolver() }
+        if let presenceResolver { return presenceResolver() }
+        return await Task.detached(priority: .utility) { [presence] in
+            presence.isOrcaRunning()
+        }.value
     }
 
     // MARK: - Polling
@@ -392,8 +472,9 @@ final class OrcaActivitySource: KeepAwakeSource {
         let interval = consecutiveFailures >= 3 ? backoffInterval : normalInterval
         lastScheduledInterval = immediate ? .zero : interval
         pollTask = Task { [weak self] in
+            guard !Task.isCancelled else { return }
             if !immediate {
-                try? await Task.sleep(for: interval)
+                try? await self?.sleep(interval)
             }
             guard let self, !Task.isCancelled, self.running else { return }
             await self.refresh()
@@ -406,15 +487,19 @@ final class OrcaActivitySource: KeepAwakeSource {
         let gen = generation
         guard enabled, running, activeFlight == nil else { return }
 
-        let present: Bool
-        if let presenceResolver {
-            present = presenceResolver()
-        } else {
-            present = await Task.detached(priority: .utility) { [presence] in
-                presence.isOrcaRunning()
-            }.value
+        nextFlight &+= 1
+        let flight = nextFlight
+        activeFlight = flight
+        defer {
+            if activeFlight == flight { activeFlight = nil }
+            if pendingRefresh, running, enabled {
+                pendingRefresh = false
+                schedulePoll(immediate: true)
+            }
         }
-        guard generation == gen, enabled, running else { return }
+
+        let present = await checkPresence()
+        guard generation == gen, enabled, running, !Task.isCancelled else { return }
 
         guard present else {
             applyAbsence(notify: true)
@@ -422,14 +507,16 @@ final class OrcaActivitySource: KeepAwakeSource {
         }
 
         let cli: String?
-        if let cliPathResolver {
+        if let asyncCLIPathResolver {
+            cli = await asyncCLIPathResolver()
+        } else if let cliPathResolver {
             cli = cliPathResolver()
         } else {
             cli = await Task.detached(priority: .utility) { [cliPathOverride] in
                 OrcaCLILocator.resolve(override: cliPathOverride)
             }.value
         }
-        guard generation == gen, enabled, running else { return }
+        guard generation == gen, enabled, running, !Task.isCancelled else { return }
 
         guard let cli else {
             publish(
@@ -446,10 +533,6 @@ final class OrcaActivitySource: KeepAwakeSource {
             return
         }
 
-        nextFlight &+= 1
-        let flight = nextFlight
-        activeFlight = flight
-
         let result = await runner.run(
             executable: cli,
             arguments: ["worktree", "ps", "--json"],
@@ -461,10 +544,11 @@ final class OrcaActivitySource: KeepAwakeSource {
             stdoutLimit: stdoutLimit
         )
 
-        if activeFlight == flight {
-            activeFlight = nil
-        }
-        guard generation == gen, enabled, running else { return }
+        guard generation == gen, enabled, running, !Task.isCancelled else { return }
+
+        let stillPresent = await checkPresence()
+        guard generation == gen, enabled, running, !Task.isCancelled else { return }
+        guard stillPresent else { applyAbsence(notify: true); return }
 
         if result.stdoutOverflowed || result.timedOut || result.killed {
             consecutiveFailures += 1
@@ -614,42 +698,50 @@ final class OrcaActivitySource: KeepAwakeSource {
         }
     }
 
-    private func resolvePresence() -> Bool {
-        if let presenceResolver { return presenceResolver() }
-        return presence.isOrcaRunning()
-    }
-
     // MARK: - Workspace observers (C7-8)
 
     private func installWorkspaceObservers() {
         removeWorkspaceObservers()
-        let center = NSWorkspace.shared.notificationCenter
+        observerGeneration &+= 1
+        let handler = workspaceEventHandler()
+        let center = workspaceCenter
         let launch = center.addObserver(
             forName: NSWorkspace.didLaunchApplicationNotification,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.handleWorkspaceChange() }
-        }
+        ) { _ in _ = handler() }
         let terminate = center.addObserver(
             forName: NSWorkspace.didTerminateApplicationNotification,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.handleWorkspaceChange() }
-        }
+        ) { _ in _ = handler() }
         observers = [launch, terminate]
     }
 
+    /// The queued callback carries the observer lifecycle, not the lifecycle at delivery.
+    func workspaceEventHandler() -> @Sendable () -> Task<Void, Never> {
+        let lifecycle = observerGeneration
+        return { [weak self] in
+            Task { @MainActor in self?.handleWorkspaceChange(lifecycle: lifecycle) }
+        }
+    }
+
     private func removeWorkspaceObservers() {
+        observerGeneration &+= 1
         for observer in observers {
-            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            workspaceCenter.removeObserver(observer)
         }
         observers = []
     }
 
-    private func handleWorkspaceChange() {
-        guard running, enabled else { return }
+    private func handleWorkspaceChange(lifecycle: UInt64) {
+        guard observerGeneration == lifecycle, running, enabled else { return }
+        generation &+= 1
+        pendingRefresh = activeFlight != nil
+        Task { [weak self] in
+            guard let self, self.observerGeneration == lifecycle else { return }
+            await self.reevaluatePresence()
+        }
         // 啟動／結束立即重評；取消退避睡眠（C7-8）。
         schedulePoll(immediate: true)
     }

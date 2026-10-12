@@ -55,7 +55,7 @@ struct KeepAwakeSourceHubTests {
         let hub = KeepAwakeSourceHub(
             agentActivity: AgentActivityMonitor(sources: [], processSampler: nil, now: now),
             orca: OrcaActivitySource(
-                runner: FakeRunner(),
+                runner: FakeRunner(), workspaceCenter: NotificationCenter(),
                 presence: FakePresence(),
                 now: now,
                 normalInterval: .seconds(30),
@@ -269,7 +269,7 @@ struct KeepAwakeSourceHubTests {
 
         let hub = KeepAwakeSourceHub(
             agentActivity: monitor,
-            orca: OrcaActivitySource(runner: FakeRunner(), presence: FakePresence()),
+            orca: OrcaActivitySource(runner: FakeRunner(), workspaceCenter: NotificationCenter(), presence: FakePresence()),
             desktop: DesktopAgentSource(
                 lister: StaticDesktopLister([]),
                 verifier: FakeVerifier(ok: false),
@@ -298,7 +298,7 @@ struct KeepAwakeSourceHubTests {
         let presence = AppPresenceSource(checker: checker, now: { clock })
         let hub = KeepAwakeSourceHub(
             agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
-            orca: OrcaActivitySource(runner: FakeRunner(), presence: FakePresence()),
+            orca: OrcaActivitySource(runner: FakeRunner(), workspaceCenter: NotificationCenter(), presence: FakePresence()),
             desktop: DesktopAgentSource(
                 lister: StaticDesktopLister([]),
                 verifier: FakeVerifier(ok: false),
@@ -363,4 +363,37 @@ struct StaticTranscriptScanner: DesktopTranscriptScanning {
     var samples: [(id: String, mtime: Date)]
     init(_ samples: [(id: String, mtime: Date)]) { self.samples = samples }
     func latestMtimes(kind: DesktopAgentKind) -> [(id: String, mtime: Date)] { samples }
+}
+
+@Suite("C7-10 bounded conservative normalization")
+struct KeepAwakeClampRegressionTests {
+    @Test("More than 256 live future samples and churn never renew grace")
+    func liveCapacityAndChurn() {
+        let first = Date(timeIntervalSince1970: 8_000_000)
+        let raw = first.addingTimeInterval(3_600)
+        var cache = KeepAwakeMtimeClampCache()
+        for index in 0..<600 {
+            #expect(cache.stabilize(id: "live-\(index)", raw: raw, now: first) <= first)
+        }
+        for second in stride(from: 30, through: 600, by: 30) {
+            let now = first.addingTimeInterval(Double(second))
+            for index in 0..<600 {
+                let normalized = cache.stabilize(id: "live-\(index)", raw: raw, now: now)
+                #expect(normalized <= first)
+                let report = KeepAwakeSourceReport(id: "sample", kind: .agentActivity,
+                    displayName: "sample", detail: nil, isWorkingNow: false,
+                    lastWorkingAt: normalized, health: .ok)
+                let state = KeepAwakeBusyAggregator.evaluate([report], now: now)
+                if second >= 300 { #expect(!state.isBusy) }
+                #expect(state.releaseAt == nil || state.releaseAt! <= first.addingTimeInterval(300))
+            }
+            cache.retainIds([])
+            for index in 0..<300 {
+                _ = cache.stabilize(id: "churn-\(second)-\(index)", raw: raw, now: now)
+            }
+        }
+        // Once wall time passes the raw date, the retired evidence still cannot renew.
+        #expect(cache.stabilize(id: "live-0", raw: raw,
+                               now: raw.addingTimeInterval(1)) <= first)
+    }
 }

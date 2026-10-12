@@ -108,6 +108,7 @@ final class AgentActivityMonitor {
     /// Hub 轉接（spec §4.2）：`isWorkingNow` 固定 false，避免與聚合器重複套用寬限。
     /// working 為空時回 nil；有樣本時 `lastWorkingAt` 是（穩定 clamp 後）最大的 lastWrite。
     func sourceReport(now: Date? = nil) -> KeepAwakeSourceReport? {
+        mtimeClamp.retainIds(Set(working.map(\.id)))
         guard !working.isEmpty else { return nil }
         let instant = now ?? self.now()
         var latest: Date?
