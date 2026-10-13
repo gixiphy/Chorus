@@ -635,6 +635,7 @@ final class PowerHelperClient: PowerHelperClienting {
             bypassFloorOnce = true
         }
         // PERF1-R4: preserve one pending refresh for the new epoch when a getter is in flight.
+        // Post-operation floor bypass is consumed when that replacement physical read starts.
         if physicalInFlightToken != nil {
             pendingPhysicalIntent = true
         }
