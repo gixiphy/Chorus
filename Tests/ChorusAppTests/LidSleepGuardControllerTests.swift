@@ -93,7 +93,7 @@ struct LidSleepGuardControllerTests {
         var statusHandler: (() async throws -> PowerHelperStatus)?
         var failRelease = false
 
-        func refreshAvailability() {}
+        func refreshAvailability(reason: PowerHelperRefreshReason) async {}
         func register() async throws {}
         func unregister() async throws {}
         func openApprovalSettings() {}
@@ -429,8 +429,8 @@ struct LidSleepGuardControllerTests {
         }
         #expect(sawUnavailable)
 
-        // Backoff retry (~1s) should attempt set again.
-        let retryDeadline = ContinuousClock.now + .seconds(3)
+        // PERF-1 evidence retry first delay is 5s.
+        let retryDeadline = ContinuousClock.now + .seconds(7)
         while helper.setCalls.filter({ $0 }).count < 2, ContinuousClock.now < retryDeadline {
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -534,7 +534,7 @@ struct LidSleepGuardControllerTests {
             final class FailingHelper: PowerHelperClienting {
                 var availability: LidHelperAvailability = .notRegistered
                 var onAvailabilityChange: (() -> Void)?
-                func refreshAvailability() {}
+                func refreshAvailability(reason: PowerHelperRefreshReason) async {}
                 func register() async throws {}
                 func unregister() async throws {}
                 func openApprovalSettings() {}

@@ -87,8 +87,10 @@ final class LidSleepGuardController {
     @ObservationIgnored private var recoveryGeneration: UInt64 = 0
     @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
     @ObservationIgnored private var retryTask: Task<Void, Never>?
-    @ObservationIgnored private var nextRetryDelay: TimeInterval = 1
-    @ObservationIgnored private let maxRetryDelay: TimeInterval = 5 * 60
+    @ObservationIgnored private var nextRetryDelay: TimeInterval = 5
+    @ObservationIgnored private let maxRetryDelay: TimeInterval = 300
+    /// PERF-1 evidence backoff index into 5,10,20,40,80,160,300…
+    @ObservationIgnored private var evidenceRetryIndex = 0
 
     /// Notification throttle state lives on the controller (notifier is stateless).
     /// C8-5: one armed notice per aggregate-busy period; 30min gate is independent.
@@ -270,7 +272,7 @@ final class LidSleepGuardController {
         guard !e2eNamedInstance, !shutDown else { return }
         recoveryGeneration &+= 1
         let recovery = recoveryGeneration
-        helper.refreshAvailability()
+        await helper.refreshAvailability(reason: .launch)
         // V1-4: capture lifecycle/generation before the first await so stale
         // probe/status completions cannot overwrite newer recovery evidence.
         let generation = setGeneration
@@ -324,7 +326,7 @@ final class LidSleepGuardController {
         guard !e2eNamedInstance, !shutDown else { return }
         recoveryGeneration &+= 1
         let recovery = recoveryGeneration
-        helper.refreshAvailability()
+        await helper.refreshAvailability(reason: .wake)
         switch helper.availability {
         case .ready, .connecting:
             break
@@ -372,7 +374,15 @@ final class LidSleepGuardController {
 
     func refreshHelperAvailability() {
         guard !e2eNamedInstance else { return }
-        helper.refreshAvailability()
+        Task { @MainActor [weak self] in
+            await self?.refreshHelperAvailabilityAsync(reason: .settingsOpened)
+        }
+    }
+
+    /// Settings / UI: await cached/coalesced SM refresh (PERF-1).
+    func refreshHelperAvailabilityAsync(reason: PowerHelperRefreshReason = .settingsOpened) async {
+        guard !e2eNamedInstance, !shutDown else { return }
+        await helper.refreshAvailability(reason: reason)
         scheduleReevaluate()
     }
 
@@ -384,16 +394,20 @@ final class LidSleepGuardController {
         if !e2eNamedInstance {
             lid.start()
             lidReading = lid.reading
-            helper.refreshAvailability()
-            // C8-1: enabled helper starts `.connecting` until status() handshakes.
-            ensureHelperHandshake()
+            // PERF-1: launch refresh + handshake off the synchronous start path.
+            // Production PowerHelperClient stubs SM under XCTest; FakeHelper is a no-op refresh.
+            Task { @MainActor [weak self] in
+                guard let self, !self.shutDown else { return }
+                await self.helper.refreshAvailability(reason: .launch)
+                self.ensureHelperHandshake()
+            }
         }
     }
 
     /// Bounded status() handshake so production can leave `.connecting` (C8-1).
     private func ensureHelperHandshake() {
         guard !e2eNamedInstance, !shutDown else { return }
-        helper.refreshAvailability()
+        // PERF-1 Task 2: do not call service refresh here; Task 3 removes reevaluate kicks.
         guard case .connecting = helper.availability else { return }
         guard handshakeTask == nil else { return }
         suppressAcquireForHandshake = true
@@ -474,10 +488,7 @@ final class LidSleepGuardController {
         lidReading = lid.reading
         clearExternalInterferenceLatchIfSafe()
         clearAwaitingEvidenceIfSafe()
-        // Keep trying handshake while enabled/connecting (C8-1).
-        if settings.enabled || lastAgentModeActive {
-            ensureHelperHandshake()
-        }
+        // PERF-1: reevaluate never kicks SM refresh or handshake — only cached evidence.
 
         let recoveryBlockedAcquire = hasRecoveryHealthBlock
         let helperAvailability: LidHelperAvailability = {
@@ -599,16 +610,15 @@ final class LidSleepGuardController {
         case .ready:
             break
         case .connecting:
-            // C8-1: kick handshake; do not treat connecting as permanent error.
-            ensureHelperHandshake()
+            // PERF-1: never kick handshake/SM from requestSet — event-driven evidence only.
             if on {
-                scheduleRetry()
+                scheduleEvidenceRetry()
             }
             return
         default:
             if on {
                 transientHelperError = "helper not ready"
-                scheduleRetry()
+                scheduleEvidenceRetry()
                 scheduleReevaluate()
             }
             return
@@ -628,7 +638,10 @@ final class LidSleepGuardController {
                 if on {
                     self.transientHelperError = nil
                     self.awaitingForcedOffEvidence = false
-                    self.nextRetryDelay = 1
+                    self.nextRetryDelay = 5
+                    self.evidenceRetryIndex = 0
+                    self.retryTask?.cancel()
+                    self.retryTask = nil
                 }
                 self.applyHelperStatus(status)
                 self.handleForcedOffIfNeeded(status)
@@ -697,21 +710,64 @@ final class LidSleepGuardController {
     }
 
     private func scheduleRetry() {
-        guard !externalInterferenceLatched, !awaitingForcedOffEvidence else { return }
+        scheduleEvidenceRetry()
+    }
+
+    /// PERF-1: single evidence/recovery retry chain (5→300s). Continuation of a prior
+    /// permitted refresh — never started by reevaluate itself.
+    private func scheduleEvidenceRetry() {
+        guard !externalInterferenceLatched else { return }
+        let delays: [TimeInterval] = [5, 10, 20, 40, 80, 160, 300]
+        let delay = evidenceRetryIndex < delays.count
+            ? delays[evidenceRetryIndex]
+            : maxRetryDelay
+        evidenceRetryIndex = min(evidenceRetryIndex + 1, delays.count)
+        nextRetryDelay = delay
         retryTask?.cancel()
-        let delay = nextRetryDelay
-        nextRetryDelay = min(nextRetryDelay * 2, maxRetryDelay)
         retryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled, !self.shutDown else { return }
             guard !self.externalInterferenceLatched else { return }
-            // C8-2: re-probe before clearing error / reacquire.
-            await self.gatherEvidenceAfterFailedAcquire()
-            guard !self.externalInterferenceLatched, !self.awaitingForcedOffEvidence else { return }
-            guard !self.hasRecoveryHealthBlock else { return }
-            self.transientHelperError = nil
-            self.helper.refreshAvailability()
+            // If a physical SM read is still in flight, wait for it rather than stacking timers.
+            await self.helper.refreshAvailability(reason: .retry)
+            switch self.helper.availability {
+            case .requiresApproval:
+                // SM only — never XPC/acquire until enabled.
+                self.scheduleEvidenceRetry()
+                self.scheduleReevaluate()
+                return
+            case .connecting, .ready:
+                break
+            default:
+                self.scheduleEvidenceRetry()
+                self.scheduleReevaluate()
+                return
+            }
+            if self.hasRecoveryHealthBlock || self.awaitingForcedOffEvidence {
+                // Read-only status evidence; keep acquire forbidden.
+                do {
+                    let status = try await self.helper.status()
+                    guard !self.shutDown else { return }
+                    self.applyHelperStatus(status)
+                    self.considerRecoveryHealth(from: status)
+                } catch {
+                    Self.log.notice("Lid Guard evidence retry status failed: \(String(describing: error))")
+                }
+                if self.hasRecoveryHealthBlock || self.awaitingForcedOffEvidence {
+                    self.scheduleEvidenceRetry()
+                }
+                self.scheduleReevaluate()
+                return
+            }
+            // Healthy path: one handshake if still connecting, then reevaluate may acquire.
             self.ensureHelperHandshake()
+            if case .ready = self.helper.availability {
+                self.evidenceRetryIndex = 0
+                self.nextRetryDelay = 5
+                self.transientHelperError = nil
+            } else {
+                self.scheduleEvidenceRetry()
+            }
             self.scheduleReevaluate()
         }
     }

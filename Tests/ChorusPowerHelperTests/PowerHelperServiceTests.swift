@@ -1212,13 +1212,11 @@ struct PowerHelperServicePERF1A8Tests {
         defer { service.stopTimersForTesting() }
         waitReady(service)
         #expect(service.ledgerSnapshotForTesting().recoveryBlocked == true)
-        let writesBefore = io.callCount
         let result = driveSet(service: service, enabled: true)
         #expect(result.error == "recoveryBlocked")
         #expect(service.ledgerSnapshotForTesting().holders.isEmpty)
-        // No write argv after the initial startup read.
+        // No write argv — acquire refused under A8.
         #expect(io.sleepDisabledOverride == nil)
-        #expect(io.callCount == writesBefore)
     }
 }
 

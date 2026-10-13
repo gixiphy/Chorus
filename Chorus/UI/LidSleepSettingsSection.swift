@@ -111,17 +111,12 @@ struct LidSleepSettingsSection: View {
         .sheet(item: $explanation) { intent in explanationSheet(intent) }
         .sheet(isPresented: $showingAutomation) { automationSheet }
         .task {
-            // Read-only status + bounded approval polling; cancellation follows view lifetime.
-            let started = ProcessInfo.processInfo.systemUptime
+            // PERF-1: one settingsOpened refresh; render controller cache (no SM/.status on MainActor).
+            await guardController.refreshHelperAvailabilityAsync()
+            serviceAvailability = guardController.helperAvailability
             while !Task.isCancelled {
-                if ProcessInfo.processInfo.systemUptime - started < 600 {
-                    serviceAvailability = PowerHelperAvailabilityMapping.availability(
-                        from: SMAppService.daemon(plistName: PowerHelperConstants.daemonPlistName).status
-                    )
-                    guardController.refreshHelperAvailability()
-                    if serviceAvailability == .connecting { await guardController.refreshFromHelper() }
-                }
                 activeLeaseCount = appState.keepAwake.sourceHub.leases.snapshot().active.count
+                serviceAvailability = guardController.helperAvailability
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
         }
@@ -358,10 +353,8 @@ struct LidSleepSettingsSection: View {
                 if !guardController.isConfirmedNoLid, intent == .enable || wasEnabled {
                     guardController.settings.enabled = true
                 }
-                guardController.refreshHelperAvailability()
-                serviceAvailability = PowerHelperAvailabilityMapping.availability(
-                    from: SMAppService.daemon(plistName: PowerHelperConstants.daemonPlistName).status
-                )
+                await guardController.refreshHelperAvailabilityAsync(reason: .userAction)
+                serviceAvailability = guardController.helperAvailability
             } catch { operationError = String(localized: "輔助程序操作失敗：\(String(describing: error))") }
         }
     }
