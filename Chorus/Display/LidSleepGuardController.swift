@@ -294,8 +294,17 @@ final class LidSleepGuardController {
         started = false
         state.phase = .off
         persistSession()
-        // PERF1-R5: do not queue.sync on MainActor; kick a bounded background drain.
-        Task { await self.sessionStore.drainPendingBounded(timeout: 0.2) }
+        // PERF1-R5 round3: complete safety persistence within the shutdown budget without
+        // queue.sync. Wait off the caller's runloop via a bounded group so pending writes
+        // drain (or the 0.2s cap elapses) before returning.
+        let store = sessionStore
+        let group = DispatchGroup()
+        group.enter()
+        Task {
+            await store.drainPendingBounded(timeout: 0.2)
+            group.leave()
+        }
+        _ = group.wait(timeout: .now() + .milliseconds(250))
     }
 
     /// Read-only leftover probe allowed even when the option is off (§6.6 / §14.2).
@@ -304,19 +313,16 @@ final class LidSleepGuardController {
         guard !e2eNamedInstance, !shutDown else { return }
         recoveryGeneration &+= 1
         let recovery = recoveryGeneration
-        // PERF1-R3: share SM single-flight with ensureStarted, but do not join the
-        // evidence coordinator — leftover status/probe must stay independently generation-gated.
-        await helper.refreshAvailability(reason: .launch)
-        guard !shutDown, recoveryGeneration == recovery else { return }
-        if case .requiresApproval = helper.availability {
-            scheduleEvidenceRetry()
-        }
+        // PERF1-R3 round3: leftover SM refresh goes through the shared coordinator
+        // (approval backoff / gates), then probe/status stay generation-gated.
+        await refreshHelper(reason: .launch)
+        guard !shutDown, !Task.isCancelled, recoveryGeneration == recovery else { return }
         // V1-4: capture lifecycle/generation before the first await so stale
         // probe/status completions cannot overwrite newer recovery evidence.
         let generation = setGeneration
         // V1-3: await off-MainActor probe (default hops via Task.detached).
         let probe = await sleepDisabledProbe()
-        guard !shutDown, setGeneration == generation, recoveryGeneration == recovery else { return }
+        guard !shutDown, !Task.isCancelled, setGeneration == generation, recoveryGeneration == recovery else { return }
         let registered: Bool = {
             switch helper.availability {
             case .notRegistered: return false
@@ -347,18 +353,18 @@ final class LidSleepGuardController {
 
         do {
             let status = try await helper.status()
-            guard !shutDown, setGeneration == generation, recoveryGeneration == recovery else { return }
+            guard !shutDown, !Task.isCancelled, setGeneration == generation, recoveryGeneration == recovery else { return }
             applyHelperStatus(status)
             classifyLeftover(from: status)
             if leftover == .ownResidual {
                 let restored = await restoreOwnResidual(expectedGeneration: generation, expectedRecoveryGeneration: recovery)
-                guard !shutDown, setGeneration == generation, recoveryGeneration == recovery else { return }
+                guard !shutDown, !Task.isCancelled, setGeneration == generation, recoveryGeneration == recovery else { return }
                 if restored {
                     leftover = nil
                 }
             }
         } catch {
-            guard !shutDown, setGeneration == generation, recoveryGeneration == recovery else { return }
+            guard !shutDown, !Task.isCancelled, setGeneration == generation, recoveryGeneration == recovery else { return }
             leftover = .unknownOwner
         }
         publish()
@@ -382,12 +388,23 @@ final class LidSleepGuardController {
     func registerHelper() async throws {
         guard !e2eNamedInstance else { return }
         try await helper.register()
+        // PERF1-R3 round3: user registration goes through the evidence coordinator so
+        // requiresApproval starts SM-only backoff (not a bare reevaluate).
+        await refreshHelper(reason: .userAction)
+        guard !shutDown, !Task.isCancelled else { return }
         scheduleReevaluate()
     }
 
     func unregisterHelper() async throws {
         guard !e2eNamedInstance else { return }
+        // Bump generations so in-flight status/evidence cannot race removal.
+        setGeneration &+= 1
+        recoveryGeneration &+= 1
+        evidenceCoordinatorGeneration &+= 1
         try await helper.unregister()
+        guard !shutDown, !Task.isCancelled else { return }
+        await refreshHelper(reason: .userAction)
+        guard !shutDown, !Task.isCancelled else { return }
         scheduleReevaluate()
     }
 
@@ -908,50 +925,10 @@ final class LidSleepGuardController {
             self.retryTask = nil
             guard !Task.isCancelled, !self.shutDown else { return }
             guard !self.externalInterferenceLatched else { return }
-            // If a physical SM read is still in flight, wait for it rather than stacking timers.
-            await self.helper.refreshAvailability(reason: .retry)
-            guard generation == self.evidenceRetryGeneration, !self.shutDown else { return }
-            switch self.helper.availability {
-            case .requiresApproval:
-                // SM only — never XPC/acquire until enabled.
-                self.scheduleEvidenceRetry()
-                self.scheduleReevaluate()
-                return
-            case .connecting, .ready:
-                break
-            default:
-                self.scheduleEvidenceRetry()
-                self.scheduleReevaluate()
-                return
-            }
-            if self.hasRecoveryHealthBlock || self.awaitingForcedOffEvidence {
-                // Read-only status evidence; keep acquire forbidden.
-                do {
-                    let status = try await self.helper.status()
-                    guard !self.shutDown, generation == self.evidenceRetryGeneration else { return }
-                    self.applyHelperStatus(status)
-                    self.considerRecoveryHealth(from: status)
-                } catch {
-                    Self.log.notice("Lid Guard evidence retry status failed: \(String(describing: error))")
-                    self.revokeHoldConfirmationAfterFailedRead()
-                }
-                if self.hasRecoveryHealthBlock || self.awaitingForcedOffEvidence {
-                    self.scheduleEvidenceRetry()
-                } else {
-                    self.cancelArmedEvidenceRetry(resetBackoff: true)
-                }
-                self.scheduleReevaluate()
-                return
-            }
-            // Healthy path: one handshake if still connecting, then reevaluate may acquire.
-            self.ensureHelperHandshake()
-            if case .ready = self.helper.availability {
-                self.cancelArmedEvidenceRetry(resetBackoff: true)
-                self.transientHelperError = nil
-            } else {
-                self.scheduleEvidenceRetry()
-            }
-            self.scheduleReevaluate()
+            // PERF1-R3 round3: retries go through the shared refresh/evidence coordinator
+            // (SM-only for approval, read-only status for recovery) with lifecycle gates.
+            await self.refreshHelper(reason: .retry)
+            guard generation == self.evidenceRetryGeneration, !Task.isCancelled, !self.shutDown else { return }
         }
     }
 
