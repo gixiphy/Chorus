@@ -93,6 +93,8 @@ final class LidSleepGuardController {
     @ObservationIgnored private let maxRetryDelay: TimeInterval = 300
     /// PERF-1 evidence backoff index into 5,10,20,40,80,160,300…
     @ObservationIgnored private var evidenceRetryIndex = 0
+    /// PERF1-NEW-4: bumped to invalidate an armed sleeping retry on fresh healthy evidence.
+    @ObservationIgnored private var evidenceRetryGeneration: UInt64 = 0
 
     /// Notification throttle state lives on the controller (notifier is stateless).
     /// C8-5: one armed notice per aggregate-busy period; 30min gate is independent.
@@ -270,8 +272,7 @@ final class LidSleepGuardController {
     func shutdown() {
         shutDown = true
         stopHeartbeat()
-        retryTask?.cancel()
-        retryTask = nil
+        cancelArmedEvidenceRetry(resetBackoff: false)
         handshakeTask?.cancel()
         handshakeTask = nil
         recoveryTask?.cancel()
@@ -368,15 +369,13 @@ final class LidSleepGuardController {
         recoveryGeneration &+= 1
         let recovery = recoveryGeneration
         // PERF1-R3: wake goes through the shared refresh/evidence coordinator.
+        // PERF1-NEW-3: latch clear happens only inside performRefreshHelper after a
+        // fresh successful healthy status — never from cached readiness alone.
         await refreshHelper(reason: .wake)
         guard !shutDown, recoveryGeneration == recovery else { return }
-        if case .ready = helper.availability,
-           !externalInterferenceLatched, !hasRecoveryHealthBlock
-        {
-            awaitingForcedOffEvidence = false
-            transientHelperError = nil
-            scheduleReevaluate()
-        }
+        // Reevaluate after the coordinator finishes so a latch cleared by fresh
+        // evidence is applied; do not clear the latch here from cached readiness.
+        scheduleReevaluate()
     }
 
     /// U01: install / remove / open Login Items. Never auto-register from tests.
@@ -433,7 +432,11 @@ final class LidSleepGuardController {
         }
         if let existing = evidenceCoordinatorTask {
             await existing.value
-            // Owner may have missed a reason published while it was exiting — drain it.
+            // Owner may have exited its while-loop before observing our reason. Clear a
+            // stale completed-task pointer so we can become owner and drain (PERF1-NEW-3).
+            if evidenceCoordinatorTask == existing {
+                evidenceCoordinatorTask = nil
+            }
             if evidenceCoordinatorTask == nil, pendingCoordinatorReason != nil {
                 await refreshHelper(reason: pendingCoordinatorReason ?? reason)
             }
@@ -477,8 +480,7 @@ final class LidSleepGuardController {
             } else if case .connecting = helper.availability {
                 scheduleEvidenceRetry()
             } else if case .ready = helper.availability {
-                evidenceRetryIndex = 0
-                nextRetryDelay = 5
+                cancelArmedEvidenceRetry(resetBackoff: true)
             } else if case .requiresApproval = helper.availability {
                 scheduleEvidenceRetry()
             }
@@ -487,12 +489,14 @@ final class LidSleepGuardController {
             // Launch leaves a healthy ready connection alone (handshake already done).
             // Wake/settings/user/retry/drop and known recovery/forced-off take one read-only status.
             let shouldReadEvidence: Bool = {
-                if hasRecoveryHealthBlock || awaitingForcedOffEvidence { return true }
                 switch reason {
                 case .wake, .settingsOpened, .userAction, .connectionInvalidated, .retry:
+                    // Always refresh evidence on these events (incl. forced-off latch).
                     return true
                 case .launch:
-                    return false
+                    // Leftover recovery flags only — forced-off latch is owned by
+                    // gatherEvidence + wake/retry so launch cannot race those status() calls.
+                    return hasRecoveryHealthBlock
                 }
             }()
             if shouldReadEvidence {
@@ -509,9 +513,13 @@ final class LidSleepGuardController {
                     {
                         awaitingForcedOffEvidence = false
                         transientHelperError = nil
+                        // PERF1-NEW-4: cancel any armed retry — healthy idle must not refresh again.
+                        cancelArmedEvidenceRetry(resetBackoff: true)
                     }
                 } catch {
                     Self.log.notice("Lid Guard recovery evidence status failed: \(String(describing: error))")
+                    // PERF1-NEW-3: failed reads revoke hold confirmation; keep evidence latch.
+                    revokeHoldConfirmationAfterFailedRead()
                     scheduleEvidenceRetry()
                     scheduleReevaluate()
                     return
@@ -519,8 +527,7 @@ final class LidSleepGuardController {
                 if hasRecoveryHealthBlock || awaitingForcedOffEvidence {
                     scheduleEvidenceRetry()
                 } else {
-                    evidenceRetryIndex = 0
-                    nextRetryDelay = 5
+                    cancelArmedEvidenceRetry(resetBackoff: true)
                 }
             }
             scheduleReevaluate()
@@ -783,10 +790,7 @@ final class LidSleepGuardController {
                 if on {
                     self.transientHelperError = nil
                     self.awaitingForcedOffEvidence = false
-                    self.nextRetryDelay = 5
-                    self.evidenceRetryIndex = 0
-                    self.retryTask?.cancel()
-                    self.retryTask = nil
+                    self.cancelArmedEvidenceRetry(resetBackoff: true)
                 }
                 self.applyHelperStatus(status)
                 self.handleForcedOffIfNeeded(status)
@@ -848,6 +852,8 @@ final class LidSleepGuardController {
         } catch {
             guard !shutDown, setGeneration == generation else { return }
             // No evidence → remain nonholding; do not clear error or reacquire.
+            // PERF1-NEW-3: revoke cached hold confirmation on failed evidence reads.
+            revokeHoldConfirmationAfterFailedRead()
             Self.log.notice(
                 "Lid Guard failed to obtain forced-off evidence: \(String(describing: error))"
             )
@@ -856,6 +862,29 @@ final class LidSleepGuardController {
 
     private func scheduleRetry() {
         scheduleEvidenceRetry()
+    }
+
+    /// PERF1-NEW-3: failed status/evidence reads drop cached hold confirmation so
+    /// policy cannot reacquire from stale callerIsHolder while availability stays ready.
+    private func revokeHoldConfirmationAfterFailedRead() {
+        awaitingArmedConfirm = false
+        stopHeartbeat()
+        if var status = helperStatus {
+            status.callerIsHolder = false
+            helperStatus = status
+        }
+        // Keep awaitingForcedOffEvidence / recoveryHealthBlocked — those require fresh evidence.
+    }
+
+    /// PERF1-NEW-4: invalidate an armed sleeping retry so healthy idle issues zero further refreshes.
+    private func cancelArmedEvidenceRetry(resetBackoff: Bool) {
+        evidenceRetryGeneration &+= 1
+        retryTask?.cancel()
+        retryTask = nil
+        if resetBackoff {
+            evidenceRetryIndex = 0
+            nextRetryDelay = 5
+        }
     }
 
     /// PERF-1: single evidence/recovery retry chain (5→300s). Continuation of a prior
@@ -870,14 +899,18 @@ final class LidSleepGuardController {
             : maxRetryDelay
         evidenceRetryIndex = min(evidenceRetryIndex + 1, delays.count)
         nextRetryDelay = delay
+        let generation = evidenceRetryGeneration
         retryTask = Task { @MainActor [weak self] in
             await self?.evidenceSleep(delay)
             guard let self else { return }
+            // PERF1-NEW-4: generation bump invalidates even when the sleep gate is injected.
+            guard generation == self.evidenceRetryGeneration else { return }
             self.retryTask = nil
             guard !Task.isCancelled, !self.shutDown else { return }
             guard !self.externalInterferenceLatched else { return }
             // If a physical SM read is still in flight, wait for it rather than stacking timers.
             await self.helper.refreshAvailability(reason: .retry)
+            guard generation == self.evidenceRetryGeneration, !self.shutDown else { return }
             switch self.helper.availability {
             case .requiresApproval:
                 // SM only — never XPC/acquire until enabled.
@@ -895,14 +928,17 @@ final class LidSleepGuardController {
                 // Read-only status evidence; keep acquire forbidden.
                 do {
                     let status = try await self.helper.status()
-                    guard !self.shutDown else { return }
+                    guard !self.shutDown, generation == self.evidenceRetryGeneration else { return }
                     self.applyHelperStatus(status)
                     self.considerRecoveryHealth(from: status)
                 } catch {
                     Self.log.notice("Lid Guard evidence retry status failed: \(String(describing: error))")
+                    self.revokeHoldConfirmationAfterFailedRead()
                 }
                 if self.hasRecoveryHealthBlock || self.awaitingForcedOffEvidence {
                     self.scheduleEvidenceRetry()
+                } else {
+                    self.cancelArmedEvidenceRetry(resetBackoff: true)
                 }
                 self.scheduleReevaluate()
                 return
@@ -910,8 +946,7 @@ final class LidSleepGuardController {
             // Healthy path: one handshake if still connecting, then reevaluate may acquire.
             self.ensureHelperHandshake()
             if case .ready = self.helper.availability {
-                self.evidenceRetryIndex = 0
-                self.nextRetryDelay = 5
+                self.cancelArmedEvidenceRetry(resetBackoff: true)
                 self.transientHelperError = nil
             } else {
                 self.scheduleEvidenceRetry()
@@ -976,8 +1011,7 @@ final class LidSleepGuardController {
     private func latchExternalInterference(requestRelease: Bool) {
         guard !externalInterferenceLatched else {
             stopHeartbeat()
-            retryTask?.cancel()
-            retryTask = nil
+            cancelArmedEvidenceRetry(resetBackoff: false)
             awaitingForcedOffEvidence = false
             return
         }
@@ -986,8 +1020,7 @@ final class LidSleepGuardController {
         awaitingArmedConfirm = false
         wantsSleepDisabled = false
         stopHeartbeat()
-        retryTask?.cancel()
-        retryTask = nil
+        cancelArmedEvidenceRetry(resetBackoff: false)
         if requestRelease {
             requestSet(false)
         }

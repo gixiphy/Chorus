@@ -1755,4 +1755,59 @@ struct LidSleepGuardControllerTests {
             #expect(helper.setCalls.filter { $0 }.isEmpty)
         }
     }
-}
+
+    @Test("PERF1-NEW-3 wake failed status keeps evidence latch; no reacquire from cache", .timeLimit(.minutes(1)))
+    func perf1New3WakeFailedStatusKeepsLatch() async throws {
+        let helper = FakeHelper()
+        helper.failNextSet = true
+        helper.failStatus = true
+        let sleepGate = PERF1EvidenceSleepGate()
+        let (controller, _, _, _) = makeController(
+            helper: helper,
+            heartbeat: 3_600,
+            evidenceSleep: { await sleepGate.sleep($0) }
+        )
+        defer { controller.shutdown() }
+
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        let latchDeadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < latchDeadline {
+            if case .unavailable(.error) = controller.phase, !controller.wantsSleepDisabled {
+                break
+            }
+            await Task.yield()
+        }
+        #expect(!controller.wantsSleepDisabled)
+        #expect(!controller.isActuallyHoldingSleepDisabled)
+
+        let truesBeforeWake = helper.setCalls.filter { $0 }.count
+        let statusBeforeWake = helper.statusCalls
+        // Cached .ready alone must not clear latch after a failed wake status read.
+        helper.failStatus = true
+        await controller.refreshFromHelper()
+        #expect(helper.statusCalls >= statusBeforeWake + 1)
+        #expect(!controller.wantsSleepDisabled)
+        #expect(!controller.isActuallyHoldingSleepDisabled)
+        #expect(controller.helperStatus?.callerIsHolder != true)
+        #expect(helper.setCalls.filter { $0 }.count == truesBeforeWake)
+        if case .unavailable(.error) = controller.phase {
+            // still latched
+        } else {
+            Issue.record("expected unavailable while evidence latch held, got \(controller.phase)")
+        }
+
+        // Fresh healthy status (same path as lostReply resume) clears latch.
+        helper.failStatus = false
+        helper.statusHandler = nil
+        await controller.refreshFromHelper()
+        controller.update(
+            agentModeActive: true, busy: busyState("lease:resume"), power: acPower(), existingFloor: .percent20
+        )
+        let resumeDeadline = ContinuousClock.now + .seconds(2)
+        while !controller.wantsSleepDisabled, ContinuousClock.now < resumeDeadline {
+            await Task.yield()
+        }
+        #expect(controller.wantsSleepDisabled)
+    }}
