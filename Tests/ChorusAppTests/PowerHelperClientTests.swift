@@ -2,6 +2,7 @@ import ChorusCore
 import Darwin
 import Foundation
 import ServiceManagement
+import Synchronization
 import Testing
 @testable import Chorus
 
@@ -839,11 +840,15 @@ struct LidClosedSessionStorePERF1Tests {
             UserDefaults().removePersistentDomain(forName: suite)
             LidClosedSessionCoordinator.resetRegistryForTesting(suiteName: suite)
         }
-        let box = SinkBox()
+        let writes = Mutex(0)
+        let stored = Mutex<Data?>(nil)
         let sink = LidClosedSessionCoordinator.WriteSink(
-            set: { data, _ in box.set(data) },
-            remove: { _ in box.remove() },
-            data: { _ in box.data() }
+            set: { data, _ in
+                writes.withLock { $0 += 1 }
+                stored.withLock { $0 = data }
+            },
+            remove: { _ in },
+            data: { _ in stored.withLock { $0 } }
         )
         let store = LidClosedSessionStore(suiteName: suite, writeSink: sink)
         let t0 = Date(timeIntervalSince1970: 100)
@@ -855,8 +860,9 @@ struct LidClosedSessionStorePERF1Tests {
                 wallClosedAt: Date(timeIntervalSince1970: 100 + Double(i))
             )
         }
+        #expect(store.load()?.continuousClosedAt == 50)
         await store.flushPending()
-        #expect(box.writeCount() == 1)
+        #expect(writes.withLock { $0 } == 1)
         let snap = store.load()
         #expect(snap?.wallClosedAt == t0)
         #expect(snap?.continuousClosedAt == 50)
@@ -1098,7 +1104,7 @@ struct PowerHelperRepairTests {
 }
 
 /// Thread-safe gate for wedging a background SM status reader without blocking MainActor.
-private final class WorkerGate: @unchecked Sendable {
+final class WorkerGate: @unchecked Sendable {
     private let condition = NSCondition()
     private var enteredFlag = false
     private var releasedFlag = false
@@ -1111,6 +1117,17 @@ private final class WorkerGate: @unchecked Sendable {
             condition.wait()
         }
         condition.unlock()
+    }
+
+    /// PERF1-R7: mark entry then sleep the real duration (overlap with MainActor work).
+    func enterThenSleep(_ seconds: TimeInterval) {
+        condition.lock()
+        enteredFlag = true
+        condition.broadcast()
+        condition.unlock()
+        if seconds > 0 {
+            Thread.sleep(forTimeInterval: seconds)
+        }
     }
 
     var hasEntered: Bool {
@@ -1253,6 +1270,10 @@ struct PowerHelperClientPERF1StatusTests {
 
         gate.release()
         for task in extras { await task.value }
+        let cleared = ContinuousClock.now + .seconds(2)
+        while client.physicalInFlightForTesting, ContinuousClock.now < cleared {
+            await Task.yield()
+        }
         #expect(reader.callCount == 1)
         #expect(client.availability == .error("serviceStatusTimeout"))
         #expect(client.cachedServiceStatusForTesting == .unknown)
@@ -1302,6 +1323,211 @@ struct PowerHelperClientPERF1StatusTests {
         status = .enabled
         try? await client.register()
         #expect(reader.callCount == 2)
+    }
+
+    @Test("PERF1-R1 stale XPC status cannot republish ready after SM timeout", .timeLimit(.minutes(1)))
+    func staleStatusCannotRepublishReadyAfterTimeout() async throws {
+        let gate = WorkerGate()
+        let reader = LockCountedStatusReader(
+            delayImpl: { _ in gate.enterAndWait() },
+            read: { .enabled }
+        )
+        reader.delay = 1
+        let proxy = FakePowerHelperProxy()
+        var statusReply: ((Data) -> Void)?
+        proxy.statusHandler = { reply in
+            statusReply = reply
+        }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 2,
+            refreshTimeout: 0.1,
+            makeProxy: { proxy },
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        defer { gate.release() }
+        let refresh = Task { await client.refreshAvailability(reason: .launch) }
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        await refresh.value
+        #expect(client.availability == .error("serviceStatusTimeout"))
+        let epochAfterTimeout = client.readinessEpochForTesting
+
+        let statusTask = Task { try await client.status() }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while statusReply == nil, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(statusReply != nil)
+
+        // SM still timed out / unknown — late ready XPC must not publish .ready.
+        statusReply?((try? JSONEncoder().encode(proxy.makeStatus())) ?? Data())
+        _ = try? await statusTask.value
+        #expect(client.readinessEpochForTesting >= epochAfterTimeout)
+        #expect(!client.handshakeCompleteForTesting)
+        if case .ready = client.availability {
+            Issue.record("stale XPC status republished ready after SM revoke")
+        }
+    }
+
+    @Test("PERF1-R2 post-timeout refresh returns without hanging", .timeLimit(.minutes(1)))
+    func postTimeoutRefreshDoesNotHang() async {
+        let gate = WorkerGate()
+        let reader = LockCountedStatusReader(
+            delayImpl: { _ in gate.enterAndWait() },
+            read: { .enabled }
+        )
+        reader.delay = 1
+        let client = PowerHelperClient(
+            appBuild: "136",
+            refreshTimeout: 0.1,
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let first = Task { await client.refreshAvailability(reason: .launch) }
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        await first.value
+        #expect(client.physicalInFlightForTesting)
+
+        let start = ContinuousClock.now
+        await client.refreshAvailability(reason: .settingsOpened)
+        let elapsed = ContinuousClock.now - start
+        #expect(elapsed < .milliseconds(500))
+        #expect(client.availability == .error("serviceStatusTimeout"))
+        #expect(reader.callCount == 1)
+        gate.release()
+    }
+
+    @Test("PERF1-R2 cancelled refresh waiter resumes without hanging", .timeLimit(.minutes(1)))
+    func cancelledRefreshWaiterDoesNotHang() async {
+        let gate = WorkerGate()
+        let reader = LockCountedStatusReader(
+            delayImpl: { _ in gate.enterAndWait() },
+            read: { .enabled }
+        )
+        reader.delay = 1
+        let client = PowerHelperClient(
+            appBuild: "136",
+            refreshTimeout: 5,
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let first = Task { await client.refreshAvailability(reason: .launch) }
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        let joiner = Task { await client.refreshAvailability(reason: .settingsOpened) }
+        await Task.yield()
+        joiner.cancel()
+        let start = ContinuousClock.now
+        await joiner.value
+        #expect(ContinuousClock.now - start < .milliseconds(500))
+        gate.release()
+        await first.value
+        #expect(reader.callCount == 1)
+    }
+
+    @Test("PERF1-R4 register during in-flight refresh still gets new-epoch sample", .timeLimit(.minutes(1)))
+    func postOperationRefreshPreservedForNewEpoch() async throws {
+        let gate = WorkerGate()
+        var status: PowerHelperServiceStatusValue = .notRegistered
+        let reader = LockCountedStatusReader(
+            delayImpl: { _ in gate.enterAndWait() },
+            read: { status }
+        )
+        reader.delay = 1
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 0.5,
+            refreshTimeout: 2,
+            minimumPhysicalInterval: 5,
+            now: { 0 },
+            makeProxy: { FakePowerHelperProxy() },
+            statusReader: reader,
+            registerService: { status = .enabled },
+            unregisterService: {},
+            openSettings: {}
+        )
+        let launch = Task { await client.refreshAvailability(reason: .launch) }
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        // Invalidate epoch while first getter is blocked; register must still observe enabled.
+        let registerTask = Task { try await client.register() }
+        await Task.yield()
+        gate.release()
+        await launch.value
+        try await registerTask.value
+        #expect(reader.callCount >= 2)
+        #expect(client.cachedServiceStatusForTesting == .enabled)
+    }
+
+    @Test("PERF1-R6 Debug-only test-host stubs; injected reader used without XCTest env", .timeLimit(.minutes(1)))
+    func injectedDependenciesBypassTestHostDetection() async {
+        let reader = LockCountedStatusReader { .notFound }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        await client.refreshAvailability(reason: .launch)
+        #expect(reader.callCount == 1)
+        #expect(client.availability == .notFound)
+    }
+}
+
+@Suite("PERF1-R5 LidClosedSessionStore async persistence")
+struct LidClosedSessionStorePERF1R5Tests {
+    @Test("PERF1-R5 unchanged saves do not block; barrier is async + flushable", .timeLimit(.minutes(1)))
+    func asyncPersistenceNoMainActorSync() async {
+        let suite = "perf1-r5-\(UUID().uuidString)"
+        let writes = Mutex(0)
+        let sink = LidClosedSessionCoordinator.WriteSink(
+            set: { _, _ in writes.withLock { $0 += 1 } },
+            remove: { _ in },
+            data: { _ in nil }
+        )
+        let store = LidClosedSessionStore(suiteName: suite, writeSink: sink)
+        let start = ContinuousClock.now
+        for _ in 0..<20 {
+            _ = store.save(
+                continuousClosedAt: 42,
+                bootSessionUUID: "boot",
+                maxDurationLatched: false,
+                wallClosedAt: Date(timeIntervalSince1970: 1)
+            )
+        }
+        let enqueueElapsed = ContinuousClock.now - start
+        #expect(enqueueElapsed < .milliseconds(50))
+        #expect(store.load()?.continuousClosedAt == 42)
+        await store.flushPending()
+        #expect(writes.withLock { $0 } == 1)
+        #expect(store.load()?.continuousClosedAt == 42)
+    }
+
+    @Test("PERF1-R5 bounded shutdown drain returns within timeout", .timeLimit(.minutes(1)))
+    func boundedShutdownDrain() async {
+        let suite = "perf1-r5-drain-\(UUID().uuidString)"
+        let gate = WorkerGate()
+        let sink = LidClosedSessionCoordinator.WriteSink(
+            set: { _, _ in gate.enterAndWait() },
+            remove: { _ in },
+            data: { _ in nil }
+        )
+        let store = LidClosedSessionStore(suiteName: suite, writeSink: sink)
+        _ = store.save(
+            continuousClosedAt: 1,
+            bootSessionUUID: "boot",
+            maxDurationLatched: false,
+            wallClosedAt: Date(timeIntervalSince1970: 1)
+        )
+        let start = ContinuousClock.now
+        await store.drainPendingBounded(timeout: 0.05)
+        #expect(ContinuousClock.now - start < .milliseconds(200))
+        gate.release()
+        await store.flushPending()
     }
 }
 

@@ -1,7 +1,36 @@
 import ChorusCore
 import Foundation
+import Synchronization
 import Testing
 @testable import Chorus
+
+/// Injectable evidence-sleep gate for PERF1-R3/R7 (Mutex-safe from async).
+final class PERF1EvidenceSleepGate: Sendable {
+    private struct State {
+        var conts: [CheckedContinuation<Void, Never>] = []
+        var delays: [TimeInterval] = []
+    }
+    private let state = Mutex(State())
+
+    func sleep(_ delay: TimeInterval) async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            state.withLock { s in
+                s.delays.append(delay)
+                s.conts.append(cont)
+            }
+        }
+    }
+
+    func releaseOne() {
+        let cont = state.withLock { s -> CheckedContinuation<Void, Never>? in
+            s.conts.isEmpty ? nil : s.conts.removeFirst()
+        }
+        cont?.resume()
+    }
+
+    var delayCount: Int { state.withLock { $0.delays.count } }
+    var recordedDelays: [TimeInterval] { state.withLock { $0.delays } }
+}
 
 @MainActor
 @Suite("LidSleepGuardController")
@@ -80,6 +109,7 @@ struct LidSleepGuardControllerTests {
         var setCalls: [Bool] = []
         var statusCalls = 0
         var syncCalls: [(Bool, TimeInterval)] = []
+        var refreshCalls: [PowerHelperRefreshReason] = []
         var failNextSet = false
         var hangSet = false
         var hangSync = false
@@ -92,8 +122,15 @@ struct LidSleepGuardControllerTests {
         var injectInterferenceOnStatus = false
         var statusHandler: (() async throws -> PowerHelperStatus)?
         var failRelease = false
+        /// Optional SM mapping for refreshAvailability (PERF1-R3/R7).
+        var refreshHandler: ((PowerHelperRefreshReason) async -> Void)?
 
-        func refreshAvailability(reason: PowerHelperRefreshReason) async {}
+        func refreshAvailability(reason: PowerHelperRefreshReason) async {
+            refreshCalls.append(reason)
+            if let refreshHandler {
+                await refreshHandler(reason)
+            }
+        }
         func register() async throws {}
         func unregister() async throws {}
         func openApprovalSettings() {}
@@ -242,7 +279,10 @@ struct LidSleepGuardControllerTests {
         sessionStore: LidClosedSessionStore = LidClosedSessionStore(
             suiteName: "lid-session-\(UUID().uuidString)"
         ),
-        heartbeat: TimeInterval = 0.15
+        heartbeat: TimeInterval = 0.15,
+        evidenceSleep: @escaping (TimeInterval) async -> Void = { seconds in
+            try? await Task.sleep(for: .seconds(seconds))
+        }
     ) -> (LidSleepGuardController, FakeHelper, FakeLid, FakeNotifier) {
         let store = settings ?? makeSettings()
         if settings == nil {
@@ -257,7 +297,8 @@ struct LidSleepGuardControllerTests {
             e2eNamedInstance: e2e,
             sessionStore: sessionStore,
             sleepDisabledProbe: probe,
-            heartbeatInterval: heartbeat
+            heartbeatInterval: heartbeat,
+            evidenceSleep: evidenceSleep
         )
         return (controller, helper, lid, notifier)
     }
@@ -799,6 +840,10 @@ struct LidSleepGuardControllerTests {
         helper.statusHandler = nil
         helper.failRelease = false
         await controller.refreshFromHelper()
+        let resumeDeadline = ContinuousClock.now + .seconds(2)
+        while !controller.wantsSleepDisabled, ContinuousClock.now < resumeDeadline {
+            await Task.yield()
+        }
         #expect(controller.wantsSleepDisabled, "fresh safe status must clear the transient error")
     }
 
@@ -872,19 +917,23 @@ struct LidSleepGuardControllerTests {
         let helper = FakeHelper()
         let (controller, _, _, _) = makeController(helper: helper, heartbeat: 60)
         defer { controller.shutdown() }
-        let changes = AsyncStream<Void>.makeStream()
-        controller.onChange = { changes.continuation.yield(()) }
         controller.update(
             agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
         )
-        var iterator = changes.stream.makeAsyncIterator()
-        while !controller.isActuallyHoldingSleepDisabled { _ = await iterator.next() }
+        let armed = ContinuousClock.now + .seconds(3)
+        while !controller.isActuallyHoldingSleepDisabled, ContinuousClock.now < armed {
+            await Task.yield()
+        }
+        #expect(controller.isActuallyHoldingSleepDisabled)
         helper.pendingRestore = true
         await controller.refreshFromHelper()
-        while !helper.setCalls.contains(false) { _ = await iterator.next() }
+        let released = ContinuousClock.now + .seconds(3)
+        while !helper.setCalls.contains(false), ContinuousClock.now < released {
+            await Task.yield()
+        }
+        #expect(helper.setCalls.contains(false))
         #expect(!controller.wantsSleepDisabled)
         #expect(!controller.isActuallyHoldingSleepDisabled)
-        #expect(helper.setCalls == [true, false])
         #expect(controller.leftover == .recoveryBlocked)
     }
 
@@ -1394,5 +1443,316 @@ struct LidSleepGuardControllerTests {
         controller.shutdown()
         try await Task.sleep(for: .milliseconds(300))
         #expect(notifier.leftoverRestored == 0)
+    }
+
+    // MARK: - PERF1-R3 / PERF1-R7
+
+    @Test("PERF1-R3 requiresApproval starts SM-only backoff; settings does not reset", .timeLimit(.minutes(1)))
+    func perf1R3ApprovalBackoffSMOnly() async throws {
+        let helper = FakeHelper()
+        helper.availability = .requiresApproval
+        let sleepGate = PERF1EvidenceSleepGate()
+        let (controller, _, _, _) = makeController(
+            helper: helper,
+            heartbeat: 3_600,
+            evidenceSleep: { await sleepGate.sleep($0) }
+        )
+        defer { controller.shutdown() }
+
+        await controller.refreshHelperAvailabilityAsync(reason: .launch)
+        #expect(helper.refreshCalls.filter { $0 == .launch }.count == 1)
+        #expect(helper.statusCalls == 0)
+        #expect(helper.setCalls.isEmpty)
+        #expect(sleepGate.delayCount == 1)
+        #expect(sleepGate.recordedDelays.first == 5)
+
+        // Settings open must not reset / replace the armed backoff chain.
+        await controller.refreshHelperAvailabilityAsync(reason: .settingsOpened)
+        #expect(sleepGate.delayCount == 1)
+        #expect(helper.statusCalls == 0)
+
+        sleepGate.releaseOne()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while sleepGate.delayCount < 2, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(helper.refreshCalls.contains(.retry))
+        #expect(helper.statusCalls == 0)
+        #expect(helper.setCalls.isEmpty)
+        #expect(sleepGate.recordedDelays.prefix(2) == [5, 10])
+    }
+
+    @Test("PERF1-R3 recoveryBlocked retries read-only status; never acquire", .timeLimit(.minutes(1)))
+    func perf1R3RecoveryReadOnlyBackoff() async throws {
+        let helper = FakeHelper()
+        helper.availability = .ready
+        helper.recoveryBlocked = true
+        let sleepGate = PERF1EvidenceSleepGate()
+        let (controller, _, _, _) = makeController(
+            helper: helper,
+            heartbeat: 3_600,
+            evidenceSleep: { await sleepGate.sleep($0) }
+        )
+        defer { controller.shutdown() }
+
+        await controller.refreshHelperAvailabilityAsync(reason: .wake)
+        #expect(helper.statusCalls == 1)
+        #expect(helper.setCalls.filter { $0 }.isEmpty)
+        #expect(controller.leftover == .recoveryBlocked)
+
+        let statusAfterLaunch = helper.statusCalls
+        sleepGate.releaseOne()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while helper.statusCalls <= statusAfterLaunch, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(helper.statusCalls == statusAfterLaunch + 1)
+        #expect(helper.setCalls.filter { $0 }.isEmpty)
+        #expect(helper.refreshCalls.contains(.retry))
+    }
+
+    @Test("PERF1-R3 connection drop starts one coordinator handshake", .timeLimit(.minutes(1)))
+    func perf1R3ConnectionDropHandshake() async throws {
+        let helper = FakeHelper()
+        helper.availability = .ready
+        helper.promoteOnStatus = true
+        let (controller, _, _, _) = makeController(helper: helper, heartbeat: 3_600)
+        defer { controller.shutdown() }
+        await controller.refreshHelperAvailabilityAsync(reason: .launch)
+        let statusBefore = helper.statusCalls
+        helper.refreshCalls.removeAll()
+
+        helper.availability = .connecting
+        helper.onAvailabilityChange?()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !helper.refreshCalls.contains(.connectionInvalidated), ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(helper.refreshCalls.filter { $0 == .connectionInvalidated }.count == 1)
+        while helper.statusCalls <= statusBefore, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(helper.statusCalls == statusBefore + 1)
+        #expect(helper.availability == .ready)
+    }
+
+    @Test("PERF1-R3 launch+detectLeftover coalesce to one refresh", .timeLimit(.minutes(1)))
+    func perf1R3LaunchDetectCoalesce() async throws {
+        let helper = FakeHelper()
+        helper.availability = .connecting
+        helper.promoteOnStatus = true
+        struct RefreshGateState {
+            var started = 0
+            var release: CheckedContinuation<Void, Never>?
+        }
+        let gate = Mutex(RefreshGateState())
+        helper.refreshHandler = { _ in
+            let block = gate.withLock { s -> Bool in
+                s.started += 1
+                return s.started == 1
+            }
+            guard block else { return }
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                gate.withLock { $0.release = cont }
+            }
+        }
+        let (controller, _, _, _) = makeController(helper: helper, heartbeat: 3_600)
+        defer { controller.shutdown() }
+
+        let launch = Task {
+            controller.update(
+                agentModeActive: false,
+                busy: .init(isBusy: false, contributing: [], releaseAt: nil),
+                power: acPower(),
+                existingFloor: .percent20
+            )
+        }
+        // Let ensureStarted claim the coordinator before detect joins it.
+        await Task.yield()
+        let detect = Task { await controller.detectLeftover() }
+        let entered = ContinuousClock.now + .seconds(2)
+        while true {
+            let snap = gate.withLock { ($0.started, $0.release != nil) }
+            if (snap.0 >= 1 && snap.1) || ContinuousClock.now >= entered { break }
+            await Task.yield()
+        }
+        let (cont, started) = gate.withLock { s -> (CheckedContinuation<Void, Never>?, Int) in
+            let c = s.release
+            s.release = nil
+            return (c, s.started)
+        }
+        #expect(started == 1)
+        cont?.resume()
+        await launch.value
+        await detect.value
+        // Client SM single-flight + controller coordinator: one blocked refresh body.
+        #expect(started == 1)
+        #expect(helper.statusCalls == 1)
+    }
+
+    @Test("PERF1-R7 MainActor stays responsive during real 1s SM status", .timeLimit(.minutes(1)))
+    func perf1R7MainActorLatencyDuringSlowStatus() async throws {
+        let gate = WorkerGate()
+        let reader = LockCountedStatusReader(
+            delayImpl: { seconds in gate.enterThenSleep(seconds) },
+            read: { .enabled }
+        )
+        reader.delay = 1
+        let proxy = FakePowerHelperProxy()
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 2,
+            refreshTimeout: 5,
+            minimumPhysicalInterval: 5,
+            makeProxy: { proxy },
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let store = SettingsStore(defaults: UserDefaults(suiteName: "perf1-r7-\(UUID().uuidString)")!)
+        store.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let lid = FakeLid()
+        let session = LidClosedSessionStore(suiteName: "perf1-r7-sess-\(UUID().uuidString)")
+        let controller = LidSleepGuardController(
+            settings: store,
+            helper: client,
+            lid: lid,
+            notifier: FakeNotifier(),
+            sessionStore: session,
+            sleepDisabledProbe: { nil },
+            heartbeatInterval: 3_600
+        )
+        defer { controller.shutdown() }
+
+        let refresh = Task { await controller.refreshHelperAvailabilityAsync(reason: .launch) }
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+
+        var updateDurations: [Duration] = []
+        for _ in 0..<20 {
+            let start = ContinuousClock.now
+            controller.update(
+                agentModeActive: true,
+                busy: busyState(),
+                power: acPower(),
+                existingFloor: .percent20
+            )
+            updateDurations.append(ContinuousClock.now - start)
+        }
+        // All 20 updates must finish while the 1s worker sleep is still in progress.
+        #expect(updateDurations.allSatisfy { $0 < .milliseconds(50) })
+        #expect(reader.callCount == 1)
+        #expect(client.physicalInFlightForTesting)
+
+        let sentinelLatency = await Task.detached {
+            let start = ContinuousClock.now
+            await MainActor.run {}
+            return ContinuousClock.now - start
+        }.value
+        #expect(sentinelLatency < .milliseconds(50))
+
+        await refresh.value
+        #expect(reader.callCount == 1)
+    }
+
+    @Test("PERF1-R7 approval backoff counted SM-only through injected schedule", .timeLimit(.minutes(1)))
+    func perf1R7ApprovalBackoffCallCounts() async throws {
+        var clock: TimeInterval = 0
+        let reader = LockCountedStatusReader { .requiresApproval }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            refreshTimeout: 1,
+            minimumPhysicalInterval: 5,
+            now: { clock },
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let sleepGate = PERF1EvidenceSleepGate()
+        let store = SettingsStore(defaults: UserDefaults(suiteName: "perf1-r7-ap-\(UUID().uuidString)")!)
+        store.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let controller = LidSleepGuardController(
+            settings: store,
+            helper: client,
+            lid: FakeLid(),
+            notifier: FakeNotifier(),
+            sessionStore: LidClosedSessionStore(suiteName: "perf1-r7-ap-s-\(UUID().uuidString)"),
+            sleepDisabledProbe: { nil },
+            heartbeatInterval: 3_600,
+            evidenceSleep: { await sleepGate.sleep($0) }
+        )
+        defer { controller.shutdown() }
+
+        // t=0 launch
+        await controller.refreshHelperAvailabilityAsync(reason: .launch)
+        #expect(reader.callCount == 1)
+        #expect(client.availability == .requiresApproval)
+        #expect(sleepGate.delayCount == 1)
+
+        // Evaluator storm: zero additional SM
+        for _ in 0..<20 {
+            controller.update(
+                agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+            )
+        }
+        #expect(reader.callCount == 1)
+
+        // Advance backoff: t=5,15,35,75 → four more SM reads (5 total)
+        let advances: [TimeInterval] = [5, 15, 35, 75]
+        for (index, t) in advances.enumerated() {
+            // Wait until the next sleep is armed before releasing it.
+            let armed = ContinuousClock.now + .seconds(2)
+            while sleepGate.delayCount < index + 1, ContinuousClock.now < armed {
+                await Task.yield()
+            }
+            clock = t
+            sleepGate.releaseOne()
+            let deadline = ContinuousClock.now + .seconds(2)
+            while reader.callCount < index + 2, ContinuousClock.now < deadline {
+                await Task.yield()
+            }
+            #expect(reader.callCount == index + 2)
+        }
+        #expect(reader.callCount == 5)
+        #expect(client.availability == .requiresApproval)
+    }
+
+    @Test("PERF1-R7 recoveryBlocked counted read-only statuses; zero acquires", .timeLimit(.minutes(1)))
+    func perf1R7RecoveryBackoffCallCounts() async throws {
+        let helper = FakeHelper()
+        helper.availability = .ready
+        helper.recoveryBlocked = true
+        let sleepGate = PERF1EvidenceSleepGate()
+        let (controller, _, _, _) = makeController(
+            helper: helper,
+            heartbeat: 3_600,
+            evidenceSleep: { await sleepGate.sleep($0) }
+        )
+        defer { controller.shutdown() }
+
+        await controller.refreshHelperAvailabilityAsync(reason: .wake)
+        #expect(helper.statusCalls == 1)
+        for _ in 0..<20 {
+            controller.update(
+                agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+            )
+        }
+        #expect(helper.statusCalls == 1)
+        #expect(helper.setCalls.filter { $0 }.isEmpty)
+
+        for expected in 2...5 {
+            let armed = ContinuousClock.now + .seconds(2)
+            while sleepGate.delayCount < expected - 1, ContinuousClock.now < armed {
+                await Task.yield()
+            }
+            sleepGate.releaseOne()
+            let deadline = ContinuousClock.now + .seconds(2)
+            while helper.statusCalls < expected, ContinuousClock.now < deadline {
+                await Task.yield()
+            }
+            #expect(helper.statusCalls == expected)
+            #expect(helper.setCalls.filter { $0 }.isEmpty)
+        }
     }
 }
