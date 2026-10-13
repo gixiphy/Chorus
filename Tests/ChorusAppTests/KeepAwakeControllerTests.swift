@@ -95,12 +95,13 @@ struct KeepAwakeControllerTests {
     private func makeLidGuard(
         settings: SettingsStore,
         helper: FakeLidHelper = FakeLidHelper(),
-        notifier: FakeNotifier
+        notifier: FakeNotifier,
+        lid: FakeLidObserver = FakeLidObserver()
     ) -> LidSleepGuardController {
         LidSleepGuardController(
             settings: settings,
             helper: helper,
-            lid: FakeLidObserver(),
+            lid: lid,
             notifier: notifier,
             now: { 1_000 },
             e2eNamedInstance: false,
@@ -917,6 +918,8 @@ struct KeepAwakeControllerTests {
         systemLoad: SystemLoadMonitor? = nil,
         sourceHub: KeepAwakeSourceHub? = nil,
         lidHelper: FakeLidHelper? = nil,
+        lid: FakeLidObserver = FakeLidObserver(),
+        powerSource: FakePowerSource? = nil,
         idleBlanker: AgentIdleBlanker? = nil,
         now: @escaping @Sendable () -> Double = { 0 },
         workspaceNotifications: NotificationCenter = NotificationCenter()
@@ -944,8 +947,9 @@ struct KeepAwakeControllerTests {
             displayManager: DisplayManager(settings: settings),
             agentActivity: hub.agentActivity,
             sourceHub: hub,
-            lidGuard: makeLidGuard(settings: settings, helper: helper, notifier: notifier),
+            lidGuard: makeLidGuard(settings: settings, helper: helper, notifier: notifier, lid: lid),
             systemLoad: monitor,
+            powerSource: powerSource ?? FakePowerSource(),
             idleBlanker: idleBlanker,
             assertions: assertions,
             notifier: notifier,
@@ -1021,6 +1025,106 @@ struct KeepAwakeControllerTests {
         #expect(assertions.active.values.contains(kIOPMAssertionTypePreventUserIdleSystemSleep))
         #expect(!controller.sourceHub.isBusy)
         #expect(!helper.setCalls.contains(true))
+    }
+
+    @Test("Backup import: syncModeWithSettings starts the merged mode live")
+    func syncModeAfterImportStartsMergedMode() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-sync-\(UUID().uuidString)")!)
+        let controller = makeMergedController(settings: settings)
+        defer { controller.shutdown() }
+        #expect(controller.mode == .off)
+        settings.keepAwakeAgentMode = true // 匯入寫進 defaults
+        controller.syncModeWithSettings()
+        #expect(controller.mode == .whileAgentsWorking)
+        #expect(controller.sourceHub.isRunning)
+    }
+
+    @Test("Backup import: legacy load flag also starts merged mode and normalizes flags")
+    func syncModeAfterImportAbsorbsLegacyLoad() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-sync2-\(UUID().uuidString)")!)
+        let controller = makeMergedController(settings: settings)
+        defer { controller.shutdown() }
+        settings.keepAwakeSystemLoadMode = true
+        controller.syncModeWithSettings()
+        #expect(controller.mode == .whileAgentsWorking)
+        #expect(settings.keepAwakeAgentMode)
+        #expect(!settings.keepAwakeSystemLoadMode)
+    }
+
+    @Test("Backup import with all flags off stops a persisted mode but keeps timed holds")
+    func syncModeAfterImportClearsPersistedModeOnly() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-sync3-\(UUID().uuidString)")!)
+        let controller = makeMergedController(settings: settings)
+        defer { controller.shutdown() }
+        controller.selectMode(.whileAgentsWorking)
+        #expect(controller.mode == .whileAgentsWorking)
+        settings.keepAwakeAgentMode = false
+        controller.syncModeWithSettings()
+        #expect(controller.mode == .off)
+
+        controller.activate(.indefinite)
+        controller.syncModeWithSettings()
+        #expect(controller.mode == .indefinite)
+    }
+
+    @Test("Backup import does not restart an already-running merged mode")
+    func syncModeAfterImportKeepsRunningMode() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-sync4-\(UUID().uuidString)")!)
+        let clock = ManualDoubleClock(0)
+        let controller = makeMergedController(settings: settings, now: { clock.time })
+        defer { controller.shutdown() }
+        controller.selectMode(.whileAgentsWorking)
+        let started = controller.startedAt
+        clock.time = 50
+        controller.syncModeWithSettings()
+        #expect(controller.startedAt == started)
+    }
+
+    @Test("Closed lid + enabled option: load-only hold never calls set(true)")
+    func loadOnlyClosedLidNeverSetsSleepDisabled() async throws {
+        let helper = FakeLidHelper()
+        let lid = FakeLidObserver()
+        lid.reading = .closed
+        lid.isClosed = true
+        let clock = ManualDoubleClock(0)
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-closed-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(), now: { clock.time }, pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(
+            settings: settings, systemLoad: monitor, lidHelper: helper, lid: lid,
+            now: { clock.time }
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        qualifyLoad(monitor, clock: clock, controller: controller)
+        #expect(controller.isHolding)
+        #expect(!controller.sourceHub.isBusy)
+        // Lid arming is asynchronous; give it ample time to (wrongly) act.
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(!helper.setCalls.contains(true))
+        #expect(!controller.lidGuard.wantsSleepDisabled)
+    }
+
+    @Test("Positive control: closed lid + agent lease does call set(true)")
+    func agentClosedLidControlSetsSleepDisabled() async throws {
+        let helper = FakeLidHelper()
+        let lid = FakeLidObserver()
+        lid.reading = .closed
+        lid.isClosed = true
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-closed-ctl-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let controller = makeMergedController(settings: settings, lidHelper: helper, lid: lid)
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "lease-closed", ttl: 120)
+        controller.reevaluate()
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !helper.setCalls.contains(true), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(helper.setCalls.contains(true))
     }
 
     @Test("Agent-only lease holds while load keeps sampling")
@@ -1286,7 +1390,7 @@ struct KeepAwakeControllerTests {
     @Test("Idle blanker runs for load-only hold")
     func idleBlankerForLoadOnly() {
         let displays = AgentIdleBlankerTests.FakeDisplays()
-        var idle = 600.0
+        let idle = 600.0
         let blanker = AgentIdleBlanker(displays: displays, idleSeconds: { idle })
         let clock = ManualDoubleClock(0)
         let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-blank-\(UUID().uuidString)")!)
