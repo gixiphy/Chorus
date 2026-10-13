@@ -132,8 +132,8 @@ Fi 於 **2026-10-12 19:22（台北）** 核准 A1–A8，採納 Opus 與 Codex �
 
 | 欄位 | 內容 |
 |---|---|
-| **日期** | 2026-10-13 21:05（台北） |
-| **決策** | Fi 核准 **build 139**：修 App 端 XPC 回呼的 MainActor 隔離 crash（`RealPowerHelperXPCProxy`／`PowerHelperClient` 的 error／reply／invalidation／interruption handlers）。此即 **M1 上 b138 一啟動就 crash** 的根因。不動 helper 本體、pmset、`ChorusPowerHelperXPC`；Debug-only test seam 不得進 Release。**流程**：Opus 寫計畫 → Cursor 實作 → **Claude＋Codex 雙審**（延續 D-2026-10-13）→ 再請 Fi 准 push／PR／merge。**build 139 簽名、不公證**。push／PR／merge／打包／公證仍須 Fi 逐次核准（A7／A6）。 |
-| **考慮過的替代方案** | (a) 拿掉 `@MainActor` 整顆 proxy（變更面更大）；(b) 只 hop 不改回呼型別（C8-1 已證明 hop 寫在 closure 內、prologue 仍會 trap）。 |
-| **理由** | M1 實機：b138 啟動即 `EXC_BREAKPOINT`（`_dispatch_assert_queue_fail` ← `swift_task_isCurrentExecutor` ← NSXPC 背景 queue 呼叫 MainActor 隔離 closure）。修回呼隔離後才能繼續驗證闔蓋不睡。 |
-| **接受的風險** | 動到 helper client 的 reply／逾時／連線事件語意；靠雙審、自動化測試與手動 M1–M3 控管。未公證，分發僅限受控本機。 |
+| **日期** | 2026-10-13 21:05（台北）；公證更正 21:19 |
+| **決策** | Fi 核准 **build 139**：修 App 端 XPC 回呼的 MainActor 隔離 crash（`RealPowerHelperXPCProxy`／`PowerHelperClient` 的 error／reply／invalidation／interruption handlers）。此即 **M1 上 b138 一啟動就 crash** 的根因。不動 helper 本體、pmset、`ChorusPowerHelperXPC`；Debug-only test seam 不得進 Release。**流程**：Opus 寫計畫 → Cursor 實作 → **Claude＋Codex 雙審**（延續 D-2026-10-13）→ 再請 Fi 准 push／PR／merge。**Developer ID 簽名＋公證（chorus profile）並 staple**（Fi **21:19** 同意）；**不 push、不發布**。push／PR／merge／對外發布仍須 Fi 逐次核准（A7／A6）。 |
+| **考慮過的替代方案** | (a) 拿掉 `@MainActor` 整顆 proxy（變更面更大）；(b) 只 hop 不改回呼型別（C8-1 已證明 hop 寫在 closure 內、prologue 仍會 trap）；(c) 簽名但不公證（21:05 初版；21:19 改為可公證）。 |
+| **理由** | M1 實機：b138 啟動即 `EXC_BREAKPOINT`（`_dispatch_assert_queue_fail` ← `swift_task_isCurrentExecutor` ← NSXPC 背景 queue 呼叫 MainActor 隔離 closure）。修回呼隔離後才能繼續驗證闔蓋不睡；本機驗證可用公證＋staple，但仍不進 remote。 |
+| **接受的風險** | 動到 helper client 的 reply／逾時／連線事件語意；靠雙審、自動化測試與手動 M1–M3 控管。公證後仍不 push／不發布，避免未審完的變更進公開分發。 |
