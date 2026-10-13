@@ -803,6 +803,14 @@ final class LidStateMonitor: LidStateObserving {
         self.sessionStore = sessionStore
     }
 
+    /// IOKit 回呼的 refcon 是 `passUnretained(self)`：沒呼叫 `stop()` 就釋放的話，
+    /// notification port 仍掛在 main run loop 上，下一次電源事件會讀到懸空指標。
+    /// 釋放時一律拆掉（`stop()` 已拆過則是 no-op）。
+    isolated deinit {
+        pollTimer?.invalidate()
+        tearDownNotification()
+    }
+
     func start() {
         guard !running else { return }
         running = true
