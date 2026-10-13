@@ -125,3 +125,15 @@ Fi 於 **2026-10-12 19:22（台北）** 核准 A1–A8，採納 Opus 與 Codex �
 | **考慮過的替代方案** | Q1：依觸發來源分別決定，或一律看開關；Q2：負載也觸發 SleepDisabled（要改 spec §1.3 並雙審）；Q3：只在 agent 觸發時熄屏；Q4：新模式改成綁機；Q5：加「高負載也算」開關，讓舊 Agent 使用者升級後行為不變。 |
 | **理由** | 規則最簡單，assertion 與 Lid／helper 路徑的程式都不用改，符合 spec §1.3，也不必走 D-2026-10-13 雙審（仍建議 Codex 審一輪）。Agent 設定原本就是「這個人怎麼跑 agent」，所以可攜（Fi 核准）。 |
 | **接受的風險** | 原「高負載」使用者如果關著系統待機開關，現在會多擋系統待機；原 Agent 使用者升級後，高負載也會讓螢幕常亮，並多出每 5 秒一次的負載取樣（耗電影響未確認），要在升級說明中註明；原本只用負載模式的人匯入到另一台 Mac 時，那台也會開啟新模式。 |
+
+---
+
+## D-2026-10-13c — build 139：XPC 回呼 MainActor 隔離 crash
+
+| 欄位 | 內容 |
+|---|---|
+| **日期** | 2026-10-13（台北） |
+| **決策** | Fi 21:05 核准 build 139，修 `RealPowerHelperXPCProxy`／`PowerHelperClient` 的 NSXPC error／reply／invalidation／interruption 回呼 MainActor 隔離 trap（計畫 `docs/plans/b139-xpc-callback-isolation.md`）。不動 helper 本體、pmset、`ChorusPowerHelperXPC`。Debug-only test seam 不得進 Release。合併前仍須 Claude＋Codex 雙審（延續 D-2026-10-13）；push／PR／merge／打包仍須 Fi 逐次核准。 |
+| **考慮過的替代方案** | (a) 拿掉 `@MainActor` 整顆 proxy（變更面更大）；(b) 只 hop 不改型別（C8-1 已證明 hop 寫在 closure 內無效）。 |
+| **理由** | M1 上 b138 啟動即 `EXC_BREAKPOINT`；根因是 MainActor 方法內未標註 closure 被推成 MainActor 隔離，由 NSXPC 背景 queue 呼叫。 |
+| **接受的風險** | 動到 helper client 的 reply／逾時／連線事件語意；以雙審＋X1–X7／S1／S2 與手動 M1–M3 控管。 |
