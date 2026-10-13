@@ -221,6 +221,28 @@ struct DeviceBackupTests {
         #expect(merged.keepAwakeSystemLoadConfiguration.cpu.activation == 70)
     }
 
+    @Test("跨機匯入舊的 load-only 備份：轉成可攜的合併旗標，legacy 旗標仍留本機值")
+    func foreignLegacyLoadOnlyBackupMigratesToMergedMode() {
+        let local = DeviceBackup(savedAt: .now, deviceName: "local", deviceID: "L")
+        var incoming = DeviceBackup(savedAt: .now, deviceName: "other", deviceID: "R")
+        incoming.keepAwakeAgentMode = false
+        incoming.keepAwakeSystemLoadMode = true
+        let merged = incoming.portableMerged(onto: local)
+        #expect(merged.keepAwakeAgentMode)
+        #expect(!merged.keepAwakeSystemLoadMode)
+    }
+
+    @Test("跨機匯入：兩個旗標都關的備份不會開啟合併模式；agent 旗標照舊可攜")
+    func foreignBackupMergedFlagMatrix() {
+        let local = DeviceBackup(savedAt: .now, deviceName: "local", deviceID: "L")
+        for (agent, load, expected) in [(false, false, false), (true, false, true), (true, true, true)] {
+            var incoming = DeviceBackup(savedAt: .now, deviceName: "other", deviceID: "R")
+            incoming.keepAwakeAgentMode = agent
+            incoming.keepAwakeSystemLoadMode = load
+            #expect(incoming.portableMerged(onto: local).keepAwakeAgentMode == expected)
+        }
+    }
+
     @Test("舊備份缺負載欄位仍可解，設定回預設")
     func missingLoadFieldsDecodeToDefaults() throws {
         var backup = sample("A", port: 1, flag: true)

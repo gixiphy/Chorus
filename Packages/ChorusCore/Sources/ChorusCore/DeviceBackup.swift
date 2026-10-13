@@ -383,6 +383,9 @@ public extension DeviceBackup {
         result.virtualTargetUID = local.virtualTargetUID
         result.keepAwakeDisplayUUID = local.keepAwakeDisplayUUID
         result.keepAwakeAppBundleID = local.keepAwakeAppBundleID
+        // legacy 負載旗標仍綁機（不搬過去），但「原本只用負載模式」的人要在邊界
+        // 轉成可攜的合併旗標（D-2026-10-13b Q4），否則那份設定在新機器上會消失。
+        result.keepAwakeAgentMode = keepAwakeAgentMode || keepAwakeSystemLoadMode
         result.keepAwakeSystemLoadMode = local.keepAwakeSystemLoadMode
         result.effectQuarantine = local.effectQuarantine
         result.advisorCustomPaths = local.advisorCustomPaths
