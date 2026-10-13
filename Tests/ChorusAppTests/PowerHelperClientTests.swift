@@ -2058,9 +2058,13 @@ struct SleepDisabledProbeTests {
 
     @Test("V1-3 off-MainActor wrapper completes", .timeLimit(.minutes(1)))
     func offMainActorProbe() async {
-        let value = await SleepDisabledProbe.readSleepDisabledOffMainActor()
-        // Host may or may not have readable pmset; either Bool? outcome is fine — must return.
-        _ = value
+        let value = await SleepDisabledProbe.readSleepDisabledOffMainActor {
+            #expect(!Thread.isMainThread)
+            return SleepDisabledProbe.readSleepDisabled { _, _, _ in
+                (exit: 0, stdout: Data("SleepDisabled 0\n".utf8), truncated: false)
+            }
+        }
+        #expect(value == false)
     }
 
     @Test("V1-3 real saturated-stdout child stays bounded", .timeLimit(.minutes(1)))

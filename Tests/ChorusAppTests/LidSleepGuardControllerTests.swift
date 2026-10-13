@@ -1490,6 +1490,211 @@ struct LidSleepGuardControllerTests {
 
     // MARK: - PERF1-R3 / PERF1-R7
 
+    @Test("PERF1-FIX2 blocked probe cannot reuse superseded shared evidence", .timeLimit(.minutes(1)),
+          arguments: ["recoveryBlocked", "pendingRestore", "persistRetryNeeded", "otherHolder", "failedRead"])
+    func perf1Fix2ProbePreservesNewerSettingsEvidence(newEvidence: String) async throws {
+        let gate = PERF1EvidenceSleepGate()
+        let retry = PERF1EvidenceSleepGate()
+        defer { gate.cancelAll(); retry.cancelAll() }
+        let proxy = FakePowerHelperProxy()
+        proxy.sleepDisabled = true
+        proxy.setByHelper = true
+        let client = PowerHelperClient(appBuild: "136", makeProxy: { proxy },
+            statusReader: LockCountedStatusReader { .enabled }, registerService: {}, unregisterService: {}, openSettings: {})
+        let controller = LidSleepGuardController(settings: makeSettings(), helper: client, lid: FakeLid(),
+            notifier: FakeNotifier(), sessionStore: LidClosedSessionStore(suiteName: UUID().uuidString),
+            sleepDisabledProbe: { await gate.sleep(0); return true }, heartbeatInterval: 3_600,
+            evidenceSleep: { await retry.sleep($0) })
+        defer { controller.shutdown() }
+        let detect = PERF1Task { await controller.detectLeftover() }
+        defer { detect.cancel() }
+        #expect(await perf1Wait { gate.waiterCount == 1 })
+        proxy.recoveryBlocked = newEvidence == "recoveryBlocked"
+        proxy.pendingRestore = newEvidence == "pendingRestore"
+        proxy.persistRetryNeeded = newEvidence == "persistRetryNeeded"
+        if newEvidence == "otherHolder" { proxy.holderCount = 1 }
+        if newEvidence == "failedRead" { proxy.statusHandler = { $0(Data()) } }
+        await controller.refreshHelperAvailabilityAsync(reason: .settingsOpened)
+        let latest = controller.helperStatus
+        let leftover = controller.leftover
+        let sets = proxy.setCalls
+        gate.releaseOne()
+        #expect(await detect.wait())
+        #expect(controller.helperStatus == latest)
+        #expect(controller.leftover == leftover)
+        #expect(proxy.setCalls == sets)
+    }
+
+    @Test("PERF1-FIX2 failed user operations retain approval/recovery retries", .timeLimit(.minutes(1)),
+          arguments: [false, true], [false, true])
+    func perf1Fix2FailedUserOperationRetainsRetry(removal: Bool, approval: Bool) async throws {
+        var clock = 0.0
+        let service = Mutex(approval ? PowerHelperServiceStatusValue.requiresApproval : .enabled)
+        let read: @Sendable () -> PowerHelperServiceStatusValue = { service.withLock { $0 } }
+        let reader = LockCountedStatusReader(read: read)
+        let proxy = FakePowerHelperProxy()
+        proxy.recoveryBlocked = !approval
+        let client = PowerHelperClient(appBuild: "136", now: { clock }, makeProxy: { proxy }, statusReader: reader,
+            registerService: { throw PowerHelperClientError.remote("denied") },
+            unregisterService: { throw PowerHelperClientError.remote("denied") }, openSettings: {})
+        let retry = PERF1EvidenceSleepGate()
+        defer { retry.cancelAll() }
+        let controller = LidSleepGuardController(settings: makeSettings(), helper: client, lid: FakeLid(),
+            notifier: FakeNotifier(), sessionStore: LidClosedSessionStore(suiteName: UUID().uuidString),
+            sleepDisabledProbe: { nil }, heartbeatInterval: 3_600, evidenceSleep: { await retry.sleep($0) })
+        defer { controller.shutdown() }
+        await controller.refreshHelperAvailabilityAsync(reason: .launch)
+        #expect(await perf1Wait { retry.waiterCount == 1 })
+        var failed = false
+        do {
+            if removal { try await controller.unregisterHelper() }
+            else { try await controller.registerHelper() }
+        } catch { failed = true }
+        #expect(failed)
+        #expect(await perf1Wait { retry.waiterCount == 1 })
+        let statuses = proxy.statusCalls
+        let physical = reader.callCount
+        clock = 10
+        retry.releaseOne()
+        #expect(await perf1Wait { reader.callCount == physical + 1 && retry.waiterCount == 1 })
+        #expect(proxy.statusCalls == statuses + (approval ? 0 : 1))
+        #expect(proxy.setCalls.isEmpty)
+        proxy.recoveryBlocked = false
+        service.withLock { $0 = .enabled }
+        clock = 30
+        retry.releaseOne()
+        #expect(await perf1Wait { controller.helperStatus?.recoveryBlocked == false && retry.waiterCount == 0 })
+        #expect(proxy.setCalls.isEmpty)
+    }
+
+    @Test("PERF1-FIX2 launch/detect/settings share one physical read and handshake", .timeLimit(.minutes(1)),
+          arguments: [false, true])
+    func perf1Fix2ConcurrentLaunchDetectSettings(joinDuringHandshake: Bool) async throws {
+        let worker = WorkerGate()
+        defer { worker.release() }
+        let reader = LockCountedStatusReader(delayImpl: { _ in worker.enterAndWait() }, read: { .enabled })
+        reader.delay = 1
+        let proxy = FakePowerHelperProxy()
+        proxy.sleepDisabled = true
+        var replies: [(Data) -> Void] = []
+        proxy.statusHandler = { replies.append($0) }
+        let client = PowerHelperClient(appBuild: "136", callTimeout: 0.5, refreshTimeout: 2,
+            now: { 0 }, makeProxy: { proxy }, statusReader: reader,
+            registerService: {}, unregisterService: {}, openSettings: {})
+        let settings = makeSettings()
+        settings.keepAwakeLidGuard = .init(enabled: true)
+        let retry = PERF1EvidenceSleepGate()
+        defer { retry.cancelAll() }
+        let controller = LidSleepGuardController(settings: settings, helper: client, lid: FakeLid(),
+            notifier: FakeNotifier(), sessionStore: LidClosedSessionStore(suiteName: UUID().uuidString),
+            sleepDisabledProbe: { true }, heartbeatInterval: 3_600, evidenceSleep: { await retry.sleep($0) })
+        defer {
+            proxy.statusHandler = nil
+            let bytes = (try? JSONEncoder().encode(proxy.makeStatus())) ?? Data()
+            replies.forEach { $0(bytes) }
+            controller.shutdown()
+        }
+        controller.update(agentModeActive: false, busy: .init(isBusy: false, contributing: [], releaseAt: nil),
+                          power: acPower(), existingFloor: .percent20)
+        let launch = PERF1Task { await controller.refreshHelperAvailabilityAsync(reason: .launch) }
+        defer { launch.cancel() }
+        #expect(await worker.waitUntilEntered(timeoutSeconds: 2))
+        if joinDuringHandshake {
+            worker.release()
+            #expect(await perf1Wait { !replies.isEmpty })
+        }
+        let detect = PERF1Task { await controller.detectLeftover() }
+        let settingsOpen = PERF1Task { await controller.refreshHelperAvailabilityAsync(reason: .settingsOpened) }
+        defer { detect.cancel(); settingsOpen.cancel() }
+        #expect(await PERF1Completion.mainActorLatency() != nil)
+        worker.release()
+        #expect(await perf1Wait { !replies.isEmpty })
+        let first = replies.removeFirst()
+        first(try JSONEncoder().encode(proxy.makeStatus()))
+        #expect(await launch.wait())
+        #expect(await detect.wait())
+        #expect(await settingsOpen.wait())
+        #expect(reader.callCount == 1)
+        #expect(proxy.statusCalls == 1)
+        #expect(proxy.setCalls.isEmpty)
+        #expect(controller.leftover == .foreign)
+    }
+
+    @Test("PERF1-FIX2 real-client registration/removal waits for blocked release", .timeLimit(.minutes(1)),
+          arguments: [false, true], [false, true])
+    func perf1Fix2UserOperationsDuringBlockedRelease(removal: Bool, toggle: Bool) async throws {
+        let service = Mutex(PowerHelperServiceStatusValue.enabled)
+        let registrations = Mutex(0)
+        let removals = Mutex(0)
+        let read: @Sendable () -> PowerHelperServiceStatusValue = { service.withLock { $0 } }
+        let reader = LockCountedStatusReader(read: read)
+        let proxy = FakePowerHelperProxy()
+        var replies: [(Data?, String?) -> Void] = []
+        let client = PowerHelperClient(appBuild: "136", callTimeout: 2, refreshTimeout: 1,
+            now: { 0 }, makeProxy: { proxy }, statusReader: reader,
+            registerService: { registrations.withLock { $0 += 1 } },
+            unregisterService: { removals.withLock { $0 += 1 }; service.withLock { $0 = .notRegistered } },
+            openSettings: {})
+        let settings = makeSettings()
+        settings.keepAwakeLidGuard = .init(enabled: true)
+        let controller = LidSleepGuardController(settings: settings, helper: client, lid: FakeLid(),
+            notifier: FakeNotifier(), sessionStore: LidClosedSessionStore(suiteName: UUID().uuidString),
+            sleepDisabledProbe: { nil }, heartbeatInterval: 3_600)
+        defer {
+            proxy.setHandler = nil
+            let bytes = try? JSONEncoder().encode(proxy.makeStatus())
+            replies.forEach { $0(bytes, nil) }
+            controller.shutdown()
+            client.invalidateConnection(intentional: true)
+        }
+        controller.update(agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20)
+        #expect(await perf1Wait { controller.isActuallyHoldingSleepDisabled })
+        proxy.setHandler = { on, reply in
+            if !on { replies.append(reply) }
+            else { reply(try? JSONEncoder().encode(proxy.makeStatus()), nil) }
+        }
+        if toggle { controller.settings.enabled = false }
+        else {
+            controller.update(agentModeActive: true, busy: .init(isBusy: false, contributing: [], releaseAt: nil),
+                              power: acPower(), existingFloor: .percent20)
+        }
+        #expect(await perf1Wait { replies.count == 1 })
+        let statuses = proxy.statusCalls
+        let entered = PERF1Completion()
+        var operationError: String?
+        let operation = PERF1Task {
+            entered.finish()
+            do {
+                if removal { try await controller.unregisterHelper() }
+                else { try await controller.registerHelper() }
+            } catch { operationError = String(describing: error) }
+        }
+        defer { operation.cancel() }
+        #expect(await entered.wait())
+        controller.settings.enabled = true
+        controller.settings.enabled = false
+        #expect(await PERF1Completion.mainActorLatency() != nil)
+        #expect(registrations.withLock { $0 } == 0)
+        #expect(removals.withLock { $0 } == 0)
+        #expect(proxy.statusCalls == statuses)
+        #expect(proxy.setCalls.filter { !$0 }.count == 1)
+        #expect(proxy.setCalls.filter { $0 }.count == 1)
+        proxy.sleepDisabled = false
+        proxy.setByHelper = false
+        proxy.callerIsHolder = false
+        proxy.holderCount = 0
+        let release = replies.removeFirst()
+        release(try JSONEncoder().encode(proxy.makeStatus()), nil)
+        #expect(await operation.wait())
+        #expect(operationError == nil)
+        #expect(registrations.withLock { $0 } == (removal ? 0 : 1))
+        #expect(removals.withLock { $0 } == (removal ? 1 : 0))
+        #expect(proxy.setCalls.filter { !$0 }.count == 1)
+        #expect(proxy.statusCalls == statuses + (removal ? 2 : 1))
+        #expect(!controller.isActuallyHoldingSleepDisabled)
+        #expect(!proxy.callerIsHolder)
+    }
+
     private func perf1Wait(_ condition: () -> Bool, seconds: Double = 2) async -> Bool {
         let deadline = ContinuousClock.now + .seconds(seconds)
         while !condition(), !Task.isCancelled, ContinuousClock.now < deadline {
@@ -1581,7 +1786,7 @@ struct LidSleepGuardControllerTests {
         defer { controller.shutdown() }
         controller.update(agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20)
         #expect(await perf1Wait { controller.isActuallyHoldingSleepDisabled })
-        helper.beforeSet = { on in if !on { await gate.sleep(0) } }
+        helper.beforeSet = { on in if !on && !removal { await gate.sleep(0) } }
         helper.unregisterHandler = { await gate.sleep(0) }
         let operation = PERF1Task {
             if removal { try? await controller.unregisterHelper() }

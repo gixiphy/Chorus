@@ -96,6 +96,7 @@ protocol PowerHelperClienting: AnyObject {
     var availability: LidHelperAvailability { get }
     /// Current SM epoch explicitly permits a read-only XPC handshake.
     var hasEnabledServiceEvidence: Bool { get }
+    var currentStatusEvidence: PowerHelperStatus? { get }
     var onAvailabilityChange: (() -> Void)? { get set }
     func refreshAvailability(reason: PowerHelperRefreshReason) async
     func register() async throws
@@ -108,6 +109,7 @@ protocol PowerHelperClienting: AnyObject {
 
 extension PowerHelperClienting {
     var hasEnabledServiceEvidence: Bool { availability == .ready }
+    var currentStatusEvidence: PowerHelperStatus? { nil }
 }
 
 /// Maps service status → `LidHelperAvailability` (pure; V-C06-1 / PERF-1).
@@ -253,6 +255,15 @@ final class PowerHelperRepairStateMachine {
 @MainActor
 final class PowerHelperClient: PowerHelperClienting {
     var hasEnabledServiceEvidence: Bool { cachedServiceStatus == .enabled }
+    /// Reuse only a reply from the still-current connection/readiness/generation.
+    var currentStatusEvidence: PowerHelperStatus? {
+        guard availability == .ready, hasEnabledServiceEvidence,
+              statusEvidenceGeneration == generation, statusEvidenceEpoch == readinessEpoch else { return nil }
+        return statusEvidence
+    }
+    private var statusEvidence: PowerHelperStatus?
+    private var statusEvidenceGeneration: UInt64 = 0
+    private var statusEvidenceEpoch: UInt64 = 0
     private(set) var availability: LidHelperAvailability = .notRegistered
     var onAvailabilityChange: (() -> Void)?
 
@@ -885,6 +896,9 @@ final class PowerHelperClient: PowerHelperClienting {
         switch handshake {
         case .ready:
             if smAllowsReady {
+                statusEvidence = status
+                statusEvidenceGeneration = gen
+                statusEvidenceEpoch = readinessAtStart
                 handshakeComplete = true
                 applyAvailability(
                     PowerHelperAvailabilityMapping.availability(
@@ -1092,9 +1106,11 @@ enum SleepDisabledProbe {
     }
 
     /// V1-3: never block MainActor — leftover probe runs off-actor.
-    static func readSleepDisabledOffMainActor() async -> Bool? {
+    static func readSleepDisabledOffMainActor(
+        read: @escaping @Sendable () -> Bool? = { readSleepDisabled() }
+    ) async -> Bool? {
         await Task.detached(priority: .userInitiated) {
-            readSleepDisabled()
+            read()
         }.value
     }
 
