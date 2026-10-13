@@ -173,6 +173,11 @@ struct LidClosedSessionStore: Equatable {
         await coordinator.flushPending()
     }
 
+    /// Wait until the off-main preload has finished (PERF1-R5 tests).
+    func awaitLoadedForTesting(timeout: TimeInterval = 1) async {
+        await coordinator.awaitLoaded(timeout: timeout)
+    }
+
     /// Test seam: committed backend write count for the shared coordinator.
     var backendWriteCountForTesting: Int { coordinator.backendWriteCountForTesting }
 
@@ -273,6 +278,9 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
     private var committedWallClosedAt: Date?
     private var loadedCorrupt = false
     private var didLoad = false
+    /// PERF1-R5 round3: never sync-read the backend on the caller; preload off-main.
+    private enum LoadState { case unloaded, loading, loaded }
+    private var loadState: LoadState = .unloaded
     private var revision: UInt64 = 0
     private var coalesceWorkItem: DispatchWorkItem?
     private var writeCountForTesting = 0
@@ -286,6 +294,10 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
         self.suiteName = suiteName
         self.key = key
         self.writeSink = writeSink
+        // Kick off-main preload immediately so restore sees disk without MainActor I/O.
+        lock.lock()
+        ensureLoadStartedLocked()
+        lock.unlock()
     }
 
     private var defaults: UserDefaults {
@@ -319,7 +331,7 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
         wallClosedAt: Date
     ) -> Bool {
         lock.lock()
-        ensureLoadedLocked()
+        ensureLoadStartedLocked()
         let semantic = LidClosedSessionStore.SemanticKey(
             continuousClosedAt: continuousClosedAt,
             bootSessionUUID: bootSessionUUID,
@@ -387,20 +399,21 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
 
     func requestClear() {
         lock.lock()
-        ensureLoadedLocked()
+        ensureLoadStartedLocked()
         coalesceWorkItem?.cancel()
         coalesceWorkItem = nil
         pendingSnapshot = nil
         revision &+= 1
         let rev = revision
-        // PERF1-NEW-1: absent disk alone is not enough — pending/in-flight saves must
-        // still order a removal so an obsolete write cannot repopulate storage.
-        let nothingToRemove =
-            committedSemantic == nil
+        // PERF1-NEW-1 / R5 round3: memory-only absence check — never sync-read backend here.
+        // Pending/in-flight still order a removal. Unloaded/loading also enqueues clear so
+        // disk data discovered by preload cannot revive after a clear intent.
+        let knownAbsentLoaded =
+            loadState == .loaded
+            && committedSemantic == nil
             && !loadedCorrupt
-            && loadBytesLocked() == nil
             && inFlightBackendOps == 0
-        if nothingToRemove {
+        if knownAbsentLoaded {
             pendingClear = false
             lock.unlock()
             return
@@ -412,7 +425,7 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
 
     func load() -> LidClosedSessionStore.Snapshot? {
         lock.lock()
-        ensureLoadedLocked()
+        ensureLoadStartedLocked()
         if pendingClear {
             lock.unlock()
             return nil
@@ -428,8 +441,8 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
 
     func hasCorruptPayload() -> Bool {
         lock.lock()
-        ensureLoadedLocked()
-        let corrupt = loadedCorrupt
+        ensureLoadStartedLocked()
+        let corrupt = loadState == .loaded && loadedCorrupt
         lock.unlock()
         return corrupt
     }
@@ -666,18 +679,45 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
         for waiter in followUp.waiters { waiter.resume() }
     }
 
-    private func ensureLoadedLocked() {
-        guard !didLoad else { return }
-        didLoad = true
-        if let data = loadBytesLocked() {
+    /// Kick an off-main preload; never performs backend I/O under the caller lock (PERF1-R5).
+    private func ensureLoadStartedLocked() {
+        guard loadState == .unloaded else { return }
+        loadState = .loading
+        queue.async { self.finishPreloadFromBackend() }
+    }
+
+    /// Wait for the off-main preload to finish (or `timeout`). Never calls the sink on the caller.
+    func awaitLoaded(timeout: TimeInterval = 1) async {
+        let deadline = ContinuousClock.now + .seconds(timeout)
+        while ContinuousClock.now < deadline {
+            let state = withCoordinatorLock { loadState }
+            if state == .loaded { return }
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+    }
+
+    var isLoadedForTesting: Bool { withCoordinatorLock { loadState == .loaded } }
+
+    private func finishPreloadFromBackend() {
+        let data = loadBytesLocked()
+        lock.lock()
+        defer { lock.unlock() }
+        guard loadState == .loading else { return }
+        if let data {
             if let snap = try? JSONDecoder().decode(LidClosedSessionStore.Snapshot.self, from: data) {
-                committedSemantic = snap.semanticKey
-                committedWallClosedAt = snap.wallClosedAt
+                // Do not clobber a newer in-memory pending/committed session.
+                if committedSemantic == nil, pendingSnapshot == nil, !pendingClear {
+                    committedSemantic = snap.semanticKey
+                    committedWallClosedAt = snap.wallClosedAt
+                }
                 loadedCorrupt = false
-            } else {
+            } else if committedSemantic == nil, pendingSnapshot == nil, !pendingClear {
                 loadedCorrupt = true
             }
         }
+        loadState = .loaded
+        didLoad = true
     }
 
     private func loadBytesLocked() -> Data? {
