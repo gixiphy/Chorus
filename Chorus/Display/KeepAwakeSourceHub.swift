@@ -98,6 +98,9 @@ final class KeepAwakeSourceHub {
     @ObservationIgnored private let tickInterval: Duration
     @ObservationIgnored private let now: () -> Date
 
+    /// 測試觀察用：hub 是否已 start。
+    var isRunning: Bool { running }
+
     init(
         agentActivity: AgentActivityMonitor = AgentActivityMonitor(),
         orca: OrcaActivitySource = OrcaActivitySource(),

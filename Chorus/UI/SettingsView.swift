@@ -184,13 +184,14 @@ private struct DisplaySettingsTab: View {
                 Text("用電池且電量低於底線時暫停長亮（接上電源或電量回升後自動恢復）。沒有內建電池的 Mac 不適用。溫度過高時也會暫停，不受此設定影響。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時／有 agent 在工作時／高負載時）在選單列。")
+                Text("開關與觸發條件（30 分鐘／1 小時／無限期／接著某台螢幕時／某個 App 執行時／有 agent 工作或高負載時）在選單列。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("「有 agent 在工作時」一律保持螢幕與系統清醒，不受上面這個開關影響。已知的 agent 看 session log 是否在寫入；其餘 CLI agent 看有終端機的行程樹 30 秒內是否有 CPU 活動（IDE 內嵌、無終端機的不算）；停手 5 分鐘後放開。")
+                Text("「有 agent 工作或高負載時」一律保持螢幕與系統清醒，不受上面這個開關影響。已知的 agent 看 session log 是否在寫入；其餘 CLI agent 看有終端機的行程樹 30 秒內是否有 CPU 活動（IDE 內嵌、無終端機的不算）；停手 5 分鐘後放開。高負載看整機 CPU／GPU／網路門檻。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 AgentDetectionControls()
+                SystemLoadSettingsSection()
                 LidSleepSettingsSection()
                 Toggle("Agent 閒置時熄屏", isOn: Binding(
                     get: { appState.keepAwake.agentIdleBlankEnabled },
@@ -207,11 +208,10 @@ private struct DisplaySettingsTab: View {
                         Text("15 分鐘").tag(KeepAwakeAgentIdleMinutes.fifteen)
                     }
                 }
-                Text("僅在 Agent 模式且正在持有長亮時生效。預設關閉——有人就是要看著畫面。一有滑鼠或鍵盤輸入、agent 收工、或離開 Agent 模式就開回螢幕。")
+                Text("僅在『有 agent 工作或高負載時』且正在持有長亮時生效。預設關閉——有人就是要看著畫面。一有滑鼠或鍵盤輸入、工作結束、或離開該模式就開回螢幕。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            SystemLoadSettingsSection()
             AmbientCurveSection()
             if appState.displayManager.displays.isEmpty {
                 Text("找不到顯示器")
@@ -443,7 +443,7 @@ private struct AgentDetectionControls: View {
 
     private var detected: String {
         guard case .whileAgentsWorking = appState.keepAwake.mode else {
-            return String(localized: "未啟用 Agent 模式")
+            return String(localized: "未啟用『有 agent 工作或高負載時』")
         }
         let engines = appState.keepAwake.agentActivity.engines
         return engines.isEmpty ? String(localized: "沒有") : engines.joined(separator: "、")

@@ -1,6 +1,134 @@
 {
   "sourceLanguage" : "zh-Hant",
   "strings" : {
+    "有 agent 工作或高負載時" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "While agents work or under heavy load"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 agent 工作或高负载时"
+          }
+        }
+      }
+    },
+    "Agent／負載" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agents / load"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent／负载"
+          }
+        }
+      }
+    },
+    "高負載門檻" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Heavy-load thresholds"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高负载门槛"
+          }
+        }
+      }
+    },
+    "未啟用『有 agent 工作或高負載時』" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“While agents work or under heavy load” is off"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未启用「有 agent 工作或高负载时」"
+          }
+        }
+      }
+    },
+    "工作中 — 閒置熄屏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Working — idle blank"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作中 — 闲置熄屏"
+          }
+        }
+      }
+    },
+    "監測中：沒有 agent 工作、負載未達門檻" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Watching: no agents working, load below threshold"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "监测中：没有 agent 工作、负载未达门槛"
+          }
+        }
+      }
+    },
+    "監測中：沒有 agent 工作（負載監測無資料）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Watching: no agents working (load monitoring unavailable)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "监测中：没有 agent 工作（负载监测无数据）"
+          }
+        }
+      }
+    },
+    "監測中：沒有 agent 工作（GPU 不支援，CPU／網路監測中）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Watching: no agents working (GPU unsupported; CPU/network monitoring)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "监测中：没有 agent 工作（GPU 不支持，CPU／网络监测中）"
+          }
+        }
+      }
+    },
     "" : {
       "localizations" : {
         "en" : {

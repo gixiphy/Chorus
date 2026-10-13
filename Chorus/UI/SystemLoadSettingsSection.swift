@@ -8,9 +8,9 @@ struct SystemLoadSettingsSection: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        Section("高負載時自動常亮") {
-            if appState.keepAwake.mode != .whileSystemBusy {
-                Text("未啟用高負載模式")
+        Section("高負載門檻") {
+            if appState.keepAwake.mode != .whileAgentsWorking {
+                Text("未啟用『有 agent 工作或高負載時』")
                     .foregroundStyle(.secondary)
             }
 
@@ -39,7 +39,7 @@ struct SystemLoadSettingsSection: View {
                 }
             }
 
-            if appState.keepAwake.mode == .whileSystemBusy, let sample = appState.keepAwake.systemLoad.latestSample {
+            if appState.keepAwake.mode == .whileAgentsWorking, let sample = appState.keepAwake.systemLoad.latestSample {
                 LabeledContent("目前讀值") {
                     Text(liveReadings(sample))
                         .foregroundStyle(.secondary)
@@ -65,7 +65,7 @@ struct SystemLoadSettingsSection: View {
 
     private var gpuStatusRow: some View {
         Group {
-            if appState.keepAwake.mode == .whileSystemBusy {
+            if appState.keepAwake.mode == .whileAgentsWorking {
                 switch appState.keepAwake.systemLoad.latestSample?.gpu {
                 case .unsupported:
                     Text("此機 GPU 使用率不可讀；CPU／網路仍可監測。")

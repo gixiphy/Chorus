@@ -135,7 +135,7 @@ struct LidSleepSettingsSection: View {
                     }
                 }
             ))
-            Text("只在 Agent 模式生效。輔助程序會以管理員權限修改系統睡眠設定；Chorus 或輔助程序當掉時可能需要手動還原，請參閱 README。")
+            Text("只在『有 agent 工作或高負載時』模式、由 agent 來源觸發時生效。輔助程序會以管理員權限修改系統睡眠設定；Chorus 或輔助程序當掉時可能需要手動還原，請參閱 README。")
                 .font(.caption).foregroundStyle(.secondary)
             helperControls
             Picker("用電池時最低電量", selection: settingsBinding(\.batteryFloorPercent)) {

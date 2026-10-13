@@ -20,6 +20,9 @@ final class SystemLoadMonitor {
     @ObservationIgnored private var generation: UInt64 = 0
     @ObservationIgnored private var running = false
 
+    /// 測試／UI 觀察用：是否正在輪詢。
+    var isRunning: Bool { running }
+
     init(
         sampler: any SystemLoadSampling = SystemLoadSampler(),
         now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },

@@ -475,11 +475,8 @@ final class TestHooks {
                 } else if raw.hasPrefix("app:") {
                     appState.keepAwake.activate(.whileAppRunning(bundleID: String(raw.dropFirst(4))))
                 } else if raw == "load" || raw == "agents" {
-                    if raw == "load" {
-                        appState.keepAwake.activate(.whileSystemBusy)
-                    } else {
-                        appState.keepAwake.activate(.whileAgentsWorking)
-                    }
+                    // "load" 保留為舊 E2E 別名，與 "agents" 同進合併模式。
+                    appState.keepAwake.activate(.whileAgentsWorking)
                 } else if let value = Double(raw) {
                     appState.keepAwake.activate(KeepAwakePlanner.decode(value))
                 }
@@ -618,7 +615,6 @@ final class TestHooks {
         case let .whileDisplayConnected(uuid): "display:\(uuid)"
         case let .whileAppRunning(bundleID): "app:\(bundleID)"
         case .whileAgentsWorking: "agents"
-        case .whileSystemBusy: "load"
         }
     }
 

@@ -335,8 +335,7 @@ private struct KeepAwakeRow: View {
                             Button(app.name) { activate(.whileAppRunning(bundleID: app.bundleID)) }
                         }
                     }
-                    Button("有 agent 在工作時") { activate(.whileAgentsWorking) }
-                    Button("高負載時") { activate(.whileSystemBusy) }
+                    Button("有 agent 工作或高負載時") { activate(.whileAgentsWorking) }
                     if appState.keepAwake.mode != .off {
                         Divider()
                         Button("關閉") { activate(.off) }
@@ -433,7 +432,7 @@ private struct KeepAwakeRow: View {
         appState.keepAwake.lidGuard.resumeAfterPause()
     }
 
-    /// Agent 模式用 CPU 圖示辨識觸發來源，填滿代表保護已生效。
+    /// 合併模式用 CPU 圖示；填滿代表保護已生效。
     private var iconName: String {
         let keepAwake = appState.keepAwake
         if keepAwake.mode == .whileAgentsWorking {
@@ -454,8 +453,7 @@ private struct KeepAwakeRow: View {
         case .duration: String(localized: "計時中")
         case .whileDisplayConnected: String(localized: "綁定螢幕")
         case .whileAppRunning: String(localized: "綁定 App")
-        case .whileAgentsWorking: String(localized: "Agent")
-        case .whileSystemBusy: String(localized: "高負載")
+        case .whileAgentsWorking: String(localized: "Agent／負載")
         }
     }
 
@@ -496,20 +494,13 @@ private struct KeepAwakeRow: View {
             let name = RunningApps.displayName(for: bundleID)
             return keepAwake.isHolding ? String(localized: "「\(name)」執行中不待機") : String(localized: "「\(name)」未執行 — 暫停中")
         case .whileAgentsWorking:
-            let engines = keepAwake.agentActivity.engines
-            guard keepAwake.isHolding else { return String(localized: "沒有 agent 在工作 — 暫停中") }
-            if keepAwake.idleBlanker.isBlanked {
-                return String(localized: "Agent 工作中 — 閒置熄屏")
-            }
-            let count = String(keepAwake.agentActivity.working.count)
-            let sources = engines.joined(separator: "、")
-            return String(localized: "\(count) 個 \(sources) 在工作中 — 螢幕與系統不待機")
-        case .whileSystemBusy:
-            return SystemLoadStatusFormatter.caption(
-                evaluation: keepAwake.systemLoad.evaluation,
+            return KeepAwakeWorkStatusFormatter.caption(
+                agentBusy: keepAwake.sourceHub.isBusy,
+                agentNames: keepAwake.sourceHub.busy.contributing.map(\.displayName),
+                load: keepAwake.systemLoad.evaluation,
                 sample: keepAwake.systemLoad.latestSample,
                 isHolding: keepAwake.isHolding,
-                alsoPreventSystemSleep: keepAwake.alsoPreventSystemSleep
+                idleBlanked: keepAwake.idleBlanker.isBlanked
             )
         }
     }

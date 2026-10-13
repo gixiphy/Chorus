@@ -512,19 +512,19 @@ final class SettingsStore {
         didSet { defaults.set(keepAwakeAppBundleID, forKey: Key.keepAwakeAppBundleID) }
     }
 
-    /// 「有 agent 在工作時才防睡眠」是否啟用。同樣是綁定型的模式，
-    /// 與上面兩個互斥，一起跨重啟保留——agent 常常是隔夜跑，
-    /// 開機後還沒開選單就該生效。
+    /// 「有 agent 工作或高負載時」合併模式是否啟用。與螢幕／App 綁定互斥，
+    /// 跨重啟保留——隔夜跑完開機後還沒開選單就該生效。
     var keepAwakeAgentMode: Bool {
         didSet { defaults.set(keepAwakeAgentMode, forKey: Key.keepAwakeAgentMode) }
     }
 
-    /// 「高負載時自動常亮」是否啟用。與螢幕／App／Agent 綁定互斥，跨重啟保留。
+    /// Legacy：舊「高負載時」旗標。restore 時與 `keepAwakeAgentMode` OR 進合併模式；
+    /// 新寫入只清 false，不再寫 true。
     var keepAwakeSystemLoadMode: Bool {
         didSet { defaults.set(keepAwakeSystemLoadMode, forKey: Key.keepAwakeSystemLoadMode) }
     }
 
-    /// 高負載模式的門檻與時間設定。寫入前正規化；損壞資料回預設。
+    /// 合併模式的高負載門檻與時間設定。寫入前正規化；損壞資料回預設。
     var keepAwakeSystemLoadConfiguration: SystemLoadConfiguration {
         didSet {
             let normalized = keepAwakeSystemLoadConfiguration.normalized()

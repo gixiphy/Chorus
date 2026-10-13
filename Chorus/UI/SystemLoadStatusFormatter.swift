@@ -40,7 +40,7 @@ enum SystemLoadStatusFormatter {
         }
     }
 
-    private static func activeDetail(
+    static func activeDetail(
         evaluation: SystemLoadEvaluation,
         sample: SystemLoadSample?
     ) -> String {
@@ -56,7 +56,7 @@ enum SystemLoadStatusFormatter {
         return String(localized: "高負載")
     }
 
-    private static func primaryQualifyingName(sample: SystemLoadSample?) -> String {
+    static func primaryQualifyingName(sample: SystemLoadSample?) -> String {
         guard let sample else { return String(localized: "負載") }
         if case .value(let v) = sample.cpu, v >= 50 { return name(.cpu) }
         if case .value(let v) = sample.gpu, v >= 50 { return name(.gpu) }
@@ -64,7 +64,7 @@ enum SystemLoadStatusFormatter {
         return String(localized: "負載")
     }
 
-    private static func name(_ signal: SystemLoadSignal) -> String {
+    static func name(_ signal: SystemLoadSignal) -> String {
         switch signal {
         case .cpu: String(localized: "CPU")
         case .gpu: String(localized: "GPU")
@@ -72,7 +72,7 @@ enum SystemLoadStatusFormatter {
         }
     }
 
-    private static func allUnavailable(_ sample: SystemLoadSample?) -> Bool {
+    static func allUnavailable(_ sample: SystemLoadSample?) -> Bool {
         guard let sample else { return true }
         func dead(_ reading: SystemLoadReading) -> Bool {
             switch reading {

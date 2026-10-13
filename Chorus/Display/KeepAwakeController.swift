@@ -67,17 +67,17 @@ final class KeepAwakeController {
     /// 計時模式的剩餘秒數（其餘模式為 nil）。
     /// 存成 property 而非 computed——選單要每秒重繪倒數，得是可觀察的變更。
     private(set) var remainingSeconds: Double?
-    /// 多來源 OR hub（spec §4.7／§7.1）。Agent 模式才 `start()`。
+    /// 多來源 OR hub（spec §4.7／§7.1）。合併模式才 `start()`。
     let sourceHub: KeepAwakeSourceHub
     /// 闔蓋防睡控制器（spec §5.5）。
     let lidGuard: LidSleepGuardController
     /// 相容別名：UI／既有綁定仍讀 `agentActivity`。
     var agentActivity: AgentActivityMonitor { sourceHub.agentActivity }
-    /// 整機負載偵測。只有高負載模式會叫它 `start()`。
+    /// 整機負載偵測。合併模式才 `start()`。
     let systemLoad: SystemLoadMonitor
     /// 電量／溫度監聽。只有 `mode != .off` 時啟動。
     let powerSource: any PowerSourceObserving
-    /// Agent 閒置熄屏。只有 Agent 模式會驅動它。
+    /// 閒置熄屏。合併模式持有中會驅動（不分觸發來源）。
     let idleBlanker: AgentIdleBlanker
 
     /// 除了螢幕待機，是否連系統待機一起擋。
@@ -216,16 +216,16 @@ final class KeepAwakeController {
         case let .whileAppRunning(bundleID):
             settings.keepAwakeAppBundleID = bundleID
         case .whileAgentsWorking:
+            // 合併模式沿用 agent 旗標；legacy load 旗標只讀不寫 true。
             settings.keepAwakeAgentMode = true
-        case .whileSystemBusy:
-            settings.keepAwakeSystemLoadMode = true
+            settings.keepAwakeSystemLoadMode = false
         case .off, .duration, .indefinite:
             break
         }
         activate(mode)
     }
 
-    /// 啟動還原：螢幕 > App > Agent > 負載；正規化殘留 key。
+    /// 啟動還原：螢幕 > App > (agent ∨ legacy load)；正規化殘留 key。
     func restoreSavedMode() {
         let display = settings.keepAwakeDisplayUUID
         let app = settings.keepAwakeAppBundleID
@@ -241,19 +241,18 @@ final class KeepAwakeController {
             settings.keepAwakeAgentMode = false
             settings.keepAwakeSystemLoadMode = false
             activate(.whileAppRunning(bundleID: app))
-        } else if agent {
+        } else if agent || load {
+            settings.keepAwakeAgentMode = true
             settings.keepAwakeSystemLoadMode = false
             activate(.whileAgentsWorking)
-        } else if load {
-            activate(.whileSystemBusy)
         }
     }
 
-    /// 套用負載門檻：清 latch、不切 mode；若正在負載模式則重啟採樣。
+    /// 套用負載門檻：清 latch、不切 mode；合併模式中即時重啟採樣。
     func applySystemLoadConfiguration(_ value: SystemLoadConfiguration) {
         let normalized = value.normalized()
         settings.keepAwakeSystemLoadConfiguration = normalized
-        if case .whileSystemBusy = mode {
+        if case .whileAgentsWorking = mode {
             systemLoad.applyConfiguration(normalized)
             reevaluate()
         }
@@ -276,14 +275,14 @@ final class KeepAwakeController {
             let interval: Duration
             switch mode {
             case .duration: interval = .seconds(1)
-            case .whileSystemBusy: interval = .seconds(5)
+            case .whileAgentsWorking: interval = .seconds(5)
             default: interval = .seconds(10)
             }
             tickTask = Task { [weak self] in
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: interval) } catch { return }
                     guard !Task.isCancelled, let self, self.mode != .off else { return }
-                    if case .whileSystemBusy = self.mode {
+                    if case .whileAgentsWorking = self.mode {
                         self.systemLoad.evaluate(now: self.now())
                     }
                     self.reevaluate()
@@ -296,12 +295,12 @@ final class KeepAwakeController {
         activate(.off)
     }
 
-    /// 顯示器組合變更 → 重新評估「接著某台螢幕時防睡眠」；負載模式重探 GPU。
+    /// 顯示器組合變更 → 重新評估「接著某台螢幕時防睡眠」；合併模式重探 GPU。
     func displaysDidChange() {
         if case .whileDisplayConnected = mode {
             reevaluate()
         }
-        if case .whileSystemBusy = mode {
+        if case .whileAgentsWorking = mode {
             systemLoad.invalidateGPUCapability()
         }
     }
@@ -574,23 +573,19 @@ final class KeepAwakeController {
     }
 
     private func handleWillSleep() {
-        if case .whileSystemBusy = mode {
+        if case .whileAgentsWorking = mode {
+            // 只停負載取樣；不要無條件放掉 assertion，否則 agent 持有會在睡前被拆掉。
             systemLoad.stop()
-            release(&displayAssertion)
-            release(&systemAssertion)
-            isHolding = false
-            activationFailed = false
+            reevaluate()
         }
     }
 
     private func handleDidWake() {
         guard !shutDown else { return }
-        if case .whileSystemBusy = mode {
-            systemLoad.resetAfterWake()
-        }
-        // V1-7: refresh lease expiry/grace and recompute hub busy *before* assertion/Lid
-        // evaluation so a sleep past TTL+grace cannot keep stale isWorkingNow busy.
         if case .whileAgentsWorking = mode {
+            systemLoad.resetAfterWake()
+            // V1-7: refresh lease expiry/grace and recompute hub busy *before* assertion/Lid
+            // evaluation so a sleep past TTL+grace cannot keep stale isWorkingNow busy.
             sourceHub.tick()
         }
         // Refresh helper status in the background; assertion reevaluate stays synchronous
@@ -601,7 +596,7 @@ final class KeepAwakeController {
         reevaluate()
     }
 
-    /// Agent 模式進出時開／關來源 hub（含既有 agents＋新來源）。
+    /// 合併模式進出時開／關來源 hub（含既有 agents＋新來源）。
     private func updateAgentMonitor() {
         if case .whileAgentsWorking = mode {
             sourceHub.configure(settings.keepAwakeSourceSettings)
@@ -612,7 +607,7 @@ final class KeepAwakeController {
     }
 
     private func updateSystemLoadMonitor() {
-        if case .whileSystemBusy = mode {
+        if case .whileAgentsWorking = mode {
             systemLoad.start(configuration: settings.keepAwakeSystemLoadConfiguration)
         } else {
             systemLoad.stop()
@@ -740,7 +735,6 @@ final class KeepAwakeController {
         case .whileDisplayConnected: return "whileDisplayConnected"
         case .whileAppRunning: return "whileAppRunning"
         case .whileAgentsWorking: return "whileAgentsWorking"
-        case .whileSystemBusy: return "whileSystemBusy"
         }
     }
 

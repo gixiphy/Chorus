@@ -200,16 +200,16 @@ do not use this path; they ship signed with the app.
 - **Display power**: one power button truly turns off built-in and external
   panels (path chosen by capability).
 - **Input source**, **contrast**, **keep-awake** (30 min / 1 hour / indefinite /
-  while a display is connected / while an app is running / under high load;
+  while a display is connected / while an app is running / while agents work or under heavy load;
   bindings clear when the display unplugs or the app quits, and restore when
   they return).
-- **Agent mode**: keep the Mac awake only while an AI agent is working, then
-  release. It watches Claude Code and Codex session-log mtimes (mtime only,
-  never contents). A process sitting at a prompt does not count. This blocks
-  **system** sleep, not display sleep: overnight runs need the machine up;
-  a dark screen is fine.
-- **Lid-closed keep-awake (Agent mode, off by default)**:
-  In Agent mode, keep the Mac awake when working sources are active even if the laptop lid is closed.
+- **While agents work or under heavy load**: keep the Mac awake while an AI agent
+  is working **or** whole-machine CPU / GPU / network stays above threshold;
+  release only when both sides clear. Agents watch Claude Code / Codex session-log
+  mtimes (mtime only, never contents) plus other sources. A process sitting at a
+  prompt does not count. This mode always blocks display **and** system sleep.
+- **Lid-closed keep-awake (merged mode, off by default)**:
+  In the merged mode, keep the Mac awake when **agent** sources are active even if the laptop lid is closed (load alone does not arm lid-closed keep-awake).
   - **Safety and hardware limits**:
     - **Off by default** (must be manually enabled in Settings).
     - **Hardware support**: supported only on MacBook models with a built-in display lid; models without a lid (such as Mac mini, Mac Studio, Mac Pro) are unsupported and the controls are hidden and barred from arming.
@@ -221,12 +221,11 @@ do not use this path; they ship signed with the app.
     - **Installation & approval**: turning on the toggle prompts an explanation sheet before registration; requires approval once in System Settings › General › Login Items & Extensions.
     - **Removal**: an inline confirmation in Settings › Advanced lets you remove the helper; Chorus verifies that all holds are safely released and reads back the system state before unregistering.
     - **Automatic restoration**: normally, the helper automatically restores system sleep when all active sources finish, on disconnection (Chorus quits or crashes), after a 60-second heartbeat timeout, or during boot reconciliation. However, **if the helper daemon itself crashes or experiences an abnormal failure**, the disabled-sleep state may remain leftover in the system and require manual command restoration as described in Troubleshooting below.
-- **High-load mode**: keep the display awake only after CPU / GPU / network
-  stay above threshold (default 15 s); clear after 120 s under the sustain
-  floor. Thresholds are adjustable in Settings; when GPU is unreadable the
-  mode degrades cleanly and CPU / network still work. Menu choices persist
-  across relaunch; automation / peer numeric commands change runtime only,
-  not saved prefs.
+- **High-load thresholds**: the load side of the merged mode — CPU / GPU / network
+  must stay above threshold (default 15 s) to count as busy; clear after 120 s
+  under the sustain floor (agent grace is separate). Thresholds are adjustable
+  in Settings; when GPU is unreadable the path degrades cleanly and CPU / network
+  still work.
 - **Emergency recovery**: press ⌘ eight times within 3 seconds to bring every
   powered-off display back, so you cannot lock yourself into a black screen.
 - **Media-key takeover**: only when macOS cannot handle the key natively
