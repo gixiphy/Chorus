@@ -60,3 +60,21 @@ D-2026-10-13b Q1–Q5 全部照建議；實作採：
 - ChorusCore：843 tests／120 suites（原 841）
 - ChorusAppTests：669（原 656）；ChorusPowerHelperTests：53；App＋helper 共 722，連跑 3 次全綠
 - 沒有碰 `PowerHelper/`、`PowerHelperClient`、`LidSleepGuard*`、pmset；唯一的 App 端監看改動是 `LidStateMonitor` 的 `isolated deinit`
+
+---
+
+## fix2／NEW-1（2026-10-13）：同模式備份匯入未同步負載設定
+
+對應 `~/kp-verify/chorus-merge-verify-2.md` **NEW-1**。
+
+**根因**：`syncModeWithSettings()` 在模式相同時只 `normalizeSavedFlags()`；`SystemLoadMonitor` 與 controller 的 `alsoPreventSystemSleep`／battery／process／idle 快取不會從 SettingsStore 重載。設定 UI 走 setter／`applySystemLoadConfiguration`，匯入走另一條路。
+
+**修正**：
+1. `syncModeWithSettings()` 先 `syncRuntimeCachesFromSettings()`（快取、來源 hub、idle 相關），同模式再 `applyPersistedSystemLoadConfigurationIfNeeded()`。
+2. `SystemLoadMonitor.applyConfiguration`：config 未變則不重啟（保留遲滯／generation）；有變更才 `start`。
+3. 測試：同模式 CPU→network＋門檻＋快取立即生效；相同設定保留 hold／`startedAt`；timed／display 模式只更新快取不改 mode；monitor 同 config 不重啟。
+
+### 最終數字（fix2）
+- ChorusCore：843 tests／120 suites
+- ChorusAppTests：674（+5）；ChorusPowerHelperTests：53；App＋helper 共 727（summary 頂層）
+- 安全檔案 diff 空：`PowerHelper/`、`PowerHelperClient`、`LidSleepGuard*`、pmset／XPC／ledger 未碰

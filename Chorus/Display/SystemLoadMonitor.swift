@@ -23,6 +23,9 @@ final class SystemLoadMonitor {
     /// 測試／UI 觀察用：是否正在輪詢。
     var isRunning: Bool { running }
 
+    /// 目前套用的負載設定（含尚未 start 時的快取）。
+    var currentConfiguration: SystemLoadConfiguration { configuration }
+
     init(
         sampler: any SystemLoadSampling = SystemLoadSampler(),
         now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
@@ -95,11 +98,16 @@ final class SystemLoadMonitor {
         start(configuration: config)
     }
 
-    func applyConfiguration(_ configuration: SystemLoadConfiguration) {
+    /// - Returns: `true` when the armed configuration changed (may restart sampling).
+    @discardableResult
+    func applyConfiguration(_ configuration: SystemLoadConfiguration) -> Bool {
         let config = configuration.normalized()
+        // Same config: keep planner / hysteresis; do not bump generation.
+        guard config != self.configuration else { return false }
         self.configuration = config
-        guard running else { return }
+        guard running else { return true }
         start(configuration: config)
+        return true
     }
 
     /// Display topology change: drop unsupported cache and restart sampling.

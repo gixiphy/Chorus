@@ -978,6 +978,26 @@ struct KeepAwakeControllerTests {
         }
     }
 
+    private func qualifyNetwork(
+        _ monitor: SystemLoadMonitor,
+        clock: ManualDoubleClock,
+        controller: KeepAwakeController,
+        times: [Double] = [0, 5, 10, 15],
+        rate: Double = 2_000_000
+    ) {
+        monitor.stop()
+        for t in times {
+            clock.time = t
+            monitor.ingestForTesting(
+                sample: SystemLoadSample(
+                    sampledAt: t, cpu: .unavailable, gpu: .unsupported, network: .value(rate)
+                ),
+                now: t
+            )
+            controller.reevaluate()
+        }
+    }
+
     @Test("Merged mode starts hub and systemLoad; off stops both")
     func mergedModeStartsBothMonitors() {
         let clock = ManualDoubleClock(0)
@@ -1078,6 +1098,124 @@ struct KeepAwakeControllerTests {
         clock.time = 50
         controller.syncModeWithSettings()
         #expect(controller.startedAt == started)
+    }
+
+    @Test("Backup import same-mode sync applies load config and controller caches")
+    func syncModeAfterImportAppliesRuntimeSettings() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-sync5-\(UUID().uuidString)")!)
+        let clock = ManualDoubleClock(0)
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: { clock.time },
+            pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(
+            settings: settings, systemLoad: monitor, now: { clock.time }
+        )
+        defer { controller.shutdown() }
+        controller.selectMode(.whileAgentsWorking)
+        #expect(monitor.currentConfiguration.cpuEnabled)
+
+        var config = SystemLoadConfiguration.default
+        config.cpuEnabled = false
+        config.gpuEnabled = false
+        config.networkEnabled = true
+        config.cpu.activation = 80
+        config.cpu.release = 40
+        settings.keepAwakeSystemLoadConfiguration = config
+        settings.keepAwakePreventsSystemSleep = true
+        settings.keepAwakeBatteryFloor = .percent10
+        settings.keepAwakeProcessDetection = false
+        settings.keepAwakeCustomProcessNames = ["mycustom-agent"]
+        settings.keepAwakeAgentIdleBlankEnabled = true
+        settings.keepAwakeAgentIdleMinutes = .three
+
+        let started = controller.startedAt
+        controller.syncModeWithSettings()
+
+        #expect(controller.mode == .whileAgentsWorking)
+        #expect(controller.startedAt == started)
+        #expect(controller.alsoPreventSystemSleep)
+        #expect(controller.batteryFloor == .percent10)
+        #expect(!controller.agentProcessDetectionEnabled)
+        #expect(controller.agentCustomProcessNames == ["mycustom-agent"])
+        #expect(controller.agentIdleBlankEnabled)
+        #expect(controller.agentIdleBlankMinutes == .three)
+        #expect(!controller.agentActivity.isProcessDetectionEnabled)
+        #expect(!monitor.currentConfiguration.cpuEnabled)
+        #expect(monitor.currentConfiguration.networkEnabled)
+        #expect(monitor.currentConfiguration.cpu.activation == 80)
+
+        qualifyLoad(monitor, clock: clock, controller: controller, cpu: 90)
+        #expect(!monitor.evaluation.shouldHold)
+
+        qualifyNetwork(monitor, clock: clock, controller: controller)
+        #expect(monitor.evaluation.shouldHold)
+    }
+
+    @Test("Backup import identical settings keep hold grace and do not reset startedAt")
+    func syncModeAfterImportIdenticalSettingsPreserveHold() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-sync6-\(UUID().uuidString)")!)
+        let clock = ManualDoubleClock(0)
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: { clock.time },
+            pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(
+            settings: settings, systemLoad: monitor, now: { clock.time }
+        )
+        defer { controller.shutdown() }
+        controller.selectMode(.whileAgentsWorking)
+        qualifyLoad(monitor, clock: clock, controller: controller)
+        #expect(monitor.evaluation.shouldHold)
+        #expect(controller.isHolding)
+        let started = controller.startedAt
+        clock.time = 40
+        controller.syncModeWithSettings()
+        #expect(controller.startedAt == started)
+        #expect(monitor.evaluation.shouldHold)
+        #expect(controller.isHolding)
+        #expect(monitor.currentConfiguration == settings.keepAwakeSystemLoadConfiguration.normalized())
+    }
+
+    @Test("Backup import syncs caches for timed holds without changing mode")
+    func syncModeAfterImportUpdatesCachesForTimedHolds() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-sync7-\(UUID().uuidString)")!)
+        let controller = makeMergedController(settings: settings)
+        defer { controller.shutdown() }
+
+        controller.activate(.indefinite)
+        settings.keepAwakePreventsSystemSleep = true
+        settings.keepAwakeBatteryFloor = .percent30
+        controller.syncModeWithSettings()
+        #expect(controller.mode == .indefinite)
+        #expect(controller.alsoPreventSystemSleep)
+        #expect(controller.batteryFloor == .percent30)
+
+        controller.activate(.duration(seconds: 1_800))
+        settings.keepAwakePreventsSystemSleep = false
+        settings.keepAwakeBatteryFloor = .percent10
+        controller.syncModeWithSettings()
+        #expect(controller.mode == .duration(seconds: 1_800))
+        #expect(!controller.alsoPreventSystemSleep)
+        #expect(controller.batteryFloor == .percent10)
+    }
+
+    @Test("Backup import syncs caches while display mode stays armed")
+    func syncModeAfterImportUpdatesCachesForDisplayMode() {
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-sync8-\(UUID().uuidString)")!)
+        let controller = makeMergedController(settings: settings)
+        defer { controller.shutdown() }
+        controller.selectMode(.whileDisplayConnected(uuid: "disp-a"))
+        settings.keepAwakePreventsSystemSleep = true
+        settings.keepAwakeBatteryFloor = .off
+        settings.keepAwakeProcessDetection = false
+        controller.syncModeWithSettings()
+        #expect(controller.mode == .whileDisplayConnected(uuid: "disp-a"))
+        #expect(controller.alsoPreventSystemSleep)
+        #expect(controller.batteryFloor == .off)
+        #expect(!controller.agentProcessDetectionEnabled)
     }
 
     @Test("Closed lid + enabled option: load-only hold never calls set(true)")

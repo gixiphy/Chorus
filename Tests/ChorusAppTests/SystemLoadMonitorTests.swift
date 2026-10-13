@@ -120,6 +120,40 @@ struct SystemLoadMonitorTests {
         monitor.ingestForTesting(sample: nil, now: 140)
         #expect(!monitor.evaluation.shouldHold)
     }
+
+    @Test("applyConfiguration skips restart when config is unchanged")
+    func applyConfigurationSameConfigDoesNotRestart() async {
+        let fake = FakeSystemLoadSampler()
+        let monitor = SystemLoadMonitor(
+            sampler: fake, now: { 0 }, pollInterval: .seconds(3_600)
+        )
+        monitor.start(configuration: .default)
+        let startDeadline = ContinuousClock.now + .seconds(2)
+        while await fake.resetCount == 0, ContinuousClock.now < startDeadline {
+            await Task.yield()
+        }
+        let resets = await fake.resetCount
+        #expect(resets >= 1)
+        #expect(monitor.currentConfiguration == .default)
+
+        #expect(!monitor.applyConfiguration(.default))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(await fake.resetCount == resets)
+
+        var changed = SystemLoadConfiguration.default
+        changed.cpuEnabled = false
+        #expect(monitor.applyConfiguration(changed))
+        let changeDeadline = ContinuousClock.now + .seconds(2)
+        while await fake.resetCount == resets, ContinuousClock.now < changeDeadline {
+            await Task.yield()
+        }
+        #expect(await fake.resetCount == resets + 1)
+        #expect(!monitor.currentConfiguration.cpuEnabled)
+        await fake.resumePending(with: SystemLoadSample(
+            sampledAt: 0, cpu: .unavailable, gpu: .unsupported, network: .unavailable
+        ))
+        monitor.stop()
+    }
 }
 
 @MainActor

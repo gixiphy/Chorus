@@ -248,10 +248,13 @@ final class KeepAwakeController {
         }
     }
 
-    /// 備份匯入後讓執行中的模式跟上持久化旗標（restore 只在啟動時跑一次）。
-    /// 只處理會持久化的三類綁定模式；`duration`／`indefinite` 不存檔，不受影響。
-    /// 結果模式與目前相同就不重啟，避免重置 `startedAt` 與監測器。
+    /// 備份匯入後讓執行中的 runtime 跟上持久化設定（restore 只在啟動時跑一次）。
+    /// 先同步 controller 快取／來源／負載設定，再對齊會持久化的三類綁定模式；
+    /// `duration`／`indefinite` 不存檔，模式本身不受影響，但快取仍會更新。
+    /// 結果模式與目前相同就不重啟，避免重置 `startedAt`；負載 config 未變則不重啟 monitor。
     func syncModeWithSettings() {
+        syncRuntimeCachesFromSettings()
+
         let target: KeepAwakeMode? = if let display = settings.keepAwakeDisplayUUID {
             .whileDisplayConnected(uuid: display)
         } else if let app = settings.keepAwakeAppBundleID {
@@ -262,7 +265,12 @@ final class KeepAwakeController {
             nil
         }
         if let target {
-            if mode != target { restoreSavedMode() } else { normalizeSavedFlags() }
+            if mode != target {
+                restoreSavedMode()
+            } else {
+                normalizeSavedFlags()
+                applyPersistedSystemLoadConfigurationIfNeeded()
+            }
             return
         }
         switch mode {
@@ -270,6 +278,38 @@ final class KeepAwakeController {
             activate(.off)
         default:
             break
+        }
+    }
+
+    /// 匯入後把 SettingsStore 推回 controller／hub／idle blanker 快取。
+    /// 先擷取 snapshot，再寫入；setter 的 didSet 會回寫同值並觸發必要的 reevaluate。
+    private func syncRuntimeCachesFromSettings() {
+        let prevents = settings.keepAwakePreventsSystemSleep
+        let floor = settings.keepAwakeBatteryFloor
+        let processDetection = settings.keepAwakeProcessDetection
+        let customNames = settings.keepAwakeCustomProcessNames
+        let idleEnabled = settings.keepAwakeAgentIdleBlankEnabled
+        let idleMinutes = settings.keepAwakeAgentIdleMinutes
+        let sourceSettings = settings.keepAwakeSourceSettings
+
+        alsoPreventSystemSleep = prevents
+        batteryFloor = floor
+        agentCustomProcessNames = customNames
+        agentProcessDetectionEnabled = processDetection
+        agentIdleBlankEnabled = idleEnabled
+        agentIdleBlankMinutes = idleMinutes
+        sourceHub.configure(sourceSettings)
+    }
+
+    /// 已在合併模式時，只在負載 configuration 實際變更才套用（相同則保留遲滯）。
+    private func applyPersistedSystemLoadConfigurationIfNeeded() {
+        guard case .whileAgentsWorking = mode else { return }
+        let normalized = settings.keepAwakeSystemLoadConfiguration.normalized()
+        if settings.keepAwakeSystemLoadConfiguration != normalized {
+            settings.keepAwakeSystemLoadConfiguration = normalized
+        }
+        if systemLoad.applyConfiguration(normalized) {
+            reevaluate()
         }
     }
 
