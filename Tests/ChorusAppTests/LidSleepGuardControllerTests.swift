@@ -2411,4 +2411,75 @@ struct LidSleepGuardControllerTests {
         #expect(helper.setCalls.filter { $0 }.isEmpty)
         #expect(await perf1Wait { sleepGate.delayCount == 1 })
     }
+
+    // MARK: - B139 launch with real dead / approval-gated helper
+
+    @Test("B139 S1 enabled SM + dead RealPowerHelperXPCProxy survives launch", .timeLimit(.minutes(1)))
+    func b139S1DeadHelperLaunchSurvives() async throws {
+        let retry = PERF1EvidenceSleepGate()
+        defer { retry.cancelAll() }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 1,
+            makeProxy: { B139XPCFixtures.deadProxy() },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let store = makeSettings()
+        store.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let controller = LidSleepGuardController(
+            settings: store,
+            helper: client,
+            lid: FakeLid(),
+            notifier: FakeNotifier(),
+            sessionStore: LidClosedSessionStore(suiteName: "b139-s1-\(UUID().uuidString)"),
+            sleepDisabledProbe: { nil },
+            heartbeatInterval: 3_600,
+            evidenceSleep: { await retry.sleep($0) }
+        )
+        defer { controller.shutdown() }
+
+        await controller.refreshHelperAvailabilityAsync(reason: .launch)
+        #expect(await perf1Wait { retry.waiterCount == 1 })
+        if case .ready = client.availability {
+            Issue.record("dead helper must not report ready")
+        }
+        #expect(!client.handshakeCompleteForTesting)
+    }
+
+    @Test("B139 S2 requiresApproval never creates XPC proxy", .timeLimit(.minutes(1)))
+    func b139S2RequiresApprovalSkipsProxy() async throws {
+        let makeCount = Mutex(0)
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 1,
+            makeProxy: {
+                makeCount.withLock { $0 += 1 }
+                return B139XPCFixtures.deadProxy()
+            },
+            serviceStatus: { .requiresApproval },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let store = makeSettings()
+        store.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let controller = LidSleepGuardController(
+            settings: store,
+            helper: client,
+            lid: FakeLid(),
+            notifier: FakeNotifier(),
+            sessionStore: LidClosedSessionStore(suiteName: "b139-s2-\(UUID().uuidString)"),
+            sleepDisabledProbe: { nil },
+            heartbeatInterval: 3_600,
+            evidenceSleep: { _ in }
+        )
+        defer { controller.shutdown() }
+
+        await controller.refreshHelperAvailabilityAsync(reason: .launch)
+        #expect(client.availability == .requiresApproval)
+        #expect(makeCount.withLock { $0 } == 0)
+    }
 }

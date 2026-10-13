@@ -182,12 +182,15 @@ enum PowerHelperClientError: Error, Equatable {
 }
 
 /// Injectable XPC proxy for tests (V-C06-3 / V-C06-4).
+/// `Sendable`: `@MainActor` class-bound existentials must be Sendable to capture into
+/// `@Sendable` connection-event closures (B139).
 @MainActor
-protocol PowerHelperXPCProxying: AnyObject {
-    func setSleepDisabled(_ enabled: Bool, reply: @escaping (Data?, String?) -> Void)
-    func status(reply: @escaping (Data) -> Void)
+protocol PowerHelperXPCProxying: AnyObject, Sendable {
+    func setSleepDisabled(_ enabled: Bool, reply: @escaping @Sendable (Data?, String?) -> Void)
+    func status(reply: @escaping @Sendable (Data) -> Void)
     /// Optional: real connections notify interruption/invalidation (W1-4).
-    var onConnectionEvent: ((PowerHelperConnectionEvent) -> Void)? { get set }
+    /// `@Sendable` so callers may invoke from any queue and hop internally (B139 / C8-1).
+    var onConnectionEvent: (@Sendable (PowerHelperConnectionEvent) -> Void)? { get set }
     func invalidate()
 }
 
@@ -838,7 +841,7 @@ final class PowerHelperClient: PowerHelperClienting {
         let proxy = try ensureProxy()
         // C8-1: XPC replies arrive off MainActor; withTimeout hops before resume.
         let data: Data = try await withTimeout(callTimeout) { continuation in
-            proxy.setSleepDisabled(on) { statusJSON, errorCode in
+            proxy.setSleepDisabled(on) { @Sendable statusJSON, errorCode in
                 if let errorCode {
                     continuation(.failure(PowerHelperClientError.remote(errorCode)))
                 } else if let statusJSON {
@@ -860,7 +863,7 @@ final class PowerHelperClient: PowerHelperClienting {
         let readinessAtStart = readinessEpoch
         // C8-1: XPC replies arrive off MainActor; withTimeout hops before resume.
         let data: Data = try await withTimeout(callTimeout) { continuation in
-            proxy.status { statusJSON in
+            proxy.status { @Sendable statusJSON in
                 continuation(.success(statusJSON))
             }
         }
@@ -935,7 +938,7 @@ final class PowerHelperClient: PowerHelperClienting {
         let sem = DispatchSemaphore(value: 0)
         // C8-1: sync shutdown must not hop to MainActor (would deadlock on wait).
         // ReplyBox is lock-protected for off-actor XPC queues.
-        proxy.setSleepDisabled(on) { _, error in
+        proxy.setSleepDisabled(on) { @Sendable _, error in
             box.setOK(error == nil)
             sem.signal()
         }
@@ -955,7 +958,7 @@ final class PowerHelperClient: PowerHelperClienting {
         let token = nextConnectionToken
         nextConnectionToken += 1
         connectionToken = token
-        created.onConnectionEvent = { [weak self] event in
+        created.onConnectionEvent = { @Sendable [weak self] event in
             // Capture token + proxy identity; discard stale events from replaced connections (W1-4).
             Task { @MainActor in
                 self?.handleConnectionEvent(event, token: token, proxy: created)
@@ -1044,11 +1047,11 @@ final class PowerHelperClient: PowerHelperClienting {
 
     private func withTimeout<T: Sendable>(
         _ timeout: TimeInterval,
-        _ body: (@escaping (Result<T, Error>) -> Void) -> Void
+        _ body: (@escaping @Sendable (Result<T, Error>) -> Void) -> Void
     ) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             let gate = ReplyGate()
-            body { result in
+            body { @Sendable result in
                 // C8-1: real XPC reply queues are off-actor; hop before resume.
                 Task { @MainActor in
                     guard gate.claim() else { return }
@@ -1276,48 +1279,75 @@ private final class ProbeOutputBox: @unchecked Sendable {
 @MainActor
 final class RealPowerHelperXPCProxy: PowerHelperXPCProxying {
     private let connection: NSXPCConnection
-    var onConnectionEvent: ((PowerHelperConnectionEvent) -> Void)?
+    var onConnectionEvent: (@Sendable (PowerHelperConnectionEvent) -> Void)?
 
     init(machServiceName: String, requirement: String) {
         let connection = NSXPCConnection(machServiceName: machServiceName, options: .privileged)
         connection.remoteObjectInterface = NSXPCInterface(with: ChorusPowerHelperXPC.self)
         connection.setCodeSigningRequirement(requirement)
         self.connection = connection
-        // C8-1: NSXPC handlers fire off MainActor — hop first, then touch actor state.
-        connection.invalidationHandler = { [weak self] in
+        installConnectionHandlers()
+        connection.resume()
+    }
+
+    #if DEBUG
+    /// Test-only seam for anonymous / dead NSXPC endpoints (B139). Not compiled into Release.
+    init(testConnection: NSXPCConnection) {
+        testConnection.remoteObjectInterface = NSXPCInterface(with: ChorusPowerHelperXPC.self)
+        self.connection = testConnection
+        installConnectionHandlers()
+        testConnection.resume()
+    }
+
+    /// Invalidates without clearing handlers (unlike `invalidate()`), so X4 can observe
+    /// `invalidationHandler` on a real NSXPC queue. DEBUG-only.
+    func invalidateConnectionKeepingHandlersForTesting() {
+        connection.invalidate()
+    }
+    #endif
+
+    /// Shared by production and DEBUG test inits so handler isolation stays identical.
+    private func installConnectionHandlers() {
+        // B139: outer closure must be `@Sendable` (non-isolated). Hop inside is too late if
+        // the prologue already asserts MainActor (C8-1 comment was right; placement was wrong).
+        connection.invalidationHandler = { @Sendable [weak self] in
             Task { @MainActor in
                 self?.onConnectionEvent?(.invalidated)
             }
         }
-        connection.interruptionHandler = { [weak self] in
+        connection.interruptionHandler = { @Sendable [weak self] in
             Task { @MainActor in
                 self?.onConnectionEvent?(.interrupted)
             }
         }
-        connection.resume()
     }
 
-    func setSleepDisabled(_ enabled: Bool, reply: @escaping (Data?, String?) -> Void) {
-        // Reply may run off MainActor; callers (withTimeout / ReplyBox) are responsible for hops.
-        let proxy = connection.remoteObjectProxyWithErrorHandler { error in
-            reply(nil, "xpc:\(error.localizedDescription)")
+    func setSleepDisabled(_ enabled: Bool, reply: @escaping @Sendable (Data?, String?) -> Void) {
+        let once = OneShotReply2(reply)
+        let proxy = connection.remoteObjectProxyWithErrorHandler { @Sendable error in
+            once.fire(nil, "xpc:\(error.localizedDescription)")
         }
         guard let helper = proxy as? ChorusPowerHelperXPC else {
-            reply(nil, "badProxy")
+            once.fire(nil, "badProxy")
             return
         }
-        helper.setSleepDisabled(enabled, withReply: reply)
+        helper.setSleepDisabled(enabled) { @Sendable data, code in
+            once.fire(data, code)
+        }
     }
 
-    func status(reply: @escaping (Data) -> Void) {
-        let proxy = connection.remoteObjectProxyWithErrorHandler { _ in
-            reply(Data())
+    func status(reply: @escaping @Sendable (Data) -> Void) {
+        let once = OneShotReply1(reply)
+        let proxy = connection.remoteObjectProxyWithErrorHandler { @Sendable _ in
+            once.fire(Data())
         }
         guard let helper = proxy as? ChorusPowerHelperXPC else {
-            reply(Data())
+            once.fire(Data())
             return
         }
-        helper.status(withReply: reply)
+        helper.status { @Sendable data in
+            once.fire(data)
+        }
     }
 
     func invalidate() {
@@ -1325,6 +1355,43 @@ final class RealPowerHelperXPCProxy: PowerHelperXPCProxying {
         connection.interruptionHandler = nil
         onConnectionEvent = nil
         connection.invalidate()
+    }
+}
+
+/// Per-call one-shot gate for NSXPC proxy replies (B139). Not MainActor — may run on XPC queues.
+private final class OneShotReply1: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    private let reply: @Sendable (Data) -> Void
+
+    init(_ reply: @escaping @Sendable (Data) -> Void) {
+        self.reply = reply
+    }
+
+    func fire(_ data: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !fired else { return }
+        fired = true
+        reply(data)
+    }
+}
+
+private final class OneShotReply2: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    private let reply: @Sendable (Data?, String?) -> Void
+
+    init(_ reply: @escaping @Sendable (Data?, String?) -> Void) {
+        self.reply = reply
+    }
+
+    func fire(_ data: Data?, _ code: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !fired else { return }
+        fired = true
+        reply(data, code)
     }
 }
 

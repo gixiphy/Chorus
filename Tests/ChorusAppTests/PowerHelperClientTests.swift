@@ -54,9 +54,9 @@ struct PowerHelperHandshakeTests {
 
 @MainActor
 final class FakePowerHelperProxy: PowerHelperXPCProxying {
-    var setHandler: ((Bool, @escaping (Data?, String?) -> Void) -> Void)?
-    var statusHandler: ((@escaping (Data) -> Void) -> Void)?
-    var onConnectionEvent: ((PowerHelperConnectionEvent) -> Void)?
+    var setHandler: ((Bool, @escaping @Sendable (Data?, String?) -> Void) -> Void)?
+    var statusHandler: ((@escaping @Sendable (Data) -> Void) -> Void)?
+    var onConnectionEvent: (@Sendable (PowerHelperConnectionEvent) -> Void)?
     private(set) var setCalls: [Bool] = []
     private(set) var statusCalls = 0
     private(set) var invalidateCount = 0
@@ -70,7 +70,7 @@ final class FakePowerHelperProxy: PowerHelperXPCProxying {
     var pendingRestore: Bool = false
     var persistRetryNeeded: Bool = false
 
-    func setSleepDisabled(_ enabled: Bool, reply: @escaping (Data?, String?) -> Void) {
+    func setSleepDisabled(_ enabled: Bool, reply: @escaping @Sendable (Data?, String?) -> Void) {
         setCalls.append(enabled)
         if let setHandler {
             setHandler(enabled, reply)
@@ -88,7 +88,7 @@ final class FakePowerHelperProxy: PowerHelperXPCProxying {
         }
     }
 
-    func status(reply: @escaping (Data) -> Void) {
+    func status(reply: @escaping @Sendable (Data) -> Void) {
         statusCalls += 1
         if let statusHandler {
             statusHandler(reply)
@@ -429,6 +429,35 @@ struct PowerHelperClientConnectionTests {
         let elapsed = ContinuousClock.now - started
         #expect(ok)
         #expect(elapsed < .seconds(1))
+    }
+
+    @Test("X7 double reply from background resumes withTimeout only once", .timeLimit(.minutes(1)))
+    func x7DoubleReplyOnlyResumesOnce() async throws {
+        let proxy = FakePowerHelperProxy()
+        proxy.statusHandler = { reply in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let status = PowerHelperStatus(helperBuild: "136")
+                var encoded = status
+                encoded.protocolVersion = PowerHelperConstants.protocolVersion
+                let data = (try? JSONEncoder().encode(encoded)) ?? Data()
+                reply(data)
+                // Simulate a second reply (error path racing) — must not double-resume.
+                reply(data)
+            }
+        }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 1,
+            makeProxy: { proxy },
+            serviceStatus: { .enabled },
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        await client.refreshAvailability(reason: .launch)
+        let status = try await client.status()
+        #expect(status.helperBuild == "136")
+        #expect(client.availability == .ready)
     }
 }
 
