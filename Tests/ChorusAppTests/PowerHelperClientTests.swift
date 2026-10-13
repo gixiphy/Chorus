@@ -1529,6 +1529,58 @@ struct LidClosedSessionStorePERF1R5Tests {
         gate.release()
         await store.flushPending()
     }
+
+    @Test("PERF1-NEW-1 gated save then clear leaves fresh-store restore absent", .timeLimit(.minutes(1)))
+    func gatedSaveClearFreshStoreAbsent() async {
+        let suite = "perf1-new1-\(UUID().uuidString)"
+        defer {
+            UserDefaults().removePersistentDomain(forName: suite)
+            LidClosedSessionCoordinator.resetRegistryForTesting(suiteName: suite)
+        }
+        let gate = WorkerGate()
+        let writes = Mutex(0)
+        let removes = Mutex(0)
+        let stored = Mutex<Data?>(nil)
+        let sink = LidClosedSessionCoordinator.WriteSink(
+            set: { data, _ in
+                gate.enterAndWait()
+                writes.withLock { $0 += 1 }
+                stored.withLock { $0 = data }
+            },
+            remove: { _ in
+                removes.withLock { $0 += 1 }
+                stored.withLock { $0 = nil }
+            },
+            data: { _ in stored.withLock { $0 } }
+        )
+        let store = LidClosedSessionStore(suiteName: suite, writeSink: sink)
+        _ = store.save(
+            continuousClosedAt: 99,
+            bootSessionUUID: "BOOT-OBSOLETE",
+            maxDurationLatched: false,
+            wallClosedAt: Date(timeIntervalSince1970: 1)
+        )
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        // Clear while the first save is blocked before mutation.
+        store.clear()
+        gate.release()
+        await store.flushPending()
+
+        #expect(store.load() == nil)
+        // Committed backend writes must be zero (obsolete sink I/O is undone).
+        #expect(store.backendWriteCountForTesting == 0)
+        #expect(stored.withLock { $0 } == nil)
+        // Removal ordered: clear enqueue and/or obsolete-write undo.
+        #expect(removes.withLock { $0 } >= 1)
+
+        // Fresh store (new coordinator instance) must not revive the obsolete session.
+        LidClosedSessionCoordinator.resetRegistryForTesting(suiteName: suite)
+        let fresh = LidClosedSessionStore(suiteName: suite, writeSink: sink)
+        #expect(fresh.restoreResult(nowContinuous: 120, bootSessionUUID: "BOOT-OBSOLETE") == .absent)
+        #expect(fresh.load() == nil)
+        _ = writes // sink may observe a raced set that was undone
+    }
+
 }
 
 @Suite("SleepDisabledProbe")

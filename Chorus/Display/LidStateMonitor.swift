@@ -278,6 +278,8 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
     private var writeCountForTesting = 0
     private var removeCountForTesting = 0
     private var inFlightBackendOps = 0
+    /// Last revision handed to the backend queue (save or clear). PERF1-NEW-2.
+    private var enqueuedRevisionForBackend: UInt64?
     private var durabilityWaiters: [CheckedContinuation<Void, Never>] = []
 
     private init(suiteName: String?, key: String, writeSink: WriteSink?) {
@@ -342,8 +344,13 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
         }
 
         if let committed = committedSemantic, committed == semantic, !pendingClear {
-            lock.unlock()
-            return false
+            // PERF1-NEW-2: identical-to-committed is a no-op only when pending agrees.
+            // An in-flight latch/new-start may have pending ahead of committed; a coalesce
+            // back to the committed semantic must still replace that pending revision.
+            if pendingSnapshot == nil || pendingSnapshot?.semanticKey == semantic {
+                lock.unlock()
+                return false
+            }
         }
         if let pending = pendingSnapshot, pending.semanticKey == semantic, !pendingClear {
             lock.unlock()
@@ -386,7 +393,14 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
         pendingSnapshot = nil
         revision &+= 1
         let rev = revision
-        if committedSemantic == nil, !loadedCorrupt, loadBytesLocked() == nil {
+        // PERF1-NEW-1: absent disk alone is not enough — pending/in-flight saves must
+        // still order a removal so an obsolete write cannot repopulate storage.
+        let nothingToRemove =
+            committedSemantic == nil
+            && !loadedCorrupt
+            && loadBytesLocked() == nil
+            && inFlightBackendOps == 0
+        if nothingToRemove {
             pendingClear = false
             lock.unlock()
             return
@@ -421,23 +435,44 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
     }
 
     func flushPending() async {
-        let state = withCoordinatorLock { () -> (clear: Bool, snap: LidClosedSessionStore.Snapshot?, rev: UInt64, inflight: Int) in
+        // PERF1-NEW-2: submit or chain the latest revision before waiting —
+        // skipping while in-flight strands durability waiters on a newer pending snap.
+        enum FlushSubmit {
+            case clear(UInt64)
+            case save(LidClosedSessionStore.Snapshot, UInt64)
+            case idle
+            case waitOnly
+        }
+        let submit = withCoordinatorLock { () -> FlushSubmit in
             coalesceWorkItem?.cancel()
             coalesceWorkItem = nil
-            return (pendingClear, pendingSnapshot, revision, inFlightBackendOps)
+            if pendingClear {
+                if enqueuedRevisionForBackend == revision, inFlightBackendOps > 0 {
+                    return .waitOnly
+                }
+                return .clear(revision)
+            }
+            if let snap = pendingSnapshot {
+                if enqueuedRevisionForBackend == revision, inFlightBackendOps > 0 {
+                    return .waitOnly
+                }
+                return .save(snap, revision)
+            }
+            if inFlightBackendOps == 0 {
+                return .idle
+            }
+            return .waitOnly
         }
 
-        if state.clear {
-            if state.inflight == 0 {
-                enqueueBackendClear(revision: state.rev)
-            }
-        } else if let snap = state.snap {
-            // Avoid a duplicate backend op when the barrier enqueue is already in flight.
-            if state.inflight == 0 {
-                enqueueBackendSave(snap, revision: state.rev)
-            }
-        } else if state.inflight == 0 {
+        switch submit {
+        case .clear(let rev):
+            enqueueBackendClear(revision: rev)
+        case .save(let snap, let rev):
+            enqueueBackendSave(snap, revision: rev)
+        case .idle:
             return
+        case .waitOnly:
+            break
         }
         await waitForDurability()
     }
@@ -504,10 +539,26 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
     private func enqueueBackendSave(_ snap: LidClosedSessionStore.Snapshot, revision: UInt64) {
         lock.lock()
         inFlightBackendOps += 1
+        enqueuedRevisionForBackend = revision
         lock.unlock()
         // Strong self: weak capture can drop the write before tests/await observe it (PERF1-R5).
         queue.async {
             let data = try? JSONEncoder().encode(snap)
+            // PERF1-NEW-1: reject obsolete revisions before any backend mutation.
+            // Do not hold `lock` across sink I/O — gated test sinks would deadlock flush/clear.
+            let obsolete: Bool = {
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                return revision != self.revision || data == nil
+            }()
+            if obsolete {
+                self.lock.lock()
+                self.inFlightBackendOps -= 1
+                let followUp = self.finishBackendOpLocked()
+                self.lock.unlock()
+                self.applyBackendFollowUp(followUp)
+                return
+            }
             if let data {
                 if let writeSink = self.writeSink {
                     writeSink.set(data, self.key)
@@ -526,21 +577,41 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
                 self.pendingClear = false
                 self.loadedCorrupt = false
                 self.didLoad = true
+            } else if data != nil {
+                // PERF1-NEW-1: revision advanced during I/O — undo obsolete mutation so a
+                // clear that raced after the pre-check cannot leave disk populated.
+                if let writeSink = self.writeSink {
+                    writeSink.remove(self.key)
+                } else {
+                    self.defaults.removeObject(forKey: self.key)
+                }
             }
             self.inFlightBackendOps -= 1
-            let resumeAll = self.inFlightBackendOps == 0 && self.pendingSnapshot == nil && !self.pendingClear
-            let waiters = resumeAll ? self.durabilityWaiters : []
-            if resumeAll { self.durabilityWaiters.removeAll() }
+            let followUp = self.finishBackendOpLocked()
             self.lock.unlock()
-            for waiter in waiters { waiter.resume() }
+            self.applyBackendFollowUp(followUp)
         }
     }
 
     private func enqueueBackendClear(revision: UInt64) {
         lock.lock()
         inFlightBackendOps += 1
+        enqueuedRevisionForBackend = revision
         lock.unlock()
         queue.async {
+            let obsolete: Bool = {
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                return revision != self.revision
+            }()
+            if obsolete {
+                self.lock.lock()
+                self.inFlightBackendOps -= 1
+                let followUp = self.finishBackendOpLocked()
+                self.lock.unlock()
+                self.applyBackendFollowUp(followUp)
+                return
+            }
             if let writeSink = self.writeSink {
                 writeSink.remove(self.key)
             } else {
@@ -557,12 +628,42 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
                 self.didLoad = true
             }
             self.inFlightBackendOps -= 1
-            let resumeAll = self.inFlightBackendOps == 0 && self.pendingSnapshot == nil && !self.pendingClear
-            let waiters = resumeAll ? self.durabilityWaiters : []
-            if resumeAll { self.durabilityWaiters.removeAll() }
+            let followUp = self.finishBackendOpLocked()
             self.lock.unlock()
-            for waiter in waiters { waiter.resume() }
+            self.applyBackendFollowUp(followUp)
         }
+    }
+
+    private struct BackendFollowUp {
+        var chainClear: UInt64?
+        var chainSave: (LidClosedSessionStore.Snapshot, UInt64)?
+        var waiters: [CheckedContinuation<Void, Never>] = []
+    }
+
+    /// PERF1-NEW-2: when the last in-flight op finishes, chain a still-pending revision
+    /// or resume durability waiters — never leave waiters stranded.
+    private func finishBackendOpLocked() -> BackendFollowUp {
+        var followUp = BackendFollowUp()
+        guard inFlightBackendOps == 0 else { return followUp }
+        enqueuedRevisionForBackend = nil
+        if pendingClear {
+            followUp.chainClear = revision
+        } else if let snap = pendingSnapshot {
+            followUp.chainSave = (snap, revision)
+        } else {
+            followUp.waiters = durabilityWaiters
+            durabilityWaiters.removeAll()
+        }
+        return followUp
+    }
+
+    private func applyBackendFollowUp(_ followUp: BackendFollowUp) {
+        if let rev = followUp.chainClear {
+            enqueueBackendClear(revision: rev)
+        } else if let (snap, rev) = followUp.chainSave {
+            enqueueBackendSave(snap, revision: rev)
+        }
+        for waiter in followUp.waiters { waiter.resume() }
     }
 
     private func ensureLoadedLocked() {
