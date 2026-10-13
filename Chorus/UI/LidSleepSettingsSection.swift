@@ -1,6 +1,5 @@
 import AppKit
 import ChorusCore
-import ServiceManagement
 import SwiftUI
 
 /// Pure presentation decisions; no helper, filesystem, or clock side effects (V-U01-1).
