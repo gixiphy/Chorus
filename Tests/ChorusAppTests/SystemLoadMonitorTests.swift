@@ -50,6 +50,17 @@ actor FakeSystemLoadSampler: SystemLoadSampling {
     }
 }
 
+/// Immediate unavailable samples — for tests that drive load via `ingestForTesting` only.
+actor IdleSystemLoadSampler: SystemLoadSampling {
+    func sample(configuration: SystemLoadConfiguration) async -> SystemLoadSample {
+        SystemLoadSample(
+            sampledAt: 0, cpu: .unavailable, gpu: .unsupported, network: .unavailable
+        )
+    }
+
+    func reset() async {}
+}
+
 final class ManualDoubleClock: @unchecked Sendable {
     private let lock = NSLock()
     private var _time: Double
@@ -144,7 +155,7 @@ struct KeepAwakeLoadModeTests {
             workspaceNotifications: center
         )
         defer { controller.shutdown() }
-        controller.activate(.whileSystemBusy)
+        controller.activate(.whileAgentsWorking)
         let initialDeadline = ContinuousClock.now + .seconds(2)
         while await sampler.sampleCount == 0, ContinuousClock.now < initialDeadline {
             try await Task.sleep(for: .milliseconds(5))
@@ -203,7 +214,7 @@ struct KeepAwakeLoadModeTests {
         )
         defer { controller.shutdown() }
 
-        controller.activate(.whileSystemBusy)
+        controller.activate(.whileAgentsWorking)
         monitor.stop()
         for t in [0.0, 5, 10, 15] {
             clock.time = t
@@ -247,12 +258,15 @@ struct KeepAwakeLoadModeTests {
             assertions: FakeAssertions(),
             now: { 0 }
         )
-        controller.selectMode(.whileSystemBusy)
-        #expect(settings.keepAwakeSystemLoadMode)
+        controller.selectMode(.whileAgentsWorking)
+        #expect(settings.keepAwakeAgentMode)
+        #expect(!settings.keepAwakeSystemLoadMode)
         #expect(settings.keepAwakeDisplayUUID == nil)
-        #expect(!settings.keepAwakeAgentMode)
         controller.shutdown()
 
+        // Legacy: only load flag set → restore into merged mode and normalize.
+        defaults.set(false, forKey: "chorus.keepAwake.agentMode")
+        defaults.set(true, forKey: "chorus.keepAwake.systemLoadMode")
         let restoredSettings = SettingsStore(defaults: defaults)
         let restored = KeepAwakeController(
             settings: restoredSettings,
@@ -262,7 +276,9 @@ struct KeepAwakeLoadModeTests {
             now: { 0 }
         )
         restored.restoreSavedMode()
-        #expect(restored.mode == .whileSystemBusy)
+        #expect(restored.mode == .whileAgentsWorking)
+        #expect(restoredSettings.keepAwakeAgentMode)
+        #expect(!restoredSettings.keepAwakeSystemLoadMode)
         restored.shutdown()
     }
 }

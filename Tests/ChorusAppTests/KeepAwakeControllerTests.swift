@@ -908,4 +908,431 @@ struct KeepAwakeControllerTests {
         #expect(authorized.status == 200)
         #expect(controller.sourceHub.leases.snapshot().active.isEmpty)
     }
+
+    // MARK: - Merged agent ∨ load mode
+
+    private func makeMergedController(
+        assertions: FakeAssertions = FakeAssertions(),
+        settings: SettingsStore? = nil,
+        systemLoad: SystemLoadMonitor? = nil,
+        sourceHub: KeepAwakeSourceHub? = nil,
+        lidHelper: FakeLidHelper? = nil,
+        idleBlanker: AgentIdleBlanker? = nil,
+        now: @escaping @Sendable () -> Double = { 0 },
+        workspaceNotifications: NotificationCenter = NotificationCenter()
+    ) -> KeepAwakeController {
+        let settings = settings
+            ?? SettingsStore(defaults: UserDefaults(suiteName: "merge-ka-\(UUID().uuidString)")!)
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        let notifier = FakeNotifier()
+        let helper = lidHelper ?? FakeLidHelper()
+        let hub = sourceHub ?? KeepAwakeSourceHub(
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            graceSeconds: 2,
+            tickInterval: .seconds(3_600)
+        )
+        // Always fake the sampler — real hardware samples flake on busy CI machines.
+        let monitor = systemLoad ?? SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: now,
+            pollInterval: .seconds(60)
+        )
+        return KeepAwakeController(
+            settings: settings,
+            displayManager: DisplayManager(settings: settings),
+            agentActivity: hub.agentActivity,
+            sourceHub: hub,
+            lidGuard: makeLidGuard(settings: settings, helper: helper, notifier: notifier),
+            systemLoad: monitor,
+            idleBlanker: idleBlanker,
+            assertions: assertions,
+            notifier: notifier,
+            now: now,
+            workspaceNotifications: workspaceNotifications
+        )
+    }
+
+    private func qualifyLoad(
+        _ monitor: SystemLoadMonitor,
+        clock: ManualDoubleClock,
+        controller: KeepAwakeController,
+        times: [Double] = [0, 5, 10, 15],
+        cpu: Double = 60
+    ) {
+        monitor.stop()
+        for t in times {
+            clock.time = t
+            monitor.ingestForTesting(
+                sample: SystemLoadSample(
+                    sampledAt: t, cpu: .value(cpu), gpu: .unsupported, network: .value(0)
+                ),
+                now: t
+            )
+            controller.reevaluate()
+        }
+    }
+
+    @Test("Merged mode starts hub and systemLoad; off stops both")
+    func mergedModeStartsBothMonitors() {
+        let clock = ManualDoubleClock(0)
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: { clock.time },
+            pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(systemLoad: monitor, now: { clock.time })
+        defer { controller.shutdown() }
+        #expect(!controller.sourceHub.isRunning)
+        #expect(!monitor.isRunning)
+        controller.activate(.whileAgentsWorking)
+        #expect(controller.sourceHub.isRunning)
+        #expect(monitor.isRunning)
+        controller.activate(.off)
+        #expect(!controller.sourceHub.isRunning)
+        #expect(!monitor.isRunning)
+    }
+
+    @Test("Load-only hold uses both assertions; Lid busy stays false")
+    func loadOnlyHoldDoesNotArmLid() async {
+        let assertions = FakeAssertions()
+        let helper = FakeLidHelper()
+        let clock = ManualDoubleClock(0)
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-load-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: { clock.time },
+            pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(
+            assertions: assertions,
+            settings: settings,
+            systemLoad: monitor,
+            lidHelper: helper,
+            now: { clock.time }
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        qualifyLoad(monitor, clock: clock, controller: controller)
+        #expect(controller.isHolding)
+        #expect(assertions.active.values.contains(kIOPMAssertionTypePreventUserIdleDisplaySleep))
+        #expect(assertions.active.values.contains(kIOPMAssertionTypePreventUserIdleSystemSleep))
+        #expect(!controller.sourceHub.isBusy)
+        #expect(!helper.setCalls.contains(true))
+    }
+
+    @Test("Agent-only lease holds while load keeps sampling")
+    func agentOnlyKeepsLoadSampling() async throws {
+        let sampler = FakeSystemLoadSampler()
+        let clock = ManualDoubleClock(0)
+        let monitor = SystemLoadMonitor(
+            sampler: sampler, now: { clock.time }, pollInterval: .milliseconds(5)
+        )
+        let controller = makeMergedController(systemLoad: monitor, now: { clock.time })
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "lease-a", ttl: 120)
+        controller.reevaluate()
+        #expect(controller.isHolding)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await sampler.sampleCount == 0, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await sampler.sampleCount >= 1)
+        await sampler.resumePending(with: SystemLoadSample(
+            sampledAt: 1, cpu: .value(0), gpu: .unsupported, network: .value(0)
+        ))
+    }
+
+    @Test("OR release waits for both load cooldown and hub grace")
+    func orReleaseWaitsForBothSides() {
+        let clock = ManualDoubleClock(0)
+        let wallBase = Date(timeIntervalSince1970: 1_000)
+        let wallOffset = ManualDoubleClock(0)
+        let leases = KeepAwakeLeaseSource(
+            graceSeconds: 5,
+            wallNow: { wallBase.addingTimeInterval(wallOffset.time) },
+            uptimeNow: { clock.time }
+        )
+        let hub = KeepAwakeSourceHub(
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            leases: leases,
+            graceSeconds: 5,
+            tickInterval: .seconds(3_600),
+            now: { wallBase.addingTimeInterval(wallOffset.time) }
+        )
+        var config = SystemLoadConfiguration.default
+        config.activationSeconds = 5
+        config.releaseSeconds = 30
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-or-\(UUID().uuidString)")!)
+        settings.keepAwakeSystemLoadConfiguration = config
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: { clock.time },
+            pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(
+            settings: settings,
+            systemLoad: monitor,
+            sourceHub: hub,
+            now: { clock.time }
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+
+        // Qualify load.
+        monitor.stop()
+        for t in [0.0, 5] {
+            clock.time = t
+            monitor.ingestForTesting(
+                sample: SystemLoadSample(
+                    sampledAt: t, cpu: .value(80), gpu: .unsupported, network: .value(0)
+                ),
+                now: t
+            )
+            controller.reevaluate()
+        }
+        #expect(monitor.evaluation.shouldHold)
+
+        // Lease with long TTL so agent side stays workingNow while load cools.
+        _ = controller.sourceHub.leases.hold(id: "both", ttl: 600)
+        controller.reevaluate()
+        #expect(controller.isHolding)
+        #expect(controller.sourceHub.isBusy)
+
+        // Load cools fully; agent lease still active → still holding.
+        clock.time = 10
+        monitor.ingestForTesting(
+            sample: SystemLoadSample(
+                sampledAt: 10, cpu: .value(5), gpu: .unsupported, network: .value(0)
+            ),
+            now: 10
+        )
+        clock.time = 40
+        monitor.ingestForTesting(sample: nil, now: 40)
+        controller.reevaluate()
+        #expect(!monitor.evaluation.shouldHold)
+        #expect(controller.sourceHub.isBusy)
+        #expect(controller.isHolding)
+
+        // Expire lease into grace: still holding.
+        clock.time = 5 + 600 + 1
+        wallOffset.time = 1
+        hub.tick()
+        controller.reevaluate()
+        #expect(controller.sourceHub.isBusy)
+        #expect(controller.isHolding)
+
+        // Grace ends → both sides clear → release.
+        wallOffset.time = 10
+        hub.tick()
+        controller.reevaluate()
+        #expect(!controller.sourceHub.isBusy)
+        #expect(!monitor.evaluation.shouldHold)
+        #expect(!controller.isHolding)
+    }
+
+    @Test("OR release: clearing agent leaves load hold intact")
+    func orReleaseLoadOutlastsAgent() {
+        let clock = ManualDoubleClock(0)
+        var config = SystemLoadConfiguration.default
+        config.activationSeconds = 5
+        config.releaseSeconds = 30
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-or2-\(UUID().uuidString)")!)
+        settings.keepAwakeSystemLoadConfiguration = config
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: { clock.time },
+            pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(
+            settings: settings,
+            systemLoad: monitor,
+            now: { clock.time }
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+
+        qualifyLoad(monitor, clock: clock, controller: controller, times: [0, 5], cpu: 80)
+        #expect(monitor.evaluation.shouldHold)
+        #expect(controller.isHolding)
+
+        _ = controller.sourceHub.leases.hold(id: "rev", ttl: 600)
+        controller.reevaluate()
+        #expect(controller.sourceHub.isBusy)
+
+        // Drop agent immediately (no grace) — load alone must keep the hold.
+        controller.sourceHub.leases.clearImmediately()
+        controller.sourceHub.tick()
+        controller.reevaluate()
+        #expect(controller.sourceHub.isBusy == false)
+        #expect(monitor.evaluation.shouldHold)
+        #expect(controller.isHolding)
+
+        clock.time = 10
+        monitor.ingestForTesting(
+            sample: SystemLoadSample(
+                sampledAt: 10, cpu: .value(5), gpu: .unsupported, network: .value(0)
+            ),
+            now: 10
+        )
+        clock.time = 40
+        monitor.ingestForTesting(
+            sample: SystemLoadSample(
+                sampledAt: 40, cpu: .value(5), gpu: .unsupported, network: .value(0)
+            ),
+            now: 40
+        )
+        controller.reevaluate()
+        #expect(monitor.evaluation.shouldHold == false)
+        #expect(controller.isHolding == false)
+    }
+
+    @Test("Restore matrix absorbs legacy load flag")
+    func restoreMatrixMerged() {
+        let suite = "merge-restore-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        for (agent, load) in [(true, false), (false, true), (true, true)] {
+            defaults.set(agent, forKey: "chorus.keepAwake.agentMode")
+            defaults.set(load, forKey: "chorus.keepAwake.systemLoadMode")
+            defaults.removeObject(forKey: "chorus.keepAwake.displayUUID")
+            defaults.removeObject(forKey: "chorus.keepAwake.appBundleID")
+            let settings = SettingsStore(defaults: defaults)
+            let controller = makeMergedController(settings: settings)
+            controller.restoreSavedMode()
+            #expect(controller.mode == .whileAgentsWorking)
+            #expect(settings.keepAwakeAgentMode)
+            #expect(!settings.keepAwakeSystemLoadMode)
+            controller.shutdown()
+        }
+
+        defaults.set(false, forKey: "chorus.keepAwake.agentMode")
+        defaults.set(true, forKey: "chorus.keepAwake.systemLoadMode")
+        defaults.set("DISP", forKey: "chorus.keepAwake.displayUUID")
+        let displaySettings = SettingsStore(defaults: defaults)
+        let displayController = makeMergedController(settings: displaySettings)
+        displayController.restoreSavedMode()
+        #expect(displayController.mode == .whileDisplayConnected(uuid: "DISP"))
+        #expect(!displaySettings.keepAwakeAgentMode)
+        displayController.shutdown()
+    }
+
+    @Test("willSleep stops load but keeps agent assertion")
+    func willSleepKeepsAgentHold() {
+        let center = NotificationCenter()
+        let assertions = FakeAssertions()
+        let clock = ManualDoubleClock(0)
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: { clock.time },
+            pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(
+            assertions: assertions,
+            systemLoad: monitor,
+            now: { clock.time },
+            workspaceNotifications: center
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "sleep-hold", ttl: 600)
+        controller.reevaluate()
+        #expect(controller.isHolding)
+        center.post(name: NSWorkspace.willSleepNotification, object: nil)
+        #expect(!monitor.isRunning)
+        #expect(controller.isHolding)
+        #expect(!assertions.active.isEmpty)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        #expect(monitor.isRunning)
+        #expect(controller.isHolding)
+    }
+
+    @Test("applySystemLoadConfiguration live in merged mode only")
+    func applyConfigLiveInMergedMode() {
+        let clock = ManualDoubleClock(0)
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-cfg-\(UUID().uuidString)")!)
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: { clock.time },
+            pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(
+            settings: settings, systemLoad: monitor, now: { clock.time }
+        )
+        defer { controller.shutdown() }
+
+        var config = SystemLoadConfiguration.default
+        config.cpu.activation = 80
+        config.cpu.release = 40
+        controller.activate(.indefinite)
+        controller.applySystemLoadConfiguration(config)
+        #expect(settings.keepAwakeSystemLoadConfiguration.cpu.activation == 80)
+        #expect(!monitor.isRunning)
+
+        controller.activate(.whileAgentsWorking)
+        #expect(monitor.isRunning)
+        config.cpu.activation = 70
+        config.cpu.release = 35
+        controller.applySystemLoadConfiguration(config)
+        #expect(settings.keepAwakeSystemLoadConfiguration.cpu.activation == 70)
+        #expect(monitor.isRunning)
+    }
+
+    @Test("Idle blanker runs for load-only hold")
+    func idleBlankerForLoadOnly() {
+        let displays = AgentIdleBlankerTests.FakeDisplays()
+        var idle = 600.0
+        let blanker = AgentIdleBlanker(displays: displays, idleSeconds: { idle })
+        let clock = ManualDoubleClock(0)
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "merge-blank-\(UUID().uuidString)")!)
+        settings.keepAwakeAgentIdleBlankEnabled = true
+        settings.keepAwakeAgentIdleMinutes = .three
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: { clock.time },
+            pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(
+            settings: settings,
+            systemLoad: monitor,
+            idleBlanker: blanker,
+            now: { clock.time }
+        )
+        defer { controller.shutdown() }
+        controller.agentIdleBlankEnabled = true
+        controller.agentIdleBlankMinutes = .three
+        controller.activate(.whileAgentsWorking)
+        qualifyLoad(monitor, clock: clock, controller: controller)
+        #expect(controller.isHolding)
+        blanker.evaluateForTesting()
+        #expect(blanker.isBlanked)
+        #expect(displays.blankCalls == 1)
+    }
+
+    @Test("HTTP status for load-only hold reports whileAgentsWorking")
+    func httpStatusLoadOnly() throws {
+        let clock = ManualDoubleClock(0)
+        let monitor = SystemLoadMonitor(
+            sampler: IdleSystemLoadSampler(),
+            now: { clock.time },
+            pollInterval: .seconds(60)
+        )
+        let controller = makeMergedController(systemLoad: monitor, now: { clock.time })
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        qualifyLoad(monitor, clock: clock, controller: controller)
+        #expect(controller.isHolding)
+        let status = controller.handleKeepAwakeStatus()
+        let decoded = try JSONDecoder().decode(
+            KeepAwakeStatusResponse.self, from: Data(status.json.utf8)
+        )
+        #expect(decoded.mode == "whileAgentsWorking")
+        #expect(decoded.assertionEffective == true)
+        #expect(decoded.contributing.isEmpty)
+    }
 }
