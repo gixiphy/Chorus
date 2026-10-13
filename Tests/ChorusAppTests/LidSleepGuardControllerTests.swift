@@ -9,15 +9,21 @@ final class PERF1EvidenceSleepGate: Sendable {
     private struct State {
         var conts: [CheckedContinuation<Void, Never>] = []
         var delays: [TimeInterval] = []
+        var cancelled = false
     }
     private let state = Mutex(State())
 
     func sleep(_ delay: TimeInterval) async {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            state.withLock { s in
+            let resumeNow = state.withLock { s -> Bool in
+                if s.cancelled {
+                    return true
+                }
                 s.delays.append(delay)
                 s.conts.append(cont)
+                return false
             }
+            if resumeNow { cont.resume() }
         }
     }
 
@@ -26,6 +32,17 @@ final class PERF1EvidenceSleepGate: Sendable {
             s.conts.isEmpty ? nil : s.conts.removeFirst()
         }
         cont?.resume()
+    }
+
+    /// PERF1-R7 round3: cancel all waiters so suites cannot leak sleeping retries.
+    func cancelAll() {
+        let pending = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.cancelled = true
+            let c = s.conts
+            s.conts.removeAll()
+            return c
+        }
+        for cont in pending { cont.resume() }
     }
 
     var delayCount: Int { state.withLock { $0.delays.count } }
@@ -1639,10 +1656,22 @@ struct LidSleepGuardControllerTests {
             )
             updateDurations.append(ContinuousClock.now - start)
         }
-        // All 20 updates must finish while the 1s worker sleep is still in progress.
+        // Worker-overlap proof: updates finished while the 1s worker is still inside sleep.
+        #expect(gate.hasEntered && !gate.hasFinished)
         #expect(updateDurations.allSatisfy { $0 < .milliseconds(50) })
         #expect(reader.callCount == 1)
         #expect(client.physicalInFlightForTesting)
+
+        // Holding → release while SM worker still blocked must stay MainActor-cheap.
+        let releaseStart = ContinuousClock.now
+        controller.update(
+            agentModeActive: true,
+            busy: KeepAwakeBusyState(isBusy: false, contributing: [], releaseAt: nil),
+            power: acPower(),
+            existingFloor: .percent20
+        )
+        #expect(ContinuousClock.now - releaseStart < .milliseconds(50))
+        #expect(!gate.hasFinished)
 
         let sentinelLatency = await Task.detached {
             let start = ContinuousClock.now
@@ -1652,7 +1681,57 @@ struct LidSleepGuardControllerTests {
         #expect(sentinelLatency < .milliseconds(50))
 
         await refresh.value
+        #expect(gate.hasFinished)
         #expect(reader.callCount == 1)
+    }
+
+    @Test("PERF1-R3 round3 register requiring approval starts SM-only retry", .timeLimit(.minutes(1)))
+    func perf1R3RegisterApprovalStartsSMOnlyRetry() async throws {
+        var clock: TimeInterval = 0
+        let reader = LockCountedStatusReader { .requiresApproval }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            refreshTimeout: 1,
+            minimumPhysicalInterval: 5,
+            now: { clock },
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let sleepGate = PERF1EvidenceSleepGate()
+        defer { sleepGate.cancelAll() }
+        let store = SettingsStore(defaults: UserDefaults(suiteName: "perf1-r3-reg-\(UUID().uuidString)")!)
+        store.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let controller = LidSleepGuardController(
+            settings: store,
+            helper: client,
+            lid: FakeLid(),
+            notifier: FakeNotifier(),
+            sessionStore: LidClosedSessionStore(suiteName: "perf1-r3-reg-s-\(UUID().uuidString)"),
+            sleepDisabledProbe: { nil },
+            heartbeatInterval: 3_600,
+            evidenceSleep: { await sleepGate.sleep($0) }
+        )
+        defer { controller.shutdown() }
+
+        try await controller.registerHelper()
+        #expect(client.availability == .requiresApproval)
+        let armed = ContinuousClock.now + .seconds(2)
+        while sleepGate.delayCount < 1, ContinuousClock.now < armed {
+            await Task.yield()
+        }
+        #expect(sleepGate.delayCount == 1)
+        let smBeforeRetry = reader.callCount
+        clock = 5
+        sleepGate.releaseOne()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while reader.callCount <= smBeforeRetry, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(reader.callCount == smBeforeRetry + 1)
+        #expect(client.availability == .requiresApproval)
+        #expect(!client.handshakeCompleteForTesting)
     }
 
     @Test("PERF1-R7 approval backoff counted SM-only through injected schedule", .timeLimit(.minutes(1)))
