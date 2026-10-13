@@ -38,10 +38,35 @@ struct KeepAwakeWorkStatusFormatterTests {
             isHolding: true,
             idleBlanked: false
         )
-        #expect(text.contains("Claude Code"))
-        #expect(text.contains("Orca"))
-        #expect(text.contains("工作中"))
-        #expect(text.contains("螢幕與系統不待機"))
+        #expect(text == "Claude Code、Orca 工作中 — 螢幕與系統不待機")
+    }
+
+    @Test("Agent names are capped at two with 「等 N 個」")
+    func agentNamesCapped() {
+        let text = KeepAwakeWorkStatusFormatter.caption(
+            agentBusy: true,
+            agentNames: ["Claude Code", "Orca", "Codex", "Grok"],
+            load: evaluation(phase: .waiting, shouldHold: false, signals: []),
+            sample: sample(),
+            isHolding: true,
+            idleBlanked: false
+        )
+        #expect(text == "Claude Code、Orca 等 2 個 工作中 — 螢幕與系統不待機")
+        #expect(!text.contains("Codex"))
+        #expect(!text.contains("Grok"))
+    }
+
+    @Test("Exactly two agent names are not truncated")
+    func twoAgentNamesNotTruncated() {
+        let text = KeepAwakeWorkStatusFormatter.caption(
+            agentBusy: true,
+            agentNames: ["A", "B"],
+            load: evaluation(phase: .waiting, shouldHold: false, signals: []),
+            sample: sample(),
+            isHolding: true,
+            idleBlanked: false
+        )
+        #expect(!text.contains("等"))
     }
 
     @Test("Load-only active")
@@ -54,9 +79,7 @@ struct KeepAwakeWorkStatusFormatterTests {
             isHolding: true,
             idleBlanked: false
         )
-        #expect(text.contains("CPU"))
-        #expect(text.contains("72"))
-        #expect(text.contains("高負載"))
+        #expect(text == "CPU 72% 高負載 — 螢幕與系統不待機")
     }
 
     @Test("Both agent and load active")
@@ -69,9 +92,7 @@ struct KeepAwakeWorkStatusFormatterTests {
             isHolding: true,
             idleBlanked: false
         )
-        #expect(text.contains("Claude Code"))
-        #expect(text.contains("CPU"))
-        #expect(text.contains("＋"))
+        #expect(text == "Claude Code 工作中＋CPU 72% — 螢幕與系統不待機")
     }
 
     @Test("Load cooling while agent idle")
