@@ -185,6 +185,7 @@ struct PowerHelperClientConnectionTests {
             unregisterService: {},
             openSettings: {}
         )
+        await client.refreshAvailability(reason: .launch)
         _ = try await client.status()
         #expect(client.availability == .ready)
 
@@ -223,6 +224,7 @@ struct PowerHelperClientConnectionTests {
             unregisterService: {},
             openSettings: {}
         )
+        await client.refreshAvailability(reason: .launch)
         do {
             _ = try await client.setSleepDisabled(true)
             Issue.record("expected version mismatch")
@@ -251,6 +253,7 @@ struct PowerHelperClientConnectionTests {
             unregisterService: {},
             openSettings: {}
         )
+        await client.refreshAvailability(reason: .launch)
         _ = try await client.setSleepDisabled(true)
         #expect(proxy.statusCalls >= 1)
         #expect(proxy.setCalls == [true])
@@ -271,6 +274,7 @@ struct PowerHelperClientConnectionTests {
             unregisterService: {},
             openSettings: {}
         )
+        await client.refreshAvailability(reason: .launch)
         proxy1.setHandler = { _, reply in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 let status = PowerHelperStatus(helperBuild: "136", sleepDisabled: true, setByHelper: true)
@@ -281,6 +285,7 @@ struct PowerHelperClientConnectionTests {
         try await Task.sleep(nanoseconds: 10_000_000)
         client.invalidateConnection()
         useSecond = true
+        await client.refreshAvailability(reason: .userAction)
         _ = try await client.status()
         do {
             _ = try await task.value
@@ -305,6 +310,7 @@ struct PowerHelperClientConnectionTests {
             unregisterService: {},
             openSettings: {}
         )
+        await client.refreshAvailability(reason: .launch)
         _ = try await client.status()
         #expect(client.availability == .ready)
 
@@ -312,6 +318,7 @@ struct PowerHelperClientConnectionTests {
         let staleEmit = proxy1.onConnectionEvent
         client.invalidateConnection()
         useSecond = true
+        await client.refreshAvailability(reason: .userAction)
         _ = try await client.status()
         #expect(client.availability == .ready)
 
@@ -343,6 +350,7 @@ struct PowerHelperClientConnectionTests {
             unregisterService: {},
             openSettings: {}
         )
+        await client.refreshAvailability(reason: .launch)
         let status = try await client.status()
         #expect(status.helperBuild == "136")
         #expect(client.availability == .ready)
@@ -360,6 +368,7 @@ struct PowerHelperClientConnectionTests {
             unregisterService: {},
             openSettings: {}
         )
+        await client.refreshAvailability(reason: .launch)
         _ = try await client.status()
         #expect(client.availability == .ready)
 
@@ -407,6 +416,7 @@ struct PowerHelperClientConnectionTests {
             unregisterService: {},
             openSettings: {}
         )
+        await client.refreshAvailability(reason: .launch)
         _ = try await client.status()
         let started = ContinuousClock.now
         let ok = client.setSleepDisabledSynchronously(false, timeout: 1)
@@ -703,6 +713,7 @@ struct PowerHelperClientShutdownTests {
             openSettings: {},
             repairMachine: PowerHelperRepairStateMachine(repairing: FakeRepairing())
         )
+        await client.refreshAvailability(reason: .launch)
         _ = try? await client.status()
         let setsBefore = proxy.setCalls.count
         #expect(client.setSleepDisabledSynchronously(true, timeout: 0.5) == false)
@@ -720,6 +731,7 @@ struct PowerHelperClientShutdownTests {
             unregisterService: {},
             openSettings: {}
         )
+        await client.refreshAvailability(reason: .launch)
         _ = try await client.status()
         #expect(client.setSleepDisabledSynchronously(true, timeout: 1) == true)
         #expect(proxy.setCalls == [true])
@@ -738,6 +750,7 @@ struct PowerHelperClientShutdownTests {
             openSettings: {}
         )
         // Handshake first so set path proceeds.
+        await client.refreshAvailability(reason: .launch)
         _ = try await client.status()
         proxy.setHandler = { _, reply in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -1095,6 +1108,7 @@ struct PowerHelperRepairTests {
             openSettings: {},
             repairMachine: PowerHelperRepairStateMachine(repairing: repairing)
         )
+        await client.refreshAvailability(reason: .launch)
         _ = try await client.status()
         #expect(repairing.unregisterCalls == 0)
         #expect(repairing.registerCalls == 0)

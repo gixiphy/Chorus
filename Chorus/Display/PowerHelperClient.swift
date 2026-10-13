@@ -439,8 +439,10 @@ final class PowerHelperClient: PowerHelperClienting {
         if withinFloor {
             if let cached = cachedServiceStatus {
                 applyCachedServiceStatus(cached)
+                return
             }
-            return
+            // PERF1-R1: cache cleared (e.g. invalidate) with no sample — do not
+            // return early on the floor; require a fresh physical read.
         }
 
         // Register waiter BEFORE kicking the worker so a fast result cannot resume an empty list.
@@ -828,28 +830,37 @@ final class PowerHelperClient: PowerHelperClienting {
         }
         // PERF1-R1: publish ready only when connection identity + readiness epoch still
         // match and current-epoch SM evidence is enabled. Nil/unknown SM never means ready.
+        // Non-ready handshake outcomes (versionMismatch) still publish without enabled SM.
         // Safe release ignores readinessEpoch.
         let connectionStillCurrent = connectionToken == connectionAtStart && connectionToken != 0
         let readinessStillCurrent = readinessEpoch == readinessAtStart
         let smAllowsReady = cachedServiceStatus == PowerHelperServiceStatusValue.enabled
-        if connectionStillCurrent, readinessStillCurrent, smAllowsReady, handshake == .ready {
-            handshakeComplete = true
-            applyAvailability(
-                PowerHelperAvailabilityMapping.availability(
-                    from: PowerHelperServiceStatusValue.enabled,
-                    handshake: .ready
-                )
-            )
-        } else if connectionStillCurrent, readinessStillCurrent {
-            handshakeComplete = false
-            if let sm = cachedServiceStatus {
-                applyCachedServiceStatus(sm)
-            } else {
-                // No current SM sample — never promote ready from XPC alone.
-                applyAvailability(.connecting)
-            }
+        guard connectionStillCurrent, readinessStillCurrent else {
+            // SM/connection revoked readiness while status was in flight — discard publish.
+            return status
         }
-        // Else: SM/connection revoked readiness while status was in flight — discard publish.
+        switch handshake {
+        case .ready:
+            if smAllowsReady {
+                handshakeComplete = true
+                applyAvailability(
+                    PowerHelperAvailabilityMapping.availability(
+                        from: PowerHelperServiceStatusValue.enabled,
+                        handshake: .ready
+                    )
+                )
+            } else {
+                handshakeComplete = false
+                if let sm = cachedServiceStatus {
+                    applyCachedServiceStatus(sm)
+                } else {
+                    applyAvailability(.connecting)
+                }
+            }
+        case .versionMismatch, .error:
+            handshakeComplete = false
+            applyAvailability(handshake.availability)
+        }
         return status
     }
 
@@ -917,6 +928,7 @@ final class PowerHelperClient: PowerHelperClienting {
         cacheEpoch &+= 1
         cachedServiceStatus = nil
         lastSuccessfulSampleAt = nil
+        lastPhysicalStartAt = nil
         // Unexpected invalidation schedules one refresh; intentional teardown must not reconnect.
         if !intentionalTeardown {
             Task { await self.refreshAvailability(reason: .connectionInvalidated) }
@@ -929,10 +941,12 @@ final class PowerHelperClient: PowerHelperClienting {
         generation += 1
         revokeReadinessEvidence(reason: .intentionalInvalidate)
         // PERF1-R1 round3: drop SM sample with the connection so late XPC cannot
-        // recombine with a stale enabled cache into ready.
+        // recombine with a stale enabled cache into ready. Clear the physical-floor
+        // clock so the next refresh must sample a new epoch before ready.
         cacheEpoch &+= 1
         cachedServiceStatus = nil
         lastSuccessfulSampleAt = nil
+        lastPhysicalStartAt = nil
         connectionToken = 0
         proxy?.onConnectionEvent = nil
         proxy?.invalidate()
