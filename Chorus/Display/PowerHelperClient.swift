@@ -631,6 +631,10 @@ final class PowerHelperClient: PowerHelperClienting {
         lastSuccessfulSampleAt = nil
         // Drop ready until the new epoch's SM evidence is applied (PERF1-R1/R4).
         revokeReadinessEvidence(reason: .serviceNotEnabled)
+        // PERF1-R1 round3: publish revocation immediately — do not leave .ready visible.
+        if case .ready = availability {
+            applyAvailability(.connecting)
+        }
         if allowFloorBypass {
             bypassFloorOnce = true
         }
@@ -646,6 +650,11 @@ final class PowerHelperClient: PowerHelperClienting {
         invalidateServiceCache(allowFloorBypass: true)
         await refreshAvailability(reason: .userAction)
         if case .requiresApproval = availability { return }
+        // PERF1-R4 round3: handshake only after a successful current-epoch enabled sample.
+        // Bounded waiter completion (timeout/cancel) must not open a ready handshake.
+        guard cachedServiceStatus == .enabled else {
+            throw PowerHelperClientError.timedOut
+        }
         _ = try await status()
     }
 
@@ -818,29 +827,26 @@ final class PowerHelperClient: PowerHelperClienting {
             }
         }
         // PERF1-R1: publish ready only when connection identity + readiness epoch still
-        // match and current SM evidence is enabled. Safe release ignores readinessEpoch.
+        // match and current-epoch SM evidence is enabled. Nil/unknown SM never means ready.
+        // Safe release ignores readinessEpoch.
         let connectionStillCurrent = connectionToken == connectionAtStart && connectionToken != 0
         let readinessStillCurrent = readinessEpoch == readinessAtStart
-        let smAllowsReady =
-            cachedServiceStatus == PowerHelperServiceStatusValue.enabled || cachedServiceStatus == nil
+        let smAllowsReady = cachedServiceStatus == PowerHelperServiceStatusValue.enabled
         if connectionStillCurrent, readinessStillCurrent, smAllowsReady, handshake == .ready {
             handshakeComplete = true
-            if cachedServiceStatus == PowerHelperServiceStatusValue.enabled {
-                applyAvailability(
-                    PowerHelperAvailabilityMapping.availability(
-                        from: PowerHelperServiceStatusValue.enabled,
-                        handshake: .ready
-                    )
+            applyAvailability(
+                PowerHelperAvailabilityMapping.availability(
+                    from: PowerHelperServiceStatusValue.enabled,
+                    handshake: .ready
                 )
-            } else {
-                applyAvailability(handshake.availability)
-            }
+            )
         } else if connectionStillCurrent, readinessStillCurrent {
             handshakeComplete = false
             if let sm = cachedServiceStatus {
                 applyCachedServiceStatus(sm)
             } else {
-                applyAvailability(handshake.availability)
+                // No current SM sample — never promote ready from XPC alone.
+                applyAvailability(.connecting)
             }
         }
         // Else: SM/connection revoked readiness while status was in flight — discard publish.
@@ -922,6 +928,11 @@ final class PowerHelperClient: PowerHelperClienting {
         intentionalTeardown = intentional
         generation += 1
         revokeReadinessEvidence(reason: .intentionalInvalidate)
+        // PERF1-R1 round3: drop SM sample with the connection so late XPC cannot
+        // recombine with a stale enabled cache into ready.
+        cacheEpoch &+= 1
+        cachedServiceStatus = nil
+        lastSuccessfulSampleAt = nil
         connectionToken = 0
         proxy?.onConnectionEvent = nil
         proxy?.invalidate()
