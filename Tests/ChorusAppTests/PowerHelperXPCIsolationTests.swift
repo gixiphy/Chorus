@@ -167,6 +167,21 @@ struct PowerHelperXPCIsolationTests {
         #expect(status.helperBuild == "136")
         #expect(count.withLock { $0 } == 1)
         #expect(onMain.withLock { $0 } == false)
+
+        onMain.withLock { $0 = true }
+        let setData = try await withCheckedThrowingContinuation {
+            (cont: CheckedContinuation<Data, Error>) in
+            proxy.setSleepDisabled(true) { @Sendable data, code in
+                onMain.withLock { $0 = Thread.isMainThread }
+                count.withLock { $0 += 1 }
+                if let data, code == nil { cont.resume(returning: data) }
+                else { cont.resume(throwing: PowerHelperClientError.remote(code ?? "emptyReply")) }
+            }
+        }
+        let setStatus = try JSONDecoder().decode(PowerHelperStatus.self, from: setData)
+        #expect(setStatus.sleepDisabled == true)
+        #expect(count.withLock { $0 } == 2)
+        #expect(onMain.withLock { $0 } == false)
     }
 
     @Test("X4 real NSXPC invalidation hops to MainActor", .timeLimit(.minutes(1)))
@@ -184,6 +199,15 @@ struct PowerHelperXPCIsolationTests {
         }
 
         let eventBox = Mutex<PowerHelperConnectionEvent?>(nil)
+        let handlerOnMain = Mutex(true)
+        // Foundation does not mark NSXPCConnection Sendable; this test only sends
+        // invalidate() across queues after setup, as allowed by NSXPCConnection.
+        nonisolated(unsafe) let invalidatingConnection = connection
+        nonisolated(unsafe) let originalHandler = connection.invalidationHandler
+        connection.invalidationHandler = { @Sendable in
+            handlerOnMain.withLock { $0 = Thread.isMainThread }
+            originalHandler?()
+        }
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             let gate = Mutex(false)
             proxy.onConnectionEvent = { @Sendable evt in
@@ -199,12 +223,13 @@ struct PowerHelperXPCIsolationTests {
                 }
                 if first { cont.resume() }
             }
-            // Client-side invalidate with handlers still installed (DEBUG seam).
-            // Listener-side peer invalidate alone was not reliably delivering
-            // `.invalidated` before a racing `.interrupted` in hosted tests.
-            proxy.invalidateConnectionKeepingHandlersForTesting()
+            // Exercise the installed handler via real NSXPC invalidation off main.
+            DispatchQueue.global(qos: .userInitiated).async {
+                invalidatingConnection.invalidate()
+            }
         }
         #expect(eventBox.withLock { $0 } == .invalidated)
+        #expect(handlerOnMain.withLock { $0 } == false)
         proxy.invalidate()
     }
 
