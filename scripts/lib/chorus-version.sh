@@ -82,11 +82,16 @@ chorus_verify_helper_metadata() {
 
   helper_plist=$(mktemp)
   # codesign -d works for ad-hoc and Developer ID; failure must not substitute NEXT_BUILD.
-  if ! codesign -d --info-plist=- "$helper_bin" >"$helper_plist" 2>/dev/null; then
-    rm -f "$helper_plist"
+  # codesign has no --info-plist; read the embedded __TEXT,__info_plist section (thin first if fat).
+  local helper_thin
+  helper_thin=$(mktemp)
+  lipo "$helper_bin" -thin arm64 -output "$helper_thin" 2>/dev/null || cp "$helper_bin" "$helper_thin"
+  if ! segedit "$helper_thin" -extract __TEXT __info_plist "$helper_plist" 2>/dev/null; then
+    rm -f "$helper_plist" "$helper_thin"
     echo "✗ cannot extract helper embedded Info.plist (codesign -d)" >&2
     return 1
   fi
+  rm -f "$helper_thin"
   helper_build=$(plutil -extract CFBundleVersion raw "$helper_plist" 2>/dev/null) || true
   helper_id=$(plutil -extract CFBundleIdentifier raw "$helper_plist" 2>/dev/null) || true
   rm -f "$helper_plist"
