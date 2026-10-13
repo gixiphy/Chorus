@@ -461,6 +461,7 @@ final class PowerHelperClient: PowerHelperClienting {
     }
 
     /// PERF1-R2: join current/pending physical refresh with cancellation removing the waiter.
+    /// Bounded completion after timeout so settings/wake/user ops never hang on a stuck getter.
     /// Optional `bound` resumes the waiter even if the uncancellable getter never finishes.
     private func joinPhysicalRefresh(cancellationAware: Bool, bound: TimeInterval? = nil) async {
         let id = nextRefreshWaiterID
