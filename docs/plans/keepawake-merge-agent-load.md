@@ -146,6 +146,12 @@
 
 - 螢幕或 App 綁定存在時，照舊優先，並清除 agent／load。
 - **負載門檻設定** `chorus.keepAwake.systemLoadConfiguration`：完整保留，key 不變，可攜性不變（portable）。
+- **跨機匯入邊界遷移（fix1 補，D-2026-10-13b Q4）**：`DeviceBackup.portableMerged(onto:)` 令
+  `result.keepAwakeAgentMode = incoming.agent || incoming.load`，legacy `keepAwakeSystemLoadMode` 仍保留**本機值**（綁機）。
+  所以舊的 load-only 備份匯入別台後，在新機器上也是合併模式；兩旗標都關的備份不會開啟。
+- **匯入後即時套用（fix1 補）**：`CloudBackup.onImported` 在 `apply` 之後呼叫
+  `KeepAwakeController.syncModeWithSettings()`：旗標指向的模式與目前不同就 `restoreSavedMode()`，相同不重啟；
+  旗標全空而目前是已持久化的綁定模式（螢幕／App／合併）時關閉；`duration`／`indefinite` 不受影響。
 - **DeviceBackup／CloudBackup**：欄位都保留，舊備份照常解碼，Core 型別不改。
   - 唯一要決定的是 `keepAwakeSystemLoadMode` 是否還留在 device-bound 清單，見 Q4。
   - 建議留著。它只是 legacy 欄位，restore 時會被 OR 吸收。
