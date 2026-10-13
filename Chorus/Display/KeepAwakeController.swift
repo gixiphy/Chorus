@@ -140,7 +140,7 @@ final class KeepAwakeController {
 
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private weak var displayManager: DisplayManager?
-    @ObservationIgnored private var startedAt: Double?
+    @ObservationIgnored private(set) var startedAt: Double?
     @ObservationIgnored private let assertions: any KeepAwakeAsserting
     @ObservationIgnored private let notifier: any KeepAwakeNotifying
     @ObservationIgnored private let now: () -> Double
@@ -245,6 +245,38 @@ final class KeepAwakeController {
             settings.keepAwakeAgentMode = true
             settings.keepAwakeSystemLoadMode = false
             activate(.whileAgentsWorking)
+        }
+    }
+
+    /// 備份匯入後讓執行中的模式跟上持久化旗標（restore 只在啟動時跑一次）。
+    /// 只處理會持久化的三類綁定模式；`duration`／`indefinite` 不存檔，不受影響。
+    /// 結果模式與目前相同就不重啟，避免重置 `startedAt` 與監測器。
+    func syncModeWithSettings() {
+        let target: KeepAwakeMode? = if let display = settings.keepAwakeDisplayUUID {
+            .whileDisplayConnected(uuid: display)
+        } else if let app = settings.keepAwakeAppBundleID {
+            .whileAppRunning(bundleID: app)
+        } else if settings.keepAwakeAgentMode || settings.keepAwakeSystemLoadMode {
+            .whileAgentsWorking
+        } else {
+            nil
+        }
+        if let target {
+            if mode != target { restoreSavedMode() } else { normalizeSavedFlags() }
+            return
+        }
+        switch mode {
+        case .whileDisplayConnected, .whileAppRunning, .whileAgentsWorking:
+            activate(.off)
+        default:
+            break
+        }
+    }
+
+    private func normalizeSavedFlags() {
+        if case .whileAgentsWorking = mode {
+            settings.keepAwakeAgentMode = true
+            settings.keepAwakeSystemLoadMode = false
         }
     }
 

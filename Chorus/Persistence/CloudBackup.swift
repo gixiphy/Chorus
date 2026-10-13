@@ -54,6 +54,10 @@ final class CloudBackup {
     private(set) var files: [BackupFile] = []
     private(set) var lastBackupDate: Date?
 
+    /// 匯入／還原套用完設定後呼叫。需要即時生效的狀態（例如 keep-awake 模式）
+    /// 由持有者在這裡重新套用；CloudBackup 本身不碰任何 manager。
+    @ObservationIgnored var onImported: (@MainActor () -> Void)?
+
     let displayPath: String
     let deviceName: String
     @ObservationIgnored private let deviceID: String
@@ -422,6 +426,7 @@ final class CloudBackup {
         // 別台：綁機與權限鍵保留本機的（見 BackupPortability）。
         let resolved = file.isSelf ? incoming : incoming.portableMerged(onto: local)
         apply(resolved)
+        onImported?()
         lastWritten = nil // 內容變了，下一拍要重新寫出去
 
         let skipped = file.isSelf ? 0 : BackupPortability.machineBound.count

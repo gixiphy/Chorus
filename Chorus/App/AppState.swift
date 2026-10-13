@@ -282,6 +282,10 @@ final class AppState {
                 keepAwakeController?.clearKeepAwakeLeases()
             }
         )
+        // 匯入後讓 keep-awake 模式即時跟上（restore 原本只在啟動跑一次）
+        cloudBackup.onImported = { [weak keepAwakeController] in
+            keepAwakeController?.syncModeWithSettings()
+        }
         // 綁定型模式跨重啟保留：螢幕 > App > Agent > 負載
         keepAwake.restoreSavedMode()
         // §6.6：殘留偵測在 restore 之後；選項關閉仍允許只讀 probe。

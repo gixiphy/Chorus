@@ -208,6 +208,43 @@ struct CloudBackupTests {
         #expect(!f.settings.audioTapsEnabled)
     }
 
+    @Test("匯入別台的舊 load-only 備份：轉成合併旗標，並通知 onImported")
+    func importLegacyLoadOnlyBackupMigratesAndNotifies() async {
+        let f = makeFixture(deviceName: "我的 Mac", deviceID: "mine")
+        let other = makeFixture(root: f.root, deviceName: "另一台", deviceID: "other")
+        other.settings.keepAwakeAgentMode = false
+        other.settings.keepAwakeSystemLoadMode = true
+        #expect(await other.backup.backupNow())
+
+        var notified = 0
+        var agentFlagAtNotify: Bool?
+        f.backup.onImported = {
+            notified += 1
+            agentFlagAtNotify = f.settings.keepAwakeAgentMode
+        }
+        await f.backup.refresh()
+        #expect(await f.backup.importBackup(f.backup.files.first { !$0.isSelf }!))
+
+        #expect(f.settings.keepAwakeAgentMode)
+        #expect(!f.settings.keepAwakeSystemLoadMode)
+        #expect(notified == 1)
+        #expect(agentFlagAtNotify == true) // 通知時設定已套用完
+    }
+
+    @Test("匯入同一台（重灌後）：onImported 同樣會被呼叫")
+    func sameMachineImportNotifies() async {
+        let original = makeFixture(deviceName: "我的 Mac", deviceID: "mine")
+        original.settings.keepAwakeAgentMode = true
+        #expect(await original.backup.backupNow())
+        let reinstalled = makeFixture(root: original.root, deviceName: "我的 Mac", deviceID: "mine")
+        var notified = 0
+        reinstalled.backup.onImported = { notified += 1 }
+        await reinstalled.backup.refresh()
+        #expect(await reinstalled.backup.importBackup(reinstalled.backup.files.first { $0.isSelf }!))
+        #expect(notified == 1)
+        #expect(reinstalled.settings.keepAwakeAgentMode)
+    }
+
     @Test("匯入同一台（重灌後）：全套，綁機的鍵正是最想要回來的東西")
     func importFromSameMachineTakesEverything() async {
         let original = makeFixture(deviceName: "我的 Mac", deviceID: "mine")
