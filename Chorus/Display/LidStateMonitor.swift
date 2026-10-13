@@ -2,6 +2,7 @@ import ChorusCore
 import Darwin
 import Foundation
 import IOKit
+import Synchronization
 
 /// Lid / clamshell observation (spec §5.6 / §14.2 / W1-10 / W1-11).
 @MainActor
@@ -138,18 +139,25 @@ struct LidClosedSessionStore: Equatable {
         lhs.suiteName == rhs.suiteName && lhs.key == rhs.key
     }
 
+    /// Returns true when this save starts a new closed session (await `flushPending` before acquire).
+    @discardableResult
     func save(
         continuousClosedAt: Double,
         bootSessionUUID: String,
         maxDurationLatched: Bool,
         wallClosedAt: Date = Date()
-    ) {
+    ) -> Bool {
         coordinator.requestSave(
             continuousClosedAt: continuousClosedAt,
             bootSessionUUID: bootSessionUUID,
             maxDurationLatched: maxDurationLatched,
             wallClosedAt: wallClosedAt
         )
+    }
+
+    /// Bounded shutdown drain (PERF1-R5).
+    func drainPendingBounded(timeout: TimeInterval = 0.2) async {
+        await coordinator.drainPendingBounded(timeout: timeout)
     }
 
     func clear() {
@@ -164,6 +172,9 @@ struct LidClosedSessionStore: Equatable {
     func flushPending() async {
         await coordinator.flushPending()
     }
+
+    /// Test seam: committed backend write count for the shared coordinator.
+    var backendWriteCountForTesting: Int { coordinator.backendWriteCountForTesting }
 
     /// True when defaults contain undecodable / structurally unusable bytes.
     func hasCorruptPayload() -> Bool {
@@ -250,9 +261,11 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
 
     private let suiteName: String?
     private let key: String
+    /// Backend I/O only — never `sync` onto this queue from MainActor (PERF1-R5).
     private let queue = DispatchQueue(label: "com.hermes.Chorus.lidClosedSession")
+    /// In-memory semantic state for MainActor-safe compare without queue.sync.
+    private let lock = NSLock()
     private let writeSink: WriteSink?
-    private let coalesceNanoseconds: UInt64 = 100_000_000
 
     private var pendingSnapshot: LidClosedSessionStore.Snapshot?
     private var pendingClear = false
@@ -264,6 +277,8 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
     private var coalesceWorkItem: DispatchWorkItem?
     private var writeCountForTesting = 0
     private var removeCountForTesting = 0
+    private var inFlightBackendOps = 0
+    private var durabilityWaiters: [CheckedContinuation<Void, Never>] = []
 
     private init(suiteName: String?, key: String, writeSink: WriteSink?) {
         self.suiteName = suiteName
@@ -279,172 +294,275 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
     }
 
     var backendWriteCountForTesting: Int {
-        queue.sync { writeCountForTesting }
+        withCoordinatorLock { writeCountForTesting }
     }
 
     var backendRemoveCountForTesting: Int {
-        queue.sync { removeCountForTesting }
+        withCoordinatorLock { removeCountForTesting }
     }
 
+    /// Sync helper — NSLock must not be taken directly from `async` functions (Swift 6).
+    private func withCoordinatorLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+
+    /// True when the latest requestSave was a new closed-session start (await durability before acquire).
+    @discardableResult
     func requestSave(
         continuousClosedAt: Double,
         bootSessionUUID: String,
         maxDurationLatched: Bool,
         wallClosedAt: Date
-    ) {
-        // Durability barriers run synchronously on the persistence queue so load/restore
-        // immediately sees the new closed-session start / latch (PERF-1).
-        queue.sync {
-            self.ensureLoadedLocked()
-            let semantic = LidClosedSessionStore.SemanticKey(
-                continuousClosedAt: continuousClosedAt,
-                bootSessionUUID: bootSessionUUID,
-                maxDurationLatched: maxDurationLatched
-            )
-            // Preserve first wallClosedAt for the same closedAt/boot session (incl. latch changes).
-            let wall: Date
-            if let committed = self.committedSemantic,
-               committed.continuousClosedAt == semantic.continuousClosedAt,
-               committed.bootSessionUUID == semantic.bootSessionUUID,
-               let priorWall = self.committedWallClosedAt
-            {
-                wall = priorWall
-            } else if let pending = self.pendingSnapshot,
-                      pending.continuousClosedAt == semantic.continuousClosedAt,
-                      pending.bootSessionUUID == semantic.bootSessionUUID,
-                      let priorWall = pending.wallClosedAt
-            {
-                wall = priorWall
-            } else {
-                wall = wallClosedAt
-            }
-
-            if let committed = self.committedSemantic, committed == semantic, !self.pendingClear {
-                // Unchanged reevaluate — no encode/write.
-                return
-            }
-            if let pending = self.pendingSnapshot, pending.semanticKey == semantic, !self.pendingClear {
-                return
-            }
-
-            let snap = LidClosedSessionStore.Snapshot(
-                continuousClosedAt: continuousClosedAt,
-                bootSessionUUID: bootSessionUUID,
-                maxDurationLatched: maxDurationLatched,
-                wallClosedAt: wall
-            )
-            self.pendingClear = false
-            self.pendingSnapshot = snap
-            self.revision &+= 1
-            let rev = self.revision
-
-            let isNewStart = self.committedSemantic?.continuousClosedAt != semantic.continuousClosedAt
-                || self.committedSemantic?.bootSessionUUID != semantic.bootSessionUUID
-                || self.committedSemantic == nil
-            let latchBarrier = (self.committedSemantic?.maxDurationLatched == false && semantic.maxDurationLatched)
-            let barrier = isNewStart || latchBarrier
-            if barrier {
-                self.coalesceWorkItem?.cancel()
-                self.performSaveLocked(snap, revision: rev)
-            } else {
-                self.scheduleCoalescedCommitLocked(revision: rev)
-            }
+    ) -> Bool {
+        lock.lock()
+        ensureLoadedLocked()
+        let semantic = LidClosedSessionStore.SemanticKey(
+            continuousClosedAt: continuousClosedAt,
+            bootSessionUUID: bootSessionUUID,
+            maxDurationLatched: maxDurationLatched
+        )
+        // Preserve first wallClosedAt for the same closedAt/boot session (incl. latch changes).
+        let wall: Date
+        if let committed = committedSemantic,
+           committed.continuousClosedAt == semantic.continuousClosedAt,
+           committed.bootSessionUUID == semantic.bootSessionUUID,
+           let priorWall = committedWallClosedAt
+        {
+            wall = priorWall
+        } else if let pending = pendingSnapshot,
+                  pending.continuousClosedAt == semantic.continuousClosedAt,
+                  pending.bootSessionUUID == semantic.bootSessionUUID,
+                  let priorWall = pending.wallClosedAt
+        {
+            wall = priorWall
+        } else {
+            wall = wallClosedAt
         }
+
+        if let committed = committedSemantic, committed == semantic, !pendingClear {
+            lock.unlock()
+            return false
+        }
+        if let pending = pendingSnapshot, pending.semanticKey == semantic, !pendingClear {
+            lock.unlock()
+            return false
+        }
+
+        let snap = LidClosedSessionStore.Snapshot(
+            continuousClosedAt: continuousClosedAt,
+            bootSessionUUID: bootSessionUUID,
+            maxDurationLatched: maxDurationLatched,
+            wallClosedAt: wall
+        )
+        pendingClear = false
+        pendingSnapshot = snap
+        revision &+= 1
+        let rev = revision
+
+        let isNewStart = committedSemantic?.continuousClosedAt != semantic.continuousClosedAt
+            || committedSemantic?.bootSessionUUID != semantic.bootSessionUUID
+            || committedSemantic == nil
+        let latchBarrier = (committedSemantic?.maxDurationLatched == false && semantic.maxDurationLatched)
+        let barrier = isNewStart || latchBarrier
+        coalesceWorkItem?.cancel()
+        coalesceWorkItem = nil
+        lock.unlock()
+
+        if barrier {
+            enqueueBackendSave(snap, revision: rev)
+        } else {
+            scheduleCoalescedCommit(revision: rev)
+        }
+        return isNewStart
     }
 
     func requestClear() {
-        // Open-lid clear is a durability barrier.
-        queue.sync {
-            self.ensureLoadedLocked()
-            self.coalesceWorkItem?.cancel()
-            self.pendingSnapshot = nil
-            self.revision &+= 1
-            let rev = self.revision
-            if self.committedSemantic == nil, !self.loadedCorrupt, self.loadBytesLocked() == nil {
-                // Repeated clear of absent store — zero removals.
-                self.pendingClear = false
-                return
-            }
-            self.pendingClear = true
-            self.performClearLocked(revision: rev)
+        lock.lock()
+        ensureLoadedLocked()
+        coalesceWorkItem?.cancel()
+        coalesceWorkItem = nil
+        pendingSnapshot = nil
+        revision &+= 1
+        let rev = revision
+        if committedSemantic == nil, !loadedCorrupt, loadBytesLocked() == nil {
+            pendingClear = false
+            lock.unlock()
+            return
         }
+        pendingClear = true
+        lock.unlock()
+        enqueueBackendClear(revision: rev)
     }
 
     func load() -> LidClosedSessionStore.Snapshot? {
-        queue.sync {
-            ensureLoadedLocked()
-            if pendingClear { return nil }
-            if let pending = pendingSnapshot { return pending }
-            return loadDecodedLocked()
+        lock.lock()
+        ensureLoadedLocked()
+        if pendingClear {
+            lock.unlock()
+            return nil
         }
+        if let pending = pendingSnapshot {
+            lock.unlock()
+            return pending
+        }
+        let committed = committedSnapshotLocked()
+        lock.unlock()
+        return committed
     }
 
     func hasCorruptPayload() -> Bool {
-        queue.sync {
-            ensureLoadedLocked()
-            return loadedCorrupt
-        }
+        lock.lock()
+        ensureLoadedLocked()
+        let corrupt = loadedCorrupt
+        lock.unlock()
+        return corrupt
     }
 
     func flushPending() async {
+        let state = withCoordinatorLock { () -> (clear: Bool, snap: LidClosedSessionStore.Snapshot?, rev: UInt64, inflight: Int) in
+            coalesceWorkItem?.cancel()
+            coalesceWorkItem = nil
+            return (pendingClear, pendingSnapshot, revision, inFlightBackendOps)
+        }
+
+        if state.clear {
+            if state.inflight == 0 {
+                enqueueBackendClear(revision: state.rev)
+            }
+        } else if let snap = state.snap {
+            // Avoid a duplicate backend op when the barrier enqueue is already in flight.
+            if state.inflight == 0 {
+                enqueueBackendSave(snap, revision: state.rev)
+            }
+        } else if state.inflight == 0 {
+            return
+        }
+        await waitForDurability()
+    }
+
+    /// Bounded drain for shutdown — never blocks MainActor on the I/O queue (PERF1-R5).
+    /// Returns when persistence finishes or `timeout` elapses; flush may continue in the background.
+    func drainPendingBounded(timeout: TimeInterval = 0.2) async {
+        let once = Mutex<CheckedContinuation<Void, Never>?>(nil)
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            queue.async {
-                self.coalesceWorkItem?.cancel()
-                self.coalesceWorkItem = nil
-                if self.pendingClear {
-                    self.performClearLocked(revision: self.revision)
-                } else if let snap = self.pendingSnapshot {
-                    self.performSaveLocked(snap, revision: self.revision)
+            once.withLock { slot in slot = cont }
+            Task {
+                await self.flushPending()
+                let taken = once.withLock { slot -> CheckedContinuation<Void, Never>? in
+                    let value = slot
+                    slot = nil
+                    return value
                 }
+                taken?.resume()
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
+                let taken = once.withLock { slot -> CheckedContinuation<Void, Never>? in
+                    let value = slot
+                    slot = nil
+                    return value
+                }
+                taken?.resume()
+            }
+        }
+    }
+
+    private func waitForDurability() async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            let shouldResume = withCoordinatorLock {
+                if inFlightBackendOps == 0, pendingSnapshot == nil, !pendingClear {
+                    return true
+                }
+                durabilityWaiters.append(cont)
+                return false
+            }
+            if shouldResume {
                 cont.resume()
             }
         }
     }
 
-    private func scheduleCoalescedCommitLocked(revision: UInt64) {
-        coalesceWorkItem?.cancel()
+    private func scheduleCoalescedCommit(revision: UInt64) {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.queue.async {
-                guard revision == self.revision, let snap = self.pendingSnapshot, !self.pendingClear else { return }
-                self.performSaveLocked(snap, revision: revision)
+            self.lock.lock()
+            guard revision == self.revision, let snap = self.pendingSnapshot, !self.pendingClear else {
+                self.lock.unlock()
+                return
             }
+            self.lock.unlock()
+            self.enqueueBackendSave(snap, revision: revision)
         }
+        lock.lock()
         coalesceWorkItem = work
+        lock.unlock()
         queue.asyncAfter(deadline: .now() + .milliseconds(100), execute: work)
     }
 
-    private func performSaveLocked(_ snap: LidClosedSessionStore.Snapshot, revision: UInt64) {
-        guard revision == self.revision else { return }
-        guard let data = try? JSONEncoder().encode(snap) else { return }
-        if let writeSink {
-            writeSink.set(data, key)
-        } else {
-            defaults.set(data, forKey: key)
+    private func enqueueBackendSave(_ snap: LidClosedSessionStore.Snapshot, revision: UInt64) {
+        lock.lock()
+        inFlightBackendOps += 1
+        lock.unlock()
+        // Strong self: weak capture can drop the write before tests/await observe it (PERF1-R5).
+        queue.async {
+            let data = try? JSONEncoder().encode(snap)
+            if let data {
+                if let writeSink = self.writeSink {
+                    writeSink.set(data, self.key)
+                } else {
+                    self.defaults.set(data, forKey: self.key)
+                }
+            }
+            self.lock.lock()
+            if revision == self.revision, data != nil {
+                self.writeCountForTesting += 1
+                self.committedSemantic = snap.semanticKey
+                self.committedWallClosedAt = snap.wallClosedAt
+                if self.pendingSnapshot?.semanticKey == snap.semanticKey {
+                    self.pendingSnapshot = nil
+                }
+                self.pendingClear = false
+                self.loadedCorrupt = false
+                self.didLoad = true
+            }
+            self.inFlightBackendOps -= 1
+            let resumeAll = self.inFlightBackendOps == 0 && self.pendingSnapshot == nil && !self.pendingClear
+            let waiters = resumeAll ? self.durabilityWaiters : []
+            if resumeAll { self.durabilityWaiters.removeAll() }
+            self.lock.unlock()
+            for waiter in waiters { waiter.resume() }
         }
-        writeCountForTesting += 1
-        committedSemantic = snap.semanticKey
-        committedWallClosedAt = snap.wallClosedAt
-        pendingSnapshot = nil
-        pendingClear = false
-        loadedCorrupt = false
-        didLoad = true
     }
 
-    private func performClearLocked(revision: UInt64) {
-        guard revision == self.revision else { return }
-        if let writeSink {
-            writeSink.remove(key)
-        } else {
-            defaults.removeObject(forKey: key)
+    private func enqueueBackendClear(revision: UInt64) {
+        lock.lock()
+        inFlightBackendOps += 1
+        lock.unlock()
+        queue.async {
+            if let writeSink = self.writeSink {
+                writeSink.remove(self.key)
+            } else {
+                self.defaults.removeObject(forKey: self.key)
+            }
+            self.lock.lock()
+            if revision == self.revision {
+                self.removeCountForTesting += 1
+                self.committedSemantic = nil
+                self.committedWallClosedAt = nil
+                self.pendingSnapshot = nil
+                self.pendingClear = false
+                self.loadedCorrupt = false
+                self.didLoad = true
+            }
+            self.inFlightBackendOps -= 1
+            let resumeAll = self.inFlightBackendOps == 0 && self.pendingSnapshot == nil && !self.pendingClear
+            let waiters = resumeAll ? self.durabilityWaiters : []
+            if resumeAll { self.durabilityWaiters.removeAll() }
+            self.lock.unlock()
+            for waiter in waiters { waiter.resume() }
         }
-        removeCountForTesting += 1
-        committedSemantic = nil
-        committedWallClosedAt = nil
-        pendingSnapshot = nil
-        pendingClear = false
-        loadedCorrupt = false
-        didLoad = true
     }
 
     private func ensureLoadedLocked() {
@@ -468,9 +586,14 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
         return defaults.data(forKey: key)
     }
 
-    private func loadDecodedLocked() -> LidClosedSessionStore.Snapshot? {
-        guard let data = loadBytesLocked() else { return nil }
-        return try? JSONDecoder().decode(LidClosedSessionStore.Snapshot.self, from: data)
+    private func committedSnapshotLocked() -> LidClosedSessionStore.Snapshot? {
+        guard let semantic = committedSemantic else { return nil }
+        return LidClosedSessionStore.Snapshot(
+            continuousClosedAt: semantic.continuousClosedAt,
+            bootSessionUUID: semantic.bootSessionUUID,
+            maxDurationLatched: semantic.maxDurationLatched,
+            wallClosedAt: committedWallClosedAt
+        )
     }
 }
 
