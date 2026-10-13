@@ -1581,6 +1581,88 @@ struct LidClosedSessionStorePERF1R5Tests {
         _ = writes // sink may observe a raced set that was undone
     }
 
+
+    @Test("PERF1-NEW-2 flush chains latest revision while older op in flight", .timeLimit(.minutes(1)))
+    func flushChainsLatestRevisionNoStrandedWaiters() async {
+        let suite = "perf1-new2-\(UUID().uuidString)"
+        defer {
+            UserDefaults().removePersistentDomain(forName: suite)
+            LidClosedSessionCoordinator.resetRegistryForTesting(suiteName: suite)
+        }
+        let gate = WorkerGate()
+        let writeLatchFlags = Mutex<[Bool]>([])
+        let stored = Mutex<Data?>(nil)
+        let sink = LidClosedSessionCoordinator.WriteSink(
+            set: { data, _ in
+                let shouldBlock = writeLatchFlags.withLock { list -> Bool in
+                    guard let snap = try? JSONDecoder().decode(
+                        LidClosedSessionStore.Snapshot.self, from: data
+                    ) else { return false }
+                    list.append(snap.maxDurationLatched)
+                    // Block the first latch-true barrier (in flight while we coalesce).
+                    return snap.maxDurationLatched && list.filter(\.self).count == 1
+                }
+                if shouldBlock {
+                    gate.enterAndWait()
+                }
+                stored.withLock { $0 = data }
+            },
+            remove: { _ in stored.withLock { $0 = nil } },
+            data: { _ in stored.withLock { $0 } }
+        )
+        let store = LidClosedSessionStore(suiteName: suite, writeSink: sink)
+        // Commit baseline so later latch true→false can take the coalesce path.
+        _ = store.save(
+            continuousClosedAt: 10,
+            bootSessionUUID: "BOOT",
+            maxDurationLatched: false,
+            wallClosedAt: Date(timeIntervalSince1970: 1)
+        )
+        await store.flushPending()
+
+        // Latch barrier — blocks in backend.
+        _ = store.save(
+            continuousClosedAt: 10,
+            bootSessionUUID: "BOOT",
+            maxDurationLatched: true,
+            wallClosedAt: Date(timeIntervalSince1970: 1)
+        )
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+
+        // Coalesce-only update (latch true→false) while older op is in flight — pending newer revision.
+        _ = store.save(
+            continuousClosedAt: 10,
+            bootSessionUUID: "BOOT",
+            maxDurationLatched: false,
+            wallClosedAt: Date(timeIntervalSince1970: 2)
+        )
+        #expect(store.load()?.maxDurationLatched == false)
+
+        let flushTask = Task { await store.flushPending() }
+        try? await Task.sleep(for: .milliseconds(50))
+        gate.release()
+        let flushDeadline = ContinuousClock.now + .seconds(2)
+        let completed = await withTaskGroup(of: Bool.self) { group -> Bool in
+            group.addTask {
+                await flushTask.value
+                return true
+            }
+            group.addTask {
+                while ContinuousClock.now < flushDeadline {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        #expect(completed, "flushPending must not strand durability waiters")
+        #expect(store.load()?.continuousClosedAt == 10)
+        #expect(store.load()?.maxDurationLatched == false)
+        let flags = writeLatchFlags.withLock { $0 }
+        #expect(flags.contains(false), "latest coalesced revision must be submitted")
+    }
 }
 
 @Suite("SleepDisabledProbe")
