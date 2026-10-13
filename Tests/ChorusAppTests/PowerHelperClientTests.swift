@@ -868,8 +868,8 @@ struct LidClosedSessionStorePERF1Tests {
         #expect(snap?.continuousClosedAt == 50)
     }
 
-    @Test("PERF1 repeated clear of absent store causes zero removals")
-    func clearAbsentZero() {
+    @Test("PERF1 repeated clear of absent store causes zero removals", .timeLimit(.minutes(1)))
+    func clearAbsentZero() async {
         let suite = "chorus.lid.perf1.clear.\(UUID().uuidString)"
         defer {
             UserDefaults().removePersistentDomain(forName: suite)
@@ -882,9 +882,11 @@ struct LidClosedSessionStorePERF1Tests {
             data: { _ in nil }
         )
         let store = LidClosedSessionStore(suiteName: suite, writeSink: sink)
+        await store.awaitLoadedForTesting()
         store.clear()
         store.clear()
         store.clear()
+        await store.flushPending()
         #expect(box.removeCount() == 0)
     }
 }
@@ -941,13 +943,14 @@ struct LidClosedSessionStoreTests {
         #expect(store.restoreResult(nowContinuous: 1, bootSessionUUID: "BOOT") == .absent)
     }
 
-    @Test("corrupt payload is invalid not absent (W1-10)")
-    func corruptInvalid() {
+    @Test("corrupt payload is invalid not absent (W1-10)", .timeLimit(.minutes(1)))
+    func corruptInvalid() async {
         let suite = "chorus.lid.test.\(UUID().uuidString)"
         defer { UserDefaults().removePersistentDomain(forName: suite) }
         let defaults = UserDefaults(suiteName: suite)!
         defaults.set(Data("not-json".utf8), forKey: "lidClosedSession.v2")
         let store = LidClosedSessionStore(suiteName: suite)
+        await store.awaitLoadedForTesting()
         #expect(store.restoreResult(nowContinuous: 1, bootSessionUUID: "BOOT") == .invalid)
         #expect(store.hasCorruptPayload())
     }
@@ -1108,6 +1111,7 @@ final class WorkerGate: @unchecked Sendable {
     private let condition = NSCondition()
     private var enteredFlag = false
     private var releasedFlag = false
+    private var finishedFlag = false
 
     func enterAndWait() {
         condition.lock()
@@ -1116,6 +1120,8 @@ final class WorkerGate: @unchecked Sendable {
         while !releasedFlag {
             condition.wait()
         }
+        finishedFlag = true
+        condition.broadcast()
         condition.unlock()
     }
 
@@ -1123,16 +1129,27 @@ final class WorkerGate: @unchecked Sendable {
     func enterThenSleep(_ seconds: TimeInterval) {
         condition.lock()
         enteredFlag = true
+        finishedFlag = false
         condition.broadcast()
         condition.unlock()
         if seconds > 0 {
             Thread.sleep(forTimeInterval: seconds)
         }
+        condition.lock()
+        finishedFlag = true
+        condition.broadcast()
+        condition.unlock()
     }
 
     var hasEntered: Bool {
         condition.lock(); defer { condition.unlock() }
         return enteredFlag
+    }
+
+    /// PERF1-R7 round3: true after the worker leaves the blocked section.
+    var hasFinished: Bool {
+        condition.lock(); defer { condition.unlock() }
+        return finishedFlag
     }
 
     func waitUntilEntered(timeoutSeconds: TimeInterval) async -> Bool {
@@ -1325,6 +1342,74 @@ struct PowerHelperClientPERF1StatusTests {
         #expect(reader.callCount == 2)
     }
 
+    @Test("PERF1-R1 round3 delayed XPC never restores ready without fresh enabled SM", .timeLimit(.minutes(1)))
+    func delayedXPCNeverReadyWithoutEnabledSM() async throws {
+        let proxy = FakePowerHelperProxy()
+        var statusReply: ((Data) -> Void)?
+        proxy.statusHandler = { reply in statusReply = reply }
+        var sm: PowerHelperServiceStatusValue = .unknown
+        let reader = LockCountedStatusReader { sm }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 2,
+            refreshTimeout: 1,
+            minimumPhysicalInterval: 0,
+            makeProxy: { proxy },
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+
+        func deliverStatus() async {
+            statusReply = nil
+            let task = Task { try await client.status() }
+            let deadline = ContinuousClock.now + .seconds(2)
+            while statusReply == nil, ContinuousClock.now < deadline { await Task.yield() }
+            statusReply?((try? JSONEncoder().encode(proxy.makeStatus())) ?? Data())
+            _ = try? await task.value
+        }
+
+        // Unknown SM — XPC must not publish .ready.
+        await client.refreshAvailability(reason: .launch)
+        #expect(client.cachedServiceStatusForTesting == .unknown)
+        await deliverStatus()
+        if case .ready = client.availability {
+            Issue.record("XPC alone restored ready without current-epoch enabled SM")
+        }
+        #expect(!client.handshakeCompleteForTesting)
+
+        // Cache invalidation must drop ready immediately (even mid-handshake epoch).
+        sm = .enabled
+        await client.refreshAvailability(reason: .userAction)
+        #expect(client.cachedServiceStatusForTesting == .enabled)
+        // Force ready via mapping path used after handshake complete.
+        await deliverStatus()
+        // Whether or not handshake reached ready, invalidation must not leave ready.
+        let beforeInvalidate = client.availability
+        client.invalidateConnection(intentional: true)
+        #expect(client.cachedServiceStatusForTesting == nil)
+        if case .ready = client.availability {
+            Issue.record("invalidation must publish away from ready immediately (was \(beforeInvalidate))")
+        }
+        await deliverStatus()
+        if case .ready = client.availability {
+            Issue.record("post-invalidation XPC restored ready without fresh enabled SM")
+        }
+
+        // Approval revoke + late XPC
+        sm = .requiresApproval
+        await client.refreshAvailability(reason: .settingsOpened)
+        #expect(client.cachedServiceStatusForTesting == .requiresApproval)
+        if case .ready = client.availability {
+            Issue.record("requiresApproval left ready visible")
+        }
+        await deliverStatus()
+        if case .ready = client.availability {
+            Issue.record("post-approval XPC restored ready")
+        }
+    }
+
     @Test("PERF1-R1 stale XPC status cannot republish ready after SM timeout", .timeLimit(.minutes(1)))
     func staleStatusCannotRepublishReadyAfterTimeout() async throws {
         let gate = WorkerGate()
@@ -1462,6 +1547,61 @@ struct PowerHelperClientPERF1StatusTests {
         #expect(client.cachedServiceStatusForTesting == .enabled)
     }
 
+    @Test("PERF1-R4 round3 register during blocked getter fails boundedly without handshake", .timeLimit(.minutes(1)))
+    func registerDuringBlockedGetterFailsWithoutHandshake() async throws {
+        let gate = WorkerGate()
+        var status: PowerHelperServiceStatusValue = .notRegistered
+        let reader = LockCountedStatusReader(
+            delayImpl: { _ in gate.enterAndWait() },
+            read: { status }
+        )
+        reader.delay = 1
+        let proxy = FakePowerHelperProxy()
+        var statusCalls = 0
+        proxy.statusHandler = { reply in
+            statusCalls += 1
+            reply((try? JSONEncoder().encode(proxy.makeStatus())) ?? Data())
+        }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 0.5,
+            refreshTimeout: 0.15,
+            minimumPhysicalInterval: 5,
+            now: { 0 },
+            makeProxy: { proxy },
+            statusReader: reader,
+            registerService: { status = .enabled },
+            unregisterService: {},
+            openSettings: {}
+        )
+        let launch = Task { await client.refreshAvailability(reason: .launch) }
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        // Register joins the stuck getter with a short bound — must fail without handshake.
+        let registerResult = await Task {
+            do {
+                try await client.register()
+                return false
+            } catch {
+                return true
+            }
+        }.value
+        #expect(registerResult, "register must fail boundedly while old getter is stuck")
+        #expect(statusCalls == 0, "no handshake before current-epoch enabled sample")
+        #expect(!client.handshakeCompleteForTesting)
+        if case .ready = client.availability {
+            Issue.record("register must not publish ready without enabled sample")
+        }
+        #expect(reader.callCount == 1, "no replacement physical start while getter still blocked")
+        gate.release()
+        await launch.value
+        let settle = ContinuousClock.now + .seconds(2)
+        while client.physicalInFlightForTesting, ContinuousClock.now < settle {
+            await Task.yield()
+        }
+        // Stuck getter finishes → exactly one new-epoch replacement read.
+        #expect(reader.callCount == 2)
+    }
+
     @Test("PERF1-R6 Debug-only test-host stubs; injected reader used without XCTest env", .timeLimit(.minutes(1)))
     func injectedDependenciesBypassTestHostDetection() async {
         let reader = LockCountedStatusReader { .notFound }
@@ -1526,6 +1666,34 @@ struct LidClosedSessionStorePERF1R5Tests {
         let start = ContinuousClock.now
         await store.drainPendingBounded(timeout: 0.05)
         #expect(ContinuousClock.now - start < .milliseconds(200))
+        gate.release()
+        await store.flushPending()
+    }
+
+    @Test("PERF1-R5 round3 blocked read sink does not delay MainActor save/clear", .timeLimit(.minutes(1)))
+    func blockedReadSinkDoesNotDelayMainActor() async {
+        let suite = "perf1-r5-read-\(UUID().uuidString)"
+        let gate = WorkerGate()
+        let sink = LidClosedSessionCoordinator.WriteSink(
+            set: { _, _ in },
+            remove: { _ in },
+            data: { _ in
+                gate.enterAndWait()
+                return nil
+            }
+        )
+        let store = LidClosedSessionStore(suiteName: suite, writeSink: sink)
+        let start = ContinuousClock.now
+        for i in 0..<20 {
+            _ = store.save(
+                continuousClosedAt: Double(i),
+                bootSessionUUID: "boot",
+                maxDurationLatched: false,
+                wallClosedAt: Date(timeIntervalSince1970: 1)
+            )
+        }
+        store.clear()
+        #expect(ContinuousClock.now - start < .milliseconds(50))
         gate.release()
         await store.flushPending()
     }
