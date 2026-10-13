@@ -265,9 +265,11 @@ struct PowerHelperClientConnectionTests {
         let proxy1 = FakePowerHelperProxy()
         let proxy2 = FakePowerHelperProxy()
         var useSecond = false
+        var clock = 0.0
         let client = PowerHelperClient(
             appBuild: "136",
             callTimeout: 1,
+            now: { clock },
             makeProxy: { useSecond ? proxy2 : proxy1 },
             serviceStatus: { .enabled },
             registerService: {},
@@ -285,6 +287,7 @@ struct PowerHelperClientConnectionTests {
         try await Task.sleep(nanoseconds: 10_000_000)
         client.invalidateConnection()
         useSecond = true
+        clock = 5 // Replacement still requires fresh SM evidence under the physical floor.
         await client.refreshAvailability(reason: .userAction)
         _ = try await client.status()
         do {
@@ -301,9 +304,11 @@ struct PowerHelperClientConnectionTests {
         let proxy1 = FakePowerHelperProxy()
         let proxy2 = FakePowerHelperProxy()
         var useSecond = false
+        var clock = 0.0
         let client = PowerHelperClient(
             appBuild: "136",
             callTimeout: 1,
+            now: { clock },
             makeProxy: { useSecond ? proxy2 : proxy1 },
             serviceStatus: { .enabled },
             registerService: {},
@@ -318,6 +323,7 @@ struct PowerHelperClientConnectionTests {
         let staleEmit = proxy1.onConnectionEvent
         client.invalidateConnection()
         useSecond = true
+        clock = 5 // Replacement still requires fresh SM evidence under the physical floor.
         await client.refreshAvailability(reason: .userAction)
         _ = try await client.status()
         #expect(client.availability == .ready)
@@ -846,7 +852,7 @@ struct LidClosedSessionStorePERF1Tests {
         func removeCount() -> Int { lock.lock(); defer { lock.unlock() }; return removes }
     }
 
-    @Test("PERF1 twenty identical saves cause one backend write; wallClosedAt stable")
+    @Test("PERF1 twenty identical saves cause one backend write; wallClosedAt stable", .timeLimit(.minutes(1)))
     func coalesceIdenticalSaves() async {
         let suite = "chorus.lid.perf1.\(UUID().uuidString)"
         defer {
@@ -948,11 +954,12 @@ struct LidClosedSessionStoreTests {
         #expect(store.restoreResult(nowContinuous: 2000, bootSessionUUID: "BOOT-A") != .absent)
     }
 
-    @Test("absent is distinct from invalid (W1-10)")
-    func absentDistinct() {
+    @Test("absent is distinct from invalid (W1-10)", .timeLimit(.minutes(1)))
+    func absentDistinct() async {
         let suite = "chorus.lid.test.\(UUID().uuidString)"
         defer { UserDefaults().removePersistentDomain(forName: suite) }
         let store = LidClosedSessionStore(suiteName: suite)
+        await store.awaitLoadedForTesting()
         #expect(store.restoreResult(nowContinuous: 1, bootSessionUUID: "BOOT") == .absent)
     }
 
@@ -1131,8 +1138,9 @@ final class WorkerGate: @unchecked Sendable {
         condition.lock()
         enteredFlag = true
         condition.broadcast()
+        let deadline = Date().addingTimeInterval(5)
         while !releasedFlag {
-            condition.wait()
+            if !condition.wait(until: deadline) { break }
         }
         finishedFlag = true
         condition.broadcast()
@@ -1183,12 +1191,93 @@ final class WorkerGate: @unchecked Sendable {
     }
 }
 
+/// Poll a completion flag rather than racing task.value in a structured group:
+/// cancellation cannot make a child awaiting an unresponsive task finish.
+final class PERF1Completion: Sendable {
+    private let completed = Mutex(false)
+    func finish() { completed.withLock { $0 = true } }
+    func wait(seconds: TimeInterval = 2) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(seconds)
+        while !Task.isCancelled, ContinuousClock.now < deadline {
+            if completed.withLock({ $0 }) { return true }
+            do { try await Task.sleep(for: .milliseconds(2)) } catch { return false }
+        }
+        return completed.withLock { $0 }
+    }
+
+    static func mainActorLatency(timeout: TimeInterval = 0.5) async -> Duration? {
+        let measurement = Mutex<Duration?>(nil)
+        let done = PERF1Completion()
+        let sentinel = Task.detached {
+            let start = ContinuousClock.now
+            await MainActor.run {}
+            measurement.withLock { $0 = ContinuousClock.now - start }
+            done.finish()
+        }
+        defer { sentinel.cancel() }
+        guard await done.wait(seconds: timeout) else { return nil }
+        return measurement.withLock { $0 }
+    }
+}
+
+@MainActor
+final class PERF1Task {
+    private let completion: PERF1Completion
+    private let task: Task<Void, Never>
+    init(_ operation: @escaping @MainActor () async -> Void) {
+        let completion = PERF1Completion()
+        self.completion = completion
+        task = Task { await operation(); completion.finish() }
+    }
+    func wait(seconds: TimeInterval = 3) async -> Bool { await completion.wait(seconds: seconds) }
+    func cancel() { task.cancel() }
+    deinit { task.cancel() }
+}
+
 @Suite("PERF1 PowerHelperClient background service status")
 @MainActor
 struct PowerHelperClientPERF1StatusTests {
-    @Test("PERF1 slow getter: one physical call, mapping, overlapping refresh joins")
+    @Test("PERF1-NEW-9 disconnect storms preserve five-second physical floor", .timeLimit(.minutes(1)),
+          arguments: [false, true])
+    func perf1New9DisconnectStormFloor(connectionEvent: Bool) async throws {
+        var clock = 0.0
+        let reader = LockCountedStatusReader { .enabled }
+        let proxy = FakePowerHelperProxy()
+        let client = PowerHelperClient(appBuild: "136", now: { clock }, makeProxy: { proxy },
+            statusReader: reader, registerService: {}, unregisterService: {}, openSettings: {})
+        defer { client.invalidateConnection(intentional: true) }
+        await client.refreshAvailability(reason: .launch)
+        _ = try await client.status()
+        #expect(client.availability == .ready)
+        for t in [0.1, 1, 2, 4.999] {
+            clock = t
+            if connectionEvent {
+                let previous = proxy.invalidateCount
+                proxy.emit(.interrupted)
+                let deadline = ContinuousClock.now + .seconds(1)
+                while proxy.invalidateCount == previous, ContinuousClock.now < deadline { await Task.yield() }
+                #expect(proxy.invalidateCount == previous + 1)
+            } else { client.invalidateConnection() }
+            #expect(client.availability != .ready)
+            await client.refreshAvailability(reason: .connectionInvalidated)
+            _ = try await client.status() // Reconnect XPC without current SM evidence.
+            #expect(client.availability != .ready)
+        }
+        #expect(reader.callCount == 1)
+        clock = 5
+        await client.refreshAvailability(reason: .retry)
+        #expect(reader.callCount == 2)
+        clock = 5.1
+        try await client.register()
+        #expect(reader.callCount == 3, "registration retains one permitted floor bypass")
+        await client.refreshAvailability(reason: .settingsOpened)
+        #expect(reader.callCount == 3)
+        client.invalidateConnection(intentional: true)
+    }
+    @Test("PERF1 slow getter: one physical call, mapping, overlapping refresh joins", .timeLimit(.minutes(1)))
     func singleFlightAndMapping() async {
         let gate = WorkerGate()
+        defer { gate.release() }
         let reader = LockCountedStatusReader(
             delayImpl: { _ in gate.enterAndWait() },
             read: { .enabled }
@@ -1202,22 +1291,23 @@ struct PowerHelperClientPERF1StatusTests {
             unregisterService: {},
             openSettings: {}
         )
-        let t1 = Task { await client.refreshAvailability(reason: .launch) }
+        let t1 = PERF1Task { await client.refreshAvailability(reason: .launch) }
         #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
-        let t2 = Task { await client.refreshAvailability(reason: .settingsOpened) }
-        let t3 = Task { await client.refreshAvailability(reason: .wake) }
+        let t2 = PERF1Task { await client.refreshAvailability(reason: .settingsOpened) }
+        let t3 = PERF1Task { await client.refreshAvailability(reason: .wake) }
         gate.release()
-        await t1.value
-        await t2.value
-        await t3.value
+        #expect(await t1.wait())
+        #expect(await t2.wait())
+        #expect(await t3.wait())
         #expect(reader.callCount == 1)
         #expect(client.availability == .connecting)
         #expect(client.cachedServiceStatusForTesting == .enabled)
     }
 
-    @Test("PERF1 twenty overlapping refreshes share one physical call")
+    @Test("PERF1 twenty overlapping refreshes share one physical call", .timeLimit(.minutes(1)))
     func twentyOverlapping() async {
         let gate = WorkerGate()
+        defer { gate.release() }
         let reader = LockCountedStatusReader(
             delayImpl: { _ in gate.enterAndWait() },
             read: { .requiresApproval }
@@ -1230,19 +1320,20 @@ struct PowerHelperClientPERF1StatusTests {
             unregisterService: {},
             openSettings: {}
         )
-        let first = Task { await client.refreshAvailability(reason: .settingsOpened) }
+        let first = PERF1Task { await client.refreshAvailability(reason: .settingsOpened) }
         #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
         let rest = (0..<19).map { _ in
-            Task { await client.refreshAvailability(reason: .settingsOpened) }
+            PERF1Task { await client.refreshAvailability(reason: .settingsOpened) }
         }
+        defer { first.cancel(); rest.forEach { $0.cancel() } }
         gate.release()
-        await first.value
-        for task in rest { await task.value }
+        #expect(await first.wait())
+        for task in rest { #expect(await task.wait()) }
         #expect(reader.callCount == 1)
         #expect(client.availability == .requiresApproval)
     }
 
-    @Test("PERF1 minimum interval throttles; cached path does zero calls")
+    @Test("PERF1 minimum interval throttles; cached path does zero calls", .timeLimit(.minutes(1)))
     func minimumIntervalAndCache() async {
         var clock = 0.0
         let reader = LockCountedStatusReader { .notRegistered }
@@ -1267,9 +1358,10 @@ struct PowerHelperClientPERF1StatusTests {
         #expect(reader.callCount == 2)
     }
 
-    @Test("PERF1 timeout returns near deadline; late enabled discarded; no extra getters")
+    @Test("PERF1 timeout returns near deadline; late enabled discarded; no extra getters", .timeLimit(.minutes(1)))
     func timeoutAndLateResult() async {
         let gate = WorkerGate()
+        defer { gate.release() }
         let reader = LockCountedStatusReader(
             delayImpl: { _ in gate.enterAndWait() },
             read: { .enabled }
@@ -1284,9 +1376,9 @@ struct PowerHelperClientPERF1StatusTests {
             openSettings: {}
         )
         let start = ContinuousClock.now
-        let refresh = Task { await client.refreshAvailability(reason: .launch) }
+        let refresh = PERF1Task { await client.refreshAvailability(reason: .launch) }
         #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
-        await refresh.value
+        #expect(await refresh.wait())
         let elapsed = ContinuousClock.now - start
         #expect(elapsed < .milliseconds(500))
         #expect(client.availability == .error("serviceStatusTimeout"))
@@ -1294,13 +1386,14 @@ struct PowerHelperClientPERF1StatusTests {
 
         // While still blocked, 100 more requests must not start getters.
         let extras = (0..<100).map { _ in
-            Task { await client.refreshAvailability(reason: .userAction) }
+            PERF1Task { await client.refreshAvailability(reason: .userAction) }
         }
+        defer { refresh.cancel(); extras.forEach { $0.cancel() } }
         await Task.yield()
         #expect(reader.callCount == 1)
 
         gate.release()
-        for task in extras { await task.value }
+        for task in extras { #expect(await task.wait()) }
         let cleared = ContinuousClock.now + .seconds(2)
         while client.physicalInFlightForTesting, ContinuousClock.now < cleared {
             await Task.yield()
@@ -1311,7 +1404,7 @@ struct PowerHelperClientPERF1StatusTests {
         #expect(!client.physicalInFlightForTesting)
     }
 
-    @Test("PERF1 identical effective cache does not re-fire availability callback")
+    @Test("PERF1 identical effective cache does not re-fire availability callback", .timeLimit(.minutes(1)))
     func noCallbackForIdenticalCache() async {
         let reader = LockCountedStatusReader { .notFound }
         var callbacks = 0
@@ -1332,7 +1425,7 @@ struct PowerHelperClientPERF1StatusTests {
         #expect(reader.callCount == 1)
     }
 
-    @Test("PERF1 post-register userAction bypasses floor once")
+    @Test("PERF1 post-register userAction bypasses floor once", .timeLimit(.minutes(1)))
     func registerBypassesFloor() async {
         var clock = 0.0
         var status: PowerHelperServiceStatusValue = .notRegistered
@@ -1377,11 +1470,11 @@ struct PowerHelperClientPERF1StatusTests {
 
         func deliverStatus() async {
             statusReply = nil
-            let task = Task { try await client.status() }
+            let task = PERF1Task { _ = try? await client.status() }
             let deadline = ContinuousClock.now + .seconds(2)
             while statusReply == nil, ContinuousClock.now < deadline { await Task.yield() }
             statusReply?((try? JSONEncoder().encode(proxy.makeStatus())) ?? Data())
-            _ = try? await task.value
+            #expect(await task.wait())
         }
 
         // Unknown SM — XPC must not publish .ready.
@@ -1427,6 +1520,7 @@ struct PowerHelperClientPERF1StatusTests {
     @Test("PERF1-R1 stale XPC status cannot republish ready after SM timeout", .timeLimit(.minutes(1)))
     func staleStatusCannotRepublishReadyAfterTimeout() async throws {
         let gate = WorkerGate()
+        defer { gate.release() }
         let reader = LockCountedStatusReader(
             delayImpl: { _ in gate.enterAndWait() },
             read: { .enabled }
@@ -1448,20 +1542,20 @@ struct PowerHelperClientPERF1StatusTests {
             openSettings: {}
         )
         defer { gate.release() }
-        let refresh = Task { await client.refreshAvailability(reason: .launch) }
+        let refresh = PERF1Task { await client.refreshAvailability(reason: .launch) }
         #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
-        await refresh.value
+        #expect(await refresh.wait())
         #expect(client.availability == .error("serviceStatusTimeout"))
         let epochAfterTimeout = client.readinessEpochForTesting
 
-        let statusTask = Task { try await client.status() }
+        let statusTask = PERF1Task { _ = try? await client.status() }
         let deadline = ContinuousClock.now + .seconds(2)
         while statusReply == nil, ContinuousClock.now < deadline { await Task.yield() }
         #expect(statusReply != nil)
 
         // SM still timed out / unknown — late ready XPC must not publish .ready.
         statusReply?((try? JSONEncoder().encode(proxy.makeStatus())) ?? Data())
-        _ = try? await statusTask.value
+        #expect(await statusTask.wait())
         #expect(client.readinessEpochForTesting >= epochAfterTimeout)
         #expect(!client.handshakeCompleteForTesting)
         if case .ready = client.availability {
@@ -1472,6 +1566,7 @@ struct PowerHelperClientPERF1StatusTests {
     @Test("PERF1-R2 post-timeout refresh returns without hanging", .timeLimit(.minutes(1)))
     func postTimeoutRefreshDoesNotHang() async {
         let gate = WorkerGate()
+        defer { gate.release() }
         let reader = LockCountedStatusReader(
             delayImpl: { _ in gate.enterAndWait() },
             read: { .enabled }
@@ -1485,9 +1580,9 @@ struct PowerHelperClientPERF1StatusTests {
             unregisterService: {},
             openSettings: {}
         )
-        let first = Task { await client.refreshAvailability(reason: .launch) }
+        let first = PERF1Task { await client.refreshAvailability(reason: .launch) }
         #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
-        await first.value
+        #expect(await first.wait())
         #expect(client.physicalInFlightForTesting)
 
         let start = ContinuousClock.now
@@ -1502,6 +1597,7 @@ struct PowerHelperClientPERF1StatusTests {
     @Test("PERF1-R2 cancelled refresh waiter resumes without hanging", .timeLimit(.minutes(1)))
     func cancelledRefreshWaiterDoesNotHang() async {
         let gate = WorkerGate()
+        defer { gate.release() }
         let reader = LockCountedStatusReader(
             delayImpl: { _ in gate.enterAndWait() },
             read: { .enabled }
@@ -1515,22 +1611,23 @@ struct PowerHelperClientPERF1StatusTests {
             unregisterService: {},
             openSettings: {}
         )
-        let first = Task { await client.refreshAvailability(reason: .launch) }
+        let first = PERF1Task { await client.refreshAvailability(reason: .launch) }
         #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
-        let joiner = Task { await client.refreshAvailability(reason: .settingsOpened) }
+        let joiner = PERF1Task { await client.refreshAvailability(reason: .settingsOpened) }
         await Task.yield()
         joiner.cancel()
         let start = ContinuousClock.now
-        await joiner.value
+        #expect(await joiner.wait())
         #expect(ContinuousClock.now - start < .milliseconds(500))
         gate.release()
-        await first.value
+        #expect(await first.wait())
         #expect(reader.callCount == 1)
     }
 
     @Test("PERF1-R4 register during in-flight refresh still gets new-epoch sample", .timeLimit(.minutes(1)))
     func postOperationRefreshPreservedForNewEpoch() async throws {
         let gate = WorkerGate()
+        defer { gate.release() }
         var status: PowerHelperServiceStatusValue = .notRegistered
         let reader = LockCountedStatusReader(
             delayImpl: { _ in gate.enterAndWait() },
@@ -1549,14 +1646,16 @@ struct PowerHelperClientPERF1StatusTests {
             unregisterService: {},
             openSettings: {}
         )
-        let launch = Task { await client.refreshAvailability(reason: .launch) }
+        let launch = PERF1Task { await client.refreshAvailability(reason: .launch) }
         #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
         // Invalidate epoch while first getter is blocked; register must still observe enabled.
-        let registerTask = Task { try await client.register() }
+        let registerTask = PERF1Task {
+            do { try await client.register() } catch { Issue.record("register failed: \(error)") }
+        }
         await Task.yield()
         gate.release()
-        await launch.value
-        try await registerTask.value
+        #expect(await launch.wait())
+        #expect(await registerTask.wait())
         #expect(reader.callCount >= 2)
         #expect(client.cachedServiceStatusForTesting == .enabled)
     }
@@ -1564,6 +1663,7 @@ struct PowerHelperClientPERF1StatusTests {
     @Test("PERF1-R4 round3 register during blocked getter fails boundedly without handshake", .timeLimit(.minutes(1)))
     func registerDuringBlockedGetterFailsWithoutHandshake() async throws {
         let gate = WorkerGate()
+        defer { gate.release() }
         var status: PowerHelperServiceStatusValue = .notRegistered
         let reader = LockCountedStatusReader(
             delayImpl: { _ in gate.enterAndWait() },
@@ -1588,17 +1688,15 @@ struct PowerHelperClientPERF1StatusTests {
             unregisterService: {},
             openSettings: {}
         )
-        let launch = Task { await client.refreshAvailability(reason: .launch) }
+        let launch = PERF1Task { await client.refreshAvailability(reason: .launch) }
         #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
         // Register joins the stuck getter with a short bound — must fail without handshake.
-        let registerResult = await Task {
-            do {
-                try await client.register()
-                return false
-            } catch {
-                return true
-            }
-        }.value
+        var registerResult = false
+        let registerTask = PERF1Task {
+            do { try await client.register() }
+            catch { registerResult = true }
+        }
+        #expect(await registerTask.wait(seconds: 0.5))
         #expect(registerResult, "register must fail boundedly while old getter is stuck")
         #expect(statusCalls == 0, "no handshake before current-epoch enabled sample")
         #expect(!client.handshakeCompleteForTesting)
@@ -1607,7 +1705,7 @@ struct PowerHelperClientPERF1StatusTests {
         }
         #expect(reader.callCount == 1, "no replacement physical start while getter still blocked")
         gate.release()
-        await launch.value
+        #expect(await launch.wait())
         let settle = ContinuousClock.now + .seconds(2)
         while client.physicalInFlightForTesting, ContinuousClock.now < settle {
             await Task.yield()
@@ -1634,6 +1732,91 @@ struct PowerHelperClientPERF1StatusTests {
 
 @Suite("PERF1-R5 LidClosedSessionStore async persistence")
 struct LidClosedSessionStorePERF1R5Tests {
+    @Test("PERF1-R5/NEW-6 raced-save cleanup never holds the memory lock", .timeLimit(.minutes(1)))
+    @MainActor
+    func perf1New6CleanupIOOutsideLock() async {
+        let save = WorkerGate()
+        let cleanup = WorkerGate()
+        defer { save.release(); cleanup.release() }
+        let store = LidClosedSessionStore(suiteName: UUID().uuidString, writeSink: .init(
+            set: { _, _ in save.enterAndWait() }, remove: { _ in cleanup.enterAndWait() }, data: { _ in nil }))
+        await store.awaitLoadedForTesting()
+        let suite = "perf1-cleanup-controller-\(UUID().uuidString)"
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        let controller = LidSleepGuardController(
+            settings: SettingsStore(defaults: UserDefaults(suiteName: suite)!),
+            helper: LidSleepGuardControllerTests.FakeHelper(), lid: LidSleepGuardControllerTests.FakeLid(),
+            notifier: LidSleepGuardControllerTests.FakeNotifier(), sessionStore: store, sleepDisabledProbe: { nil })
+        defer { controller.shutdown() }
+        let power = PowerSnapshot(hasInternalBattery: true, onBattery: false, percent: 80, thermal: .nominal)
+        let idle = KeepAwakeBusyState(isBusy: false, contributing: [], releaseAt: nil)
+        controller.update(agentModeActive: false, busy: idle, power: power, existingFloor: .percent20)
+        store.save(continuousClosedAt: 10, bootSessionUUID: "BOOT", maxDurationLatched: false)
+        #expect(await save.waitUntilEntered(timeoutSeconds: 2))
+        store.clear()
+        save.release()
+        #expect(await cleanup.waitUntilEntered(timeoutSeconds: 2))
+        let start = ContinuousClock.now
+        for _ in 0..<20 {
+            controller.update(agentModeActive: false, busy: idle, power: power, existingFloor: .percent20)
+        }
+        let elapsed = ContinuousClock.now - start
+        #expect(elapsed < .milliseconds(50))
+        #expect(!cleanup.hasFinished)
+        let sentinel = await PERF1Completion.mainActorLatency()
+        #expect(sentinel.map { $0 < .milliseconds(50) } == true)
+        #expect(!cleanup.hasFinished)
+        cleanup.release()
+        let done = PERF1Completion()
+        let flush = Task { await store.flushPending(); done.finish() }
+        defer { flush.cancel() }
+        #expect(await done.wait())
+        print("PERF1 cleanup updates=\(elapsed), sentinel=\(String(describing: sentinel))")
+    }
+
+    @Test("PERF1-NEW-5 loading is distinct from absent for monitor restoration", .timeLimit(.minutes(1)))
+    @MainActor
+    func perf1New5MonitorLoadingPreservesLatch() async throws {
+        let gate = WorkerGate()
+        defer { gate.release() }
+        let boot = try #require(LidMonotonicTime.bootSessionUUID())
+        let old = LidClosedSessionStore.Snapshot(continuousClosedAt: 1, bootSessionUUID: boot,
+            maxDurationLatched: true, wallClosedAt: Date(timeIntervalSince1970: 1))
+        let data = try JSONEncoder().encode(old)
+        let writes = Mutex(0)
+        let store = LidClosedSessionStore(suiteName: UUID().uuidString, writeSink: .init(
+            set: { _, _ in writes.withLock { $0 += 1 } }, remove: { _ in },
+            data: { _ in gate.enterAndWait(); return data }))
+        let monitor = LidStateMonitor(readProperty: { kCFBooleanTrue }, detectCapability: { .hasLid }, sessionStore: store)
+        defer { monitor.stop() }
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        #expect(store.restoreResult() != .absent)
+        monitor.ingestForTesting(.closed)
+        #expect(store.load() == nil)
+        gate.release()
+        await store.awaitLoadedForTesting()
+        #expect(store.load() == old)
+        #expect(writes.withLock { $0 } == 0)
+    }
+
+    @Test("PERF1-NEW-10 withheld durability has bounded cancellation and no waiter leak", .timeLimit(.minutes(1)))
+    func perf1New10CancelledFlushIsBounded() async {
+        let gate = WorkerGate()
+        defer { gate.release() }
+        let store = LidClosedSessionStore(suiteName: UUID().uuidString, writeSink: .init(
+            set: { _, _ in gate.enterAndWait() }, remove: { _ in }, data: { _ in nil }))
+        await store.awaitLoadedForTesting()
+        store.save(continuousClosedAt: 10, bootSessionUUID: "BOOT", maxDurationLatched: false)
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        let done = PERF1Completion()
+        let flush = Task { await store.flushPending(); done.finish() }
+        defer { flush.cancel() }
+        #expect(!(await done.wait(seconds: 0.05)), "withheld durability must time out")
+        flush.cancel()
+        #expect(await done.wait(seconds: 0.2), "cancelled durability wait must detach promptly")
+        #expect(!gate.hasFinished)
+        gate.release()
+    }
     @Test("PERF1-R5 unchanged saves do not block; barrier is async + flushable", .timeLimit(.minutes(1)))
     func asyncPersistenceNoMainActorSync() async {
         let suite = "perf1-r5-\(UUID().uuidString)"
@@ -1665,6 +1848,7 @@ struct LidClosedSessionStorePERF1R5Tests {
     func boundedShutdownDrain() async {
         let suite = "perf1-r5-drain-\(UUID().uuidString)"
         let gate = WorkerGate()
+        defer { gate.release() }
         let sink = LidClosedSessionCoordinator.WriteSink(
             set: { _, _ in gate.enterAndWait() },
             remove: { _ in },
@@ -1688,6 +1872,7 @@ struct LidClosedSessionStorePERF1R5Tests {
     func blockedReadSinkDoesNotDelayMainActor() async {
         let suite = "perf1-r5-read-\(UUID().uuidString)"
         let gate = WorkerGate()
+        defer { gate.release() }
         let sink = LidClosedSessionCoordinator.WriteSink(
             set: { _, _ in },
             remove: { _ in },
@@ -1720,6 +1905,7 @@ struct LidClosedSessionStorePERF1R5Tests {
             LidClosedSessionCoordinator.resetRegistryForTesting(suiteName: suite)
         }
         let gate = WorkerGate()
+        defer { gate.release() }
         let writes = Mutex(0)
         let removes = Mutex(0)
         let stored = Mutex<Data?>(nil)
@@ -1758,6 +1944,7 @@ struct LidClosedSessionStorePERF1R5Tests {
         // Fresh store (new coordinator instance) must not revive the obsolete session.
         LidClosedSessionCoordinator.resetRegistryForTesting(suiteName: suite)
         let fresh = LidClosedSessionStore(suiteName: suite, writeSink: sink)
+        await fresh.awaitLoadedForTesting()
         #expect(fresh.restoreResult(nowContinuous: 120, bootSessionUUID: "BOOT-OBSOLETE") == .absent)
         #expect(fresh.load() == nil)
         _ = writes // sink may observe a raced set that was undone
@@ -1772,6 +1959,7 @@ struct LidClosedSessionStorePERF1R5Tests {
             LidClosedSessionCoordinator.resetRegistryForTesting(suiteName: suite)
         }
         let gate = WorkerGate()
+        defer { gate.release() }
         let writeLatchFlags = Mutex<[Bool]>([])
         let stored = Mutex<Data?>(nil)
         let sink = LidClosedSessionCoordinator.WriteSink(
@@ -1820,25 +2008,12 @@ struct LidClosedSessionStorePERF1R5Tests {
         )
         #expect(store.load()?.maxDurationLatched == false)
 
-        let flushTask = Task { await store.flushPending() }
+        let completion = PERF1Completion()
+        let flushTask = Task { await store.flushPending(); completion.finish() }
+        defer { flushTask.cancel(); gate.release() }
         try? await Task.sleep(for: .milliseconds(50))
         gate.release()
-        let flushDeadline = ContinuousClock.now + .seconds(2)
-        let completed = await withTaskGroup(of: Bool.self) { group -> Bool in
-            group.addTask {
-                await flushTask.value
-                return true
-            }
-            group.addTask {
-                while ContinuousClock.now < flushDeadline {
-                    try? await Task.sleep(for: .milliseconds(10))
-                }
-                return false
-            }
-            let first = await group.next() ?? false
-            group.cancelAll()
-            return first
-        }
+        let completed = await completion.wait()
         #expect(completed, "flushPending must not strand durability waiters")
         #expect(store.load()?.continuousClosedAt == 10)
         #expect(store.load()?.maxDurationLatched == false)

@@ -94,6 +94,8 @@ final class LockCountedStatusReader: PowerHelperServiceStatusReading, @unchecked
 @MainActor
 protocol PowerHelperClienting: AnyObject {
     var availability: LidHelperAvailability { get }
+    /// Current SM epoch explicitly permits a read-only XPC handshake.
+    var hasEnabledServiceEvidence: Bool { get }
     var onAvailabilityChange: (() -> Void)? { get set }
     func refreshAvailability(reason: PowerHelperRefreshReason) async
     func register() async throws
@@ -102,6 +104,10 @@ protocol PowerHelperClienting: AnyObject {
     func setSleepDisabled(_ on: Bool) async throws -> PowerHelperStatus
     func status() async throws -> PowerHelperStatus
     func setSleepDisabledSynchronously(_ on: Bool, timeout: TimeInterval) -> Bool
+}
+
+extension PowerHelperClienting {
+    var hasEnabledServiceEvidence: Bool { availability == .ready }
 }
 
 /// Maps service status → `LidHelperAvailability` (pure; V-C06-1 / PERF-1).
@@ -246,6 +252,7 @@ final class PowerHelperRepairStateMachine {
 
 @MainActor
 final class PowerHelperClient: PowerHelperClienting {
+    var hasEnabledServiceEvidence: Bool { cachedServiceStatus == .enabled }
     private(set) var availability: LidHelperAvailability = .notRegistered
     var onAvailabilityChange: (() -> Void)?
 
@@ -291,6 +298,7 @@ final class PowerHelperClient: PowerHelperClienting {
     private var nextRefreshWaiterID: UInt64 = 1
     private var refreshTimeoutTask: Task<Void, Never>?
     private var pendingPhysicalIntent = false
+    private var pendingPhysicalTask: Task<Void, Never>?
     /// When true, the next physical start may bypass the 5s floor (post register/unregister).
     private var bypassFloorOnce = false
     private var intentionalTeardown = false
@@ -441,8 +449,11 @@ final class PowerHelperClient: PowerHelperClienting {
                 applyCachedServiceStatus(cached)
                 return
             }
-            // PERF1-R1: cache cleared (e.g. invalidate) with no sample — do not
-            // return early on the floor; require a fresh physical read.
+            // Revoked evidence stays unavailable; a missing cache does not grant
+            // a second physical query before the five-second floor.
+            pendingPhysicalIntent = true
+            schedulePendingPhysicalRefresh()
+            return
         }
 
         // Register waiter BEFORE kicking the worker so a fast result cannot resume an empty list.
@@ -502,12 +513,15 @@ final class PowerHelperClient: PowerHelperClienting {
     }
 
     private func beginPhysicalRefreshLocked(consumeFloorBypass: Bool = false) {
+        pendingPhysicalTask?.cancel()
+        pendingPhysicalTask = nil
         if consumeFloorBypass {
             bypassFloorOnce = false
         } else if bypassFloorOnce, pendingPhysicalIntent {
             // Post-operation replacement read for the new epoch keeps its floor bypass (R4).
             bypassFloorOnce = false
         }
+        pendingPhysicalIntent = false
         let token = nextPhysicalToken
         nextPhysicalToken &+= 1
         physicalInFlightToken = token
@@ -570,7 +584,14 @@ final class PowerHelperClient: PowerHelperClienting {
                 lastSuccessfulSampleAt = now()
                 applyCachedServiceStatus(value)
             }
-            beginPhysicalRefreshLocked(consumeFloorBypass: true)
+            pendingPhysicalIntent = true
+            if bypassFloorOnce || physicalFloorRemaining <= 0 {
+                pendingPhysicalIntent = false
+                beginPhysicalRefreshLocked(consumeFloorBypass: bypassFloorOnce)
+            } else {
+                schedulePendingPhysicalRefresh()
+                resumeRefreshWaiters()
+            }
             return
         }
 
@@ -591,6 +612,28 @@ final class PowerHelperClient: PowerHelperClienting {
         let waiters = refreshWaiters
         refreshWaiters.removeAll()
         for (_, waiter) in waiters { waiter.resume() }
+    }
+
+    private var physicalFloorRemaining: TimeInterval {
+        guard let lastPhysicalStartAt else { return 0 }
+        return max(0, minimumPhysicalInterval - (now() - lastPhysicalStartAt))
+    }
+
+    private func schedulePendingPhysicalRefresh() {
+        guard pendingPhysicalTask == nil, pendingPhysicalIntent else { return }
+        let delay = physicalFloorRemaining
+        pendingPhysicalTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            self.pendingPhysicalTask = nil
+            guard self.pendingPhysicalIntent, self.physicalInFlightToken == nil else { return }
+            if self.physicalFloorRemaining > 0 {
+                self.schedulePendingPhysicalRefresh()
+                return
+            }
+            self.pendingPhysicalIntent = false
+            self.beginPhysicalRefreshLocked()
+        }
     }
 
     private enum ReadinessRevokeReason {
@@ -928,9 +971,9 @@ final class PowerHelperClient: PowerHelperClienting {
         cacheEpoch &+= 1
         cachedServiceStatus = nil
         lastSuccessfulSampleAt = nil
-        lastPhysicalStartAt = nil
         // Unexpected invalidation schedules one refresh; intentional teardown must not reconnect.
         if !intentionalTeardown {
+            if physicalInFlightToken != nil { pendingPhysicalIntent = true }
             Task { await self.refreshAvailability(reason: .connectionInvalidated) }
         }
         _ = event
@@ -941,18 +984,21 @@ final class PowerHelperClient: PowerHelperClienting {
         generation += 1
         revokeReadinessEvidence(reason: .intentionalInvalidate)
         // PERF1-R1 round3: drop SM sample with the connection so late XPC cannot
-        // recombine with a stale enabled cache into ready. Clear the physical-floor
-        // clock so the next refresh must sample a new epoch before ready.
+        // recombine with a stale enabled cache into ready. Preserve the physical
+        // start clock so disconnect storms cannot bypass the query floor.
         cacheEpoch &+= 1
         cachedServiceStatus = nil
         lastSuccessfulSampleAt = nil
-        lastPhysicalStartAt = nil
         connectionToken = 0
         proxy?.onConnectionEvent = nil
         proxy?.invalidate()
         proxy = nil
         applyAvailability(.connecting)
+        if !intentional, physicalInFlightToken != nil { pendingPhysicalIntent = true }
         if intentional {
+            pendingPhysicalIntent = false
+            pendingPhysicalTask?.cancel()
+            pendingPhysicalTask = nil
             // Reset after teardown so a later unexpected event can still refresh.
             intentionalTeardown = false
         }

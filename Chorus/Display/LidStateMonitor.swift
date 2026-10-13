@@ -80,6 +80,8 @@ enum LidMonotonicTime {
 /// Explicit restore disposition for C08 (W1-10). `invalid` must be treated as conservative
 /// closed-session (do not reset max-duration latch / do not begin a fresh open-ended duration).
 enum LidSessionRestoreResult: Equatable, Sendable {
+    /// Backend restoration has not completed; never begin a replacement deadline.
+    case loading
     case absent
     case valid(sinceContinuous: Double, latched: Bool)
     /// Corrupt, reboot mismatch, unknown boot, or non-finite clock — fail closed for policy.
@@ -93,7 +95,7 @@ enum LidSessionRestoreResult: Equatable, Sendable {
 ///
 /// PERF-1: semantic write-on-change + coalesced persistence via a shared coordinator
 /// keyed by `(suiteName, key)` so monitor/controller wrappers share pending state.
-struct LidClosedSessionStore: Equatable {
+struct LidClosedSessionStore: Equatable, Sendable {
     struct Snapshot: Codable, Equatable, Sendable {
         var continuousClosedAt: Double
         var bootSessionUUID: String
@@ -160,6 +162,11 @@ struct LidClosedSessionStore: Equatable {
         await coordinator.drainPendingBounded(timeout: timeout)
     }
 
+    /// Submit now; completion is signaled on the backend queue without an actor hop.
+    func beginPendingDrain() -> DispatchGroup { coordinator.beginPendingDrain() }
+
+    func awaitLoaded() async { await coordinator.awaitLoaded() }
+
     func clear() {
         coordinator.requestClear()
     }
@@ -180,6 +187,7 @@ struct LidClosedSessionStore: Equatable {
 
     /// Test seam: committed backend write count for the shared coordinator.
     var backendWriteCountForTesting: Int { coordinator.backendWriteCountForTesting }
+    var hasPendingDurability: Bool { coordinator.hasPendingDurability }
 
     /// True when defaults contain undecodable / structurally unusable bytes.
     func hasCorruptPayload() -> Bool {
@@ -191,6 +199,7 @@ struct LidClosedSessionStore: Equatable {
         nowContinuous: Double? = LidMonotonicTime.seconds(),
         bootSessionUUID: String? = LidMonotonicTime.bootSessionUUID()
     ) -> LidSessionRestoreResult {
+        if coordinator.isRestorationLoading { return .loading }
         if hasCorruptPayload() { return .invalid }
         guard let snap = load() else { return .absent }
         guard let bootSessionUUID else { return .invalid }
@@ -215,7 +224,7 @@ struct LidClosedSessionStore: Equatable {
             return (since, latched)
         case .invalid:
             return (sinceContinuous: 0, latched: true)
-        case .absent:
+        case .absent, .loading:
             return nil
         }
     }
@@ -288,7 +297,7 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
     private var inFlightBackendOps = 0
     /// Last revision handed to the backend queue (save or clear). PERF1-NEW-2.
     private var enqueuedRevisionForBackend: UInt64?
-    private var durabilityWaiters: [CheckedContinuation<Void, Never>] = []
+    private var durabilityWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     private init(suiteName: String?, key: String, writeSink: WriteSink?) {
         self.suiteName = suiteName
@@ -313,6 +322,10 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
 
     var backendRemoveCountForTesting: Int {
         withCoordinatorLock { removeCountForTesting }
+    }
+
+    var hasPendingDurability: Bool {
+        withCoordinatorLock { pendingSnapshot != nil || pendingClear || inFlightBackendOps > 0 }
     }
 
     /// Sync helper — NSLock must not be taken directly from `async` functions (Swift 6).
@@ -447,7 +460,7 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
         return corrupt
     }
 
-    func flushPending() async {
+    private func submitPending() {
         // PERF1-NEW-2: submit or chain the latest revision before waiting —
         // skipping while in-flight strands durability waiters on a newer pending snap.
         enum FlushSubmit {
@@ -487,48 +500,52 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
         case .waitOnly:
             break
         }
+    }
+
+    func flushPending() async {
+        guard !Task.isCancelled else { return }
+        submitPending()
         await waitForDurability()
+    }
+
+    func beginPendingDrain() -> DispatchGroup {
+        submitPending()
+        let group = DispatchGroup()
+        group.enter()
+        queue.async { group.leave() }
+        return group
     }
 
     /// Bounded drain for shutdown — never blocks MainActor on the I/O queue (PERF1-R5).
     /// Returns when persistence finishes or `timeout` elapses; flush may continue in the background.
     func drainPendingBounded(timeout: TimeInterval = 0.2) async {
-        let once = Mutex<CheckedContinuation<Void, Never>?>(nil)
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            once.withLock { slot in slot = cont }
-            Task {
-                await self.flushPending()
-                let taken = once.withLock { slot -> CheckedContinuation<Void, Never>? in
-                    let value = slot
-                    slot = nil
-                    return value
-                }
-                taken?.resume()
-            }
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
-                let taken = once.withLock { slot -> CheckedContinuation<Void, Never>? in
-                    let value = slot
-                    slot = nil
-                    return value
-                }
-                taken?.resume()
-            }
+        let group = beginPendingDrain()
+        let completed = Mutex(false)
+        group.notify(queue: .global()) { completed.withLock { $0 = true } }
+        let deadline = ContinuousClock.now + .seconds(max(timeout, 0))
+        while !Task.isCancelled, ContinuousClock.now < deadline {
+            if completed.withLock({ $0 }) { return }
+            do { try await Task.sleep(for: .milliseconds(2)) } catch { return }
         }
     }
 
     private func waitForDurability() async {
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+        let id = UUID()
+        await withTaskCancellationHandler {
+          await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             let shouldResume = withCoordinatorLock {
-                if inFlightBackendOps == 0, pendingSnapshot == nil, !pendingClear {
+                if Task.isCancelled || (inFlightBackendOps == 0 && pendingSnapshot == nil && !pendingClear) {
                     return true
                 }
-                durabilityWaiters.append(cont)
+                durabilityWaiters[id] = cont
                 return false
             }
             if shouldResume {
                 cont.resume()
             }
+          }
+        } onCancel: {
+            self.withCoordinatorLock { self.durabilityWaiters.removeValue(forKey: id) }?.resume()
         }
     }
 
@@ -590,7 +607,10 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
                 self.pendingClear = false
                 self.loadedCorrupt = false
                 self.didLoad = true
-            } else if data != nil {
+            }
+            let needsCorrection = revision != self.revision && data != nil
+            self.lock.unlock()
+            if needsCorrection {
                 // PERF1-NEW-1: revision advanced during I/O — undo obsolete mutation so a
                 // clear that raced after the pre-check cannot leave disk populated.
                 if let writeSink = self.writeSink {
@@ -599,6 +619,7 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
                     self.defaults.removeObject(forKey: self.key)
                 }
             }
+            self.lock.lock()
             self.inFlightBackendOps -= 1
             let followUp = self.finishBackendOpLocked()
             self.lock.unlock()
@@ -664,7 +685,7 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
         } else if let snap = pendingSnapshot {
             followUp.chainSave = (snap, revision)
         } else {
-            followUp.waiters = durabilityWaiters
+            followUp.waiters = Array(durabilityWaiters.values)
             durabilityWaiters.removeAll()
         }
         return followUp
@@ -690,22 +711,35 @@ final class LidClosedSessionCoordinator: @unchecked Sendable {
     func awaitLoaded(timeout: TimeInterval = 1) async {
         let deadline = ContinuousClock.now + .seconds(timeout)
         while ContinuousClock.now < deadline {
+            guard !Task.isCancelled else { return }
             let state = withCoordinatorLock { loadState }
             if state == .loaded { return }
             await Task.yield()
-            try? await Task.sleep(nanoseconds: 2_000_000)
+            do { try await Task.sleep(nanoseconds: 2_000_000) } catch { return }
         }
+    }
+
+    func awaitLoaded() async {
+        while !Task.isCancelled {
+            if withCoordinatorLock({ loadState == .loaded }) { return }
+            do { try await Task.sleep(for: .milliseconds(2)) } catch { return }
+        }
+    }
+
+    var isRestorationLoading: Bool {
+        withCoordinatorLock { loadState != .loaded && pendingSnapshot == nil && !pendingClear }
     }
 
     var isLoadedForTesting: Bool { withCoordinatorLock { loadState == .loaded } }
 
     private func finishPreloadFromBackend() {
         let data = loadBytesLocked()
+        let decoded = data.flatMap { try? JSONDecoder().decode(LidClosedSessionStore.Snapshot.self, from: $0) }
         lock.lock()
         defer { lock.unlock() }
         guard loadState == .loading else { return }
-        if let data {
-            if let snap = try? JSONDecoder().decode(LidClosedSessionStore.Snapshot.self, from: data) {
+        if data != nil {
+            if let snap = decoded {
                 // Do not clobber a newer in-memory pending/committed session.
                 if committedSemantic == nil, pendingSnapshot == nil, !pendingClear {
                     committedSemantic = snap.semanticKey
@@ -754,6 +788,7 @@ final class LidStateMonitor: LidStateObserving {
     private var notifier: io_object_t = 0
     private var rootDomain: io_service_t = 0
     private var confirmedNoLid = false
+    private var restorationTask: Task<Void, Never>?
     private let readProperty: @MainActor () -> CFTypeRef?
     private let detectCapability: @MainActor () -> LidCapability
     let sessionStore: LidClosedSessionStore
@@ -790,6 +825,8 @@ final class LidStateMonitor: LidStateObserving {
     }
 
     func stop() {
+        restorationTask?.cancel()
+        restorationTask = nil
         guard running else { return }
         running = false
         pollTimer?.invalidate()
@@ -836,6 +873,18 @@ final class LidStateMonitor: LidStateObserving {
         case .closed:
             // W1-10: keep valid same-boot sessions; replace absent/invalid (never retain corrupt).
             switch sessionStore.restoreResult() {
+            case .loading:
+                if restorationTask == nil {
+                    let store = sessionStore
+                    restorationTask = Task { @MainActor [weak self] in
+                        await store.awaitLoaded()
+                        guard let self, !Task.isCancelled else { return }
+                        self.restorationTask = nil
+                        guard self.reading == .closed else { return }
+                        self.apply(.closed)
+                        self.onChange?()
+                    }
+                }
             case .valid:
                 break
             case .absent:
