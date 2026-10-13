@@ -286,7 +286,9 @@ final class AppState {
         keepAwake.restoreSavedMode()
         // §6.6：殘留偵測在 restore 之後；選項關閉仍允許只讀 probe。
         // XCTest host 不跑：避免對未註冊 helper 打真 XPC（C06 isolation crash）。
-        let underXCTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let underXCTest =
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
         if !underXCTest {
             Task { @MainActor [weak keepAwakeController] in
                 await keepAwakeController?.lidGuard.detectLeftover()
@@ -298,7 +300,11 @@ final class AppState {
         timeline.mark("display.start")
         audioManager.start()
         timeline.mark("audio.start")
-        sessionManager.start()
+        // PERF-1 verification: XCTest host must not block on Keychain/securityd during
+        // SyncSessionManager.start (SecItemCopyMatching can wedge the runner).
+        if !underXCTest {
+            sessionManager.start()
+        }
         timeline.mark("sync.start")
         autoBrightness.start()
         timeline.mark("ambient.start")
@@ -312,7 +318,10 @@ final class AppState {
         automationServer.setDoctorSource { [weak self] in
             self.map { DoctorInputsCollector.report(appState: $0) }
         }
-        automationServer.updateActivation()
+        // XCTest: skip ControlHTTPServer keychain token read (SecItemCopyMatching can wedge).
+        if !underXCTest {
+            automationServer.updateActivation()
+        }
         timeline.mark("automationServer.start")
         tapEngine.start()
         timeline.mark("taps.start")

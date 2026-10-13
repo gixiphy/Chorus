@@ -59,7 +59,7 @@ struct KeepAwakeControllerTests {
         var pendingRestore = false
         var persistRetryNeeded = false
 
-        func refreshAvailability() {}
+        func refreshAvailability(reason: PowerHelperRefreshReason) async {}
         func register() async throws {}
         func unregister() async throws {}
         func openApprovalSettings() {}

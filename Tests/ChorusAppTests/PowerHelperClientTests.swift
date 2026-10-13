@@ -9,20 +9,25 @@ import Testing
 struct PowerHelperAvailabilityMappingTests {
     @Test("SMAppService.Status table — enabled without handshake is connecting")
     func statusTable() {
-        #expect(PowerHelperAvailabilityMapping.availability(from: .notRegistered) == .notRegistered)
-        #expect(PowerHelperAvailabilityMapping.availability(from: .enabled) == .connecting)
-        #expect(PowerHelperAvailabilityMapping.availability(from: .requiresApproval) == .requiresApproval)
-        #expect(PowerHelperAvailabilityMapping.availability(from: .notFound) == .notFound)
+        let notRegistered: SMAppService.Status = .notRegistered
+        let enabled: SMAppService.Status = .enabled
+        let requiresApproval: SMAppService.Status = .requiresApproval
+        let notFound: SMAppService.Status = .notFound
+        #expect(PowerHelperAvailabilityMapping.availability(from: notRegistered) == .notRegistered)
+        #expect(PowerHelperAvailabilityMapping.availability(from: enabled) == .connecting)
+        #expect(PowerHelperAvailabilityMapping.availability(from: requiresApproval) == .requiresApproval)
+        #expect(PowerHelperAvailabilityMapping.availability(from: notFound) == .notFound)
         #expect(
-            PowerHelperAvailabilityMapping.availability(from: .enabled, handshake: .ready) == .ready
+            PowerHelperAvailabilityMapping.availability(from: enabled, handshake: .ready) == .ready
         )
     }
 
     @Test("handshake versionMismatch overrides enabled")
     func handshakeOverride() {
         let mismatch = PowerHelperHandshakeResult.versionMismatch(helper: "1", app: "2")
+        let enabled: SMAppService.Status = .enabled
         #expect(
-            PowerHelperAvailabilityMapping.availability(from: .enabled, handshake: mismatch)
+            PowerHelperAvailabilityMapping.availability(from: enabled, handshake: mismatch)
                 == .versionMismatch(helper: "1", app: "2")
         )
     }
@@ -191,7 +196,7 @@ struct PowerHelperClientConnectionTests {
     }
 
     @Test("refreshAvailability does not mark ready without handshake")
-    func refreshWithoutHandshake() {
+    func refreshWithoutHandshake() async {
         let client = PowerHelperClient(
             appBuild: "136",
             makeProxy: { FakePowerHelperProxy() },
@@ -200,7 +205,7 @@ struct PowerHelperClientConnectionTests {
             unregisterService: {},
             openSettings: {}
         )
-        client.refreshAvailability()
+        await client.refreshAvailability(reason: .launch)
         #expect(client.availability == .connecting)
     }
 
@@ -813,12 +818,80 @@ struct LidCapabilityTests {
     }
 }
 
+@Suite("PERF1 LidClosedSessionStore coalesced persistence")
+struct LidClosedSessionStorePERF1Tests {
+    private final class SinkBox: @unchecked Sendable {
+        private let lock = NSLock()
+        var writes = 0
+        var removes = 0
+        var stored: Data?
+        func set(_ data: Data) { lock.lock(); writes += 1; stored = data; lock.unlock() }
+        func remove() { lock.lock(); removes += 1; lock.unlock() }
+        func data() -> Data? { lock.lock(); defer { lock.unlock() }; return stored }
+        func writeCount() -> Int { lock.lock(); defer { lock.unlock() }; return writes }
+        func removeCount() -> Int { lock.lock(); defer { lock.unlock() }; return removes }
+    }
+
+    @Test("PERF1 twenty identical saves cause one backend write; wallClosedAt stable")
+    func coalesceIdenticalSaves() async {
+        let suite = "chorus.lid.perf1.\(UUID().uuidString)"
+        defer {
+            UserDefaults().removePersistentDomain(forName: suite)
+            LidClosedSessionCoordinator.resetRegistryForTesting(suiteName: suite)
+        }
+        let box = SinkBox()
+        let sink = LidClosedSessionCoordinator.WriteSink(
+            set: { data, _ in box.set(data) },
+            remove: { _ in box.remove() },
+            data: { _ in box.data() }
+        )
+        let store = LidClosedSessionStore(suiteName: suite, writeSink: sink)
+        let t0 = Date(timeIntervalSince1970: 100)
+        for i in 0..<20 {
+            store.save(
+                continuousClosedAt: 50,
+                bootSessionUUID: "BOOT",
+                maxDurationLatched: false,
+                wallClosedAt: Date(timeIntervalSince1970: 100 + Double(i))
+            )
+        }
+        await store.flushPending()
+        #expect(box.writeCount() == 1)
+        let snap = store.load()
+        #expect(snap?.wallClosedAt == t0)
+        #expect(snap?.continuousClosedAt == 50)
+    }
+
+    @Test("PERF1 repeated clear of absent store causes zero removals")
+    func clearAbsentZero() {
+        let suite = "chorus.lid.perf1.clear.\(UUID().uuidString)"
+        defer {
+            UserDefaults().removePersistentDomain(forName: suite)
+            LidClosedSessionCoordinator.resetRegistryForTesting(suiteName: suite)
+        }
+        let box = SinkBox()
+        let sink = LidClosedSessionCoordinator.WriteSink(
+            set: { data, _ in box.set(data) },
+            remove: { _ in box.remove() },
+            data: { _ in nil }
+        )
+        let store = LidClosedSessionStore(suiteName: suite, writeSink: sink)
+        store.clear()
+        store.clear()
+        store.clear()
+        #expect(box.removeCount() == 0)
+    }
+}
+
 @Suite("LidClosedSessionStore continuous deadline (W1-10)")
 struct LidClosedSessionStoreTests {
     @Test("same-boot restore preserves continuous closed-at")
     func sameBootRestore() {
         let suite = "chorus.lid.test.\(UUID().uuidString)"
-        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        defer {
+            UserDefaults().removePersistentDomain(forName: suite)
+            LidClosedSessionCoordinator.resetRegistryForTesting(suiteName: suite)
+        }
         let store = LidClosedSessionStore(suiteName: suite)
         store.save(
             continuousClosedAt: 1000,
@@ -1021,6 +1094,214 @@ struct PowerHelperRepairTests {
         } else {
             Issue.record("expected versionMismatch")
         }
+    }
+}
+
+/// Thread-safe gate for wedging a background SM status reader without blocking MainActor.
+private final class WorkerGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var enteredFlag = false
+    private var releasedFlag = false
+
+    func enterAndWait() {
+        condition.lock()
+        enteredFlag = true
+        condition.broadcast()
+        while !releasedFlag {
+            condition.wait()
+        }
+        condition.unlock()
+    }
+
+    var hasEntered: Bool {
+        condition.lock(); defer { condition.unlock() }
+        return enteredFlag
+    }
+
+    func waitUntilEntered(timeoutSeconds: TimeInterval) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(timeoutSeconds)
+        while ContinuousClock.now < deadline {
+            if hasEntered { return true }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return hasEntered
+    }
+
+    func release() {
+        condition.lock()
+        releasedFlag = true
+        condition.broadcast()
+        condition.unlock()
+    }
+}
+
+@Suite("PERF1 PowerHelperClient background service status")
+@MainActor
+struct PowerHelperClientPERF1StatusTests {
+    @Test("PERF1 slow getter: one physical call, mapping, overlapping refresh joins")
+    func singleFlightAndMapping() async {
+        let gate = WorkerGate()
+        let reader = LockCountedStatusReader(
+            delayImpl: { _ in gate.enterAndWait() },
+            read: { .enabled }
+        )
+        reader.delay = 1
+        let client = PowerHelperClient(
+            appBuild: "136",
+            makeProxy: { FakePowerHelperProxy() },
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let t1 = Task { await client.refreshAvailability(reason: .launch) }
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        let t2 = Task { await client.refreshAvailability(reason: .settingsOpened) }
+        let t3 = Task { await client.refreshAvailability(reason: .wake) }
+        gate.release()
+        await t1.value
+        await t2.value
+        await t3.value
+        #expect(reader.callCount == 1)
+        #expect(client.availability == .connecting)
+        #expect(client.cachedServiceStatusForTesting == .enabled)
+    }
+
+    @Test("PERF1 twenty overlapping refreshes share one physical call")
+    func twentyOverlapping() async {
+        let gate = WorkerGate()
+        let reader = LockCountedStatusReader(
+            delayImpl: { _ in gate.enterAndWait() },
+            read: { .requiresApproval }
+        )
+        reader.delay = 1
+        let client = PowerHelperClient(
+            appBuild: "136",
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let first = Task { await client.refreshAvailability(reason: .settingsOpened) }
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        let rest = (0..<19).map { _ in
+            Task { await client.refreshAvailability(reason: .settingsOpened) }
+        }
+        gate.release()
+        await first.value
+        for task in rest { await task.value }
+        #expect(reader.callCount == 1)
+        #expect(client.availability == .requiresApproval)
+    }
+
+    @Test("PERF1 minimum interval throttles; cached path does zero calls")
+    func minimumIntervalAndCache() async {
+        var clock = 0.0
+        let reader = LockCountedStatusReader { .notRegistered }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            minimumPhysicalInterval: 5,
+            now: { clock },
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        await client.refreshAvailability(reason: .launch)
+        #expect(reader.callCount == 1)
+        for t in [0.0, 1.0, 4.999] {
+            clock = t
+            await client.refreshAvailability(reason: .settingsOpened)
+        }
+        #expect(reader.callCount == 1)
+        clock = 5.0
+        await client.refreshAvailability(reason: .retry)
+        #expect(reader.callCount == 2)
+    }
+
+    @Test("PERF1 timeout returns near deadline; late enabled discarded; no extra getters")
+    func timeoutAndLateResult() async {
+        let gate = WorkerGate()
+        let reader = LockCountedStatusReader(
+            delayImpl: { _ in gate.enterAndWait() },
+            read: { .enabled }
+        )
+        reader.delay = 1 // non-zero triggers delayImpl
+        let client = PowerHelperClient(
+            appBuild: "136",
+            refreshTimeout: 0.1,
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        let start = ContinuousClock.now
+        let refresh = Task { await client.refreshAvailability(reason: .launch) }
+        #expect(await gate.waitUntilEntered(timeoutSeconds: 2))
+        await refresh.value
+        let elapsed = ContinuousClock.now - start
+        #expect(elapsed < .milliseconds(500))
+        #expect(client.availability == .error("serviceStatusTimeout"))
+        #expect(client.physicalInFlightForTesting)
+
+        // While still blocked, 100 more requests must not start getters.
+        let extras = (0..<100).map { _ in
+            Task { await client.refreshAvailability(reason: .userAction) }
+        }
+        await Task.yield()
+        #expect(reader.callCount == 1)
+
+        gate.release()
+        for task in extras { await task.value }
+        #expect(reader.callCount == 1)
+        #expect(client.availability == .error("serviceStatusTimeout"))
+        #expect(client.cachedServiceStatusForTesting == .unknown)
+        #expect(!client.physicalInFlightForTesting)
+    }
+
+    @Test("PERF1 identical effective cache does not re-fire availability callback")
+    func noCallbackForIdenticalCache() async {
+        let reader = LockCountedStatusReader { .notFound }
+        var callbacks = 0
+        let client = PowerHelperClient(
+            appBuild: "136",
+            minimumPhysicalInterval: 5,
+            now: { 0 },
+            statusReader: reader,
+            registerService: {},
+            unregisterService: {},
+            openSettings: {}
+        )
+        client.onAvailabilityChange = { callbacks += 1 }
+        await client.refreshAvailability(reason: .launch)
+        let afterFirst = callbacks
+        await client.refreshAvailability(reason: .settingsOpened)
+        #expect(callbacks == afterFirst)
+        #expect(reader.callCount == 1)
+    }
+
+    @Test("PERF1 post-register userAction bypasses floor once")
+    func registerBypassesFloor() async {
+        var clock = 0.0
+        var status: PowerHelperServiceStatusValue = .notRegistered
+        let reader = LockCountedStatusReader { status }
+        let client = PowerHelperClient(
+            appBuild: "136",
+            callTimeout: 0.5,
+            minimumPhysicalInterval: 5,
+            now: { clock },
+            makeProxy: { FakePowerHelperProxy() },
+            statusReader: reader,
+            registerService: { status = .enabled },
+            unregisterService: {},
+            openSettings: {}
+        )
+        await client.refreshAvailability(reason: .launch)
+        #expect(reader.callCount == 1)
+        clock = 1.0
+        status = .enabled
+        try? await client.register()
+        #expect(reader.callCount == 2)
     }
 }
 

@@ -3,12 +3,99 @@ import Darwin
 import Foundation
 import ServiceManagement
 
+/// Why a service-status refresh was requested (PERF-1).
+enum PowerHelperRefreshReason: Sendable, Equatable {
+    case launch
+    case wake
+    case settingsOpened
+    case userAction
+    case connectionInvalidated
+    case retry
+}
+
+/// Sendable SMAppService status snapshot for background reads (PERF-1).
+enum PowerHelperServiceStatusValue: Sendable, Equatable {
+    case notRegistered
+    case enabled
+    case requiresApproval
+    case notFound
+    case unknown
+
+    init(_ status: SMAppService.Status) {
+        switch status {
+        case .notRegistered: self = .notRegistered
+        case .enabled: self = .enabled
+        case .requiresApproval: self = .requiresApproval
+        case .notFound: self = .notFound
+        @unknown default: self = .unknown
+        }
+    }
+}
+
+/// Worker-safe SM status reader. Never capture MainActor SMAppService in a detached task.
+protocol PowerHelperServiceStatusReading: Sendable {
+    func readStatus() -> PowerHelperServiceStatusValue
+}
+
+/// Production reader: creates/uses daemon on a dedicated serial queue.
+final class SMAppServiceStatusReader: PowerHelperServiceStatusReading, @unchecked Sendable {
+    private let queue: DispatchQueue
+    private let plistName: String
+    private var daemon: SMAppService?
+
+    init(plistName: String, queue: DispatchQueue? = nil) {
+        self.plistName = plistName
+        self.queue = queue ?? DispatchQueue(label: "com.hermes.Chorus.PowerHelper.smStatus")
+    }
+
+    func readStatus() -> PowerHelperServiceStatusValue {
+        queue.sync {
+            if daemon == nil {
+                daemon = SMAppService.daemon(plistName: plistName)
+            }
+            return PowerHelperServiceStatusValue(daemon!.status)
+        }
+    }
+}
+
+/// Test reader with lock-protected call count (PERF-1).
+final class LockCountedStatusReader: PowerHelperServiceStatusReading, @unchecked Sendable {
+    private let lock = NSLock()
+    private let read: () -> PowerHelperServiceStatusValue
+    private(set) var count = 0
+    /// Optional artificial delay inside `readStatus` (simulates wedged SM getter).
+    var delay: TimeInterval = 0
+    private let delayImpl: (TimeInterval) -> Void
+
+    init(
+        delayImpl: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+        read: @escaping () -> PowerHelperServiceStatusValue
+    ) {
+        self.delayImpl = delayImpl
+        self.read = read
+    }
+
+    func readStatus() -> PowerHelperServiceStatusValue {
+        lock.lock()
+        count += 1
+        let delay = self.delay
+        lock.unlock()
+        if delay > 0 { delayImpl(delay) }
+        return read()
+    }
+
+    var callCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return count
+    }
+}
+
 /// App ↔ ChorusPowerHelper XPC client (spec §6.4 / §6.5 / §14.2 / W1-4..6 / W1-13..14).
 @MainActor
 protocol PowerHelperClienting: AnyObject {
     var availability: LidHelperAvailability { get }
     var onAvailabilityChange: (() -> Void)? { get set }
-    func refreshAvailability()
+    func refreshAvailability(reason: PowerHelperRefreshReason) async
     func register() async throws
     func unregister() async throws
     func openApprovalSettings()
@@ -17,10 +104,17 @@ protocol PowerHelperClienting: AnyObject {
     func setSleepDisabledSynchronously(_ on: Bool, timeout: TimeInterval) -> Bool
 }
 
-/// Maps `SMAppService.Status` → `LidHelperAvailability` (pure; V-C06-1).
+/// Maps service status → `LidHelperAvailability` (pure; V-C06-1 / PERF-1).
 enum PowerHelperAvailabilityMapping {
     static func availability(
         from status: SMAppService.Status,
+        handshake: PowerHelperHandshakeResult? = nil
+    ) -> LidHelperAvailability {
+        availability(from: PowerHelperServiceStatusValue(status), handshake: handshake)
+    }
+
+    static func availability(
+        from status: PowerHelperServiceStatusValue,
         handshake: PowerHelperHandshakeResult? = nil
     ) -> LidHelperAvailability {
         switch status {
@@ -36,7 +130,7 @@ enum PowerHelperAvailabilityMapping {
             return .requiresApproval
         case .notFound:
             return .notFound
-        @unknown default:
+        case .unknown:
             return .error("unknown SMAppService.Status")
         }
     }
@@ -160,11 +254,15 @@ final class PowerHelperClient: PowerHelperClienting {
     private let isRelease: Bool
     private let callTimeout: TimeInterval
     private let makeProxy: () -> PowerHelperXPCProxying?
-    private let serviceStatus: () -> SMAppService.Status
+    private let statusReader: any PowerHelperServiceStatusReading
+    private let statusQueue: DispatchQueue
     private let registerService: () throws -> Void
     private let unregisterService: () throws -> Void
     private let openSettings: () -> Void
     private let repairMachine: PowerHelperRepairStateMachine?
+    private let now: () -> TimeInterval
+    private let refreshTimeout: TimeInterval
+    private let minimumPhysicalInterval: TimeInterval
 
     private var proxy: PowerHelperXPCProxying?
     /// Identity of the current proxy — connection events must match (W1-4).
@@ -177,6 +275,24 @@ final class PowerHelperClient: PowerHelperClienting {
     /// At most one automatic repair attempt per client instance (W1-14).
     private var didAttemptProtocolRepair = false
 
+    // MARK: PERF-1 service-status cache / single-flight
+    private var cachedServiceStatus: PowerHelperServiceStatusValue?
+    private var lastSuccessfulSampleAt: TimeInterval?
+    private var lastPhysicalStartAt: TimeInterval?
+    private var cacheEpoch: UInt64 = 0
+    private var physicalInFlightToken: UInt64?
+    private var nextPhysicalToken: UInt64 = 1
+    private var timedOutPhysicalTokens: Set<UInt64> = []
+    private var refreshWaiters: [CheckedContinuation<Void, Never>] = []
+    private var refreshTimeoutTask: Task<Void, Never>?
+    private var pendingPhysicalIntent = false
+    private var bypassFloorOnce = false
+    private var intentionalTeardown = false
+
+    /// Exposed for PERF-1 tests.
+    var cachedServiceStatusForTesting: PowerHelperServiceStatusValue? { cachedServiceStatus }
+    var physicalInFlightForTesting: Bool { physicalInFlightToken != nil }
+
     init(
         plistName: String = PowerHelperConstants.daemonPlistName,
         appBuild: String = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0",
@@ -188,7 +304,12 @@ final class PowerHelperClient: PowerHelperClienting {
             #endif
         }(),
         callTimeout: TimeInterval = 3,
+        refreshTimeout: TimeInterval = 3,
+        minimumPhysicalInterval: TimeInterval = 5,
+        now: @escaping () -> TimeInterval = { Date().timeIntervalSinceReferenceDate },
         makeProxy: (() -> PowerHelperXPCProxying?)? = nil,
+        statusReader: (any PowerHelperServiceStatusReading)? = nil,
+        /// Legacy test seam — wrapped into a lock-counted reader.
         serviceStatus: (() -> SMAppService.Status)? = nil,
         registerService: (() throws -> Void)? = nil,
         unregisterService: (() throws -> Void)? = nil,
@@ -200,27 +321,68 @@ final class PowerHelperClient: PowerHelperClienting {
         self.appBuild = appBuild
         self.isRelease = isRelease
         self.callTimeout = callTimeout
+        self.refreshTimeout = refreshTimeout
+        self.minimumPhysicalInterval = minimumPhysicalInterval
+        self.now = now
+        self.statusQueue = DispatchQueue(label: "com.hermes.Chorus.PowerHelper.smStatus.\(plistName)")
         self.makeProxy = makeProxy ?? {
             RealPowerHelperXPCProxy(
                 machServiceName: PowerHelperConstants.machServiceName,
                 requirement: PowerHelperConstants.helperRequirement(forRelease: isRelease)
             )
         }
-        let daemon = SMAppService.daemon(plistName: plistName)
-        self.serviceStatus = serviceStatus ?? { daemon.status }
-        self.registerService = registerService ?? { try daemon.register() }
-        self.unregisterService = unregisterService ?? { try daemon.unregister() }
-        self.openSettings = openSettings ?? { SMAppService.openSystemSettingsLoginItems() }
+        let underXCTest =
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+        if let statusReader {
+            self.statusReader = statusReader
+        } else if let serviceStatus {
+            self.statusReader = LockCountedStatusReader {
+                PowerHelperServiceStatusValue(serviceStatus())
+            }
+        } else if underXCTest {
+            // Test host must never call real SMAppService.status (wedges the runner).
+            self.statusReader = LockCountedStatusReader { .notRegistered }
+        } else {
+            // Own serial queue inside the reader — never share with the client's dispatch wrapper.
+            self.statusReader = SMAppServiceStatusReader(plistName: plistName)
+        }
+
+        let resolvedRegister: () throws -> Void
+        let resolvedUnregister: () throws -> Void
+        if let registerService {
+            resolvedRegister = registerService
+        } else if underXCTest {
+            resolvedRegister = {}
+        } else {
+            let daemon = SMAppService.daemon(plistName: plistName)
+            resolvedRegister = { try daemon.register() }
+        }
+        if let unregisterService {
+            resolvedUnregister = unregisterService
+        } else if underXCTest {
+            resolvedUnregister = {}
+        } else {
+            let daemon = SMAppService.daemon(plistName: plistName)
+            resolvedUnregister = { try daemon.unregister() }
+        }
+        self.registerService = resolvedRegister
+        self.unregisterService = resolvedUnregister
+        self.openSettings = openSettings ?? {
+            if underXCTest { return }
+            SMAppService.openSystemSettingsLoginItems()
+        }
         if let repairMachine {
             self.repairMachine = repairMachine
-        } else if registerService != nil || unregisterService != nil {
-            // Injected test seams — wrap them so repair never touches real SMAppService.
+        } else if registerService != nil || unregisterService != nil || underXCTest {
+            // Injected / XCTest seams — wrap them so repair never touches real SMAppService.
             self.repairMachine = PowerHelperRepairStateMachine(
-                repairing: InjectedRepairing(register: registerService ?? {}, unregister: unregisterService ?? {}),
+                repairing: InjectedRepairing(register: resolvedRegister, unregister: resolvedUnregister),
                 authorizeRepair: authorizeProtocolRepair
             )
         } else {
             // Production: repair uses the same daemon APIs (Fi A1; not exercised in verifier).
+            let daemon = SMAppService.daemon(plistName: plistName)
             self.repairMachine = PowerHelperRepairStateMachine(
                 repairing: InjectedRepairing(
                     register: { try daemon.register() },
@@ -231,22 +393,154 @@ final class PowerHelperClient: PowerHelperClienting {
         }
     }
 
-    func refreshAvailability() {
-        let mapped = PowerHelperAvailabilityMapping.availability(
-            from: serviceStatus(),
-            handshake: handshakeComplete ? .ready : nil
-        )
-        // If SM says enabled but we have no handshake, stay connecting (W1-4).
-        if case .enabled = serviceStatus(), !handshakeComplete {
-            applyAvailability(.connecting)
+    func refreshAvailability(reason: PowerHelperRefreshReason) async {
+        let t = now()
+        let bypass = bypassFloorOnce && reason == .userAction
+        if bypass { bypassFloorOnce = false }
+
+        if physicalInFlightToken != nil {
+            // Join in-flight physical read (or its timeout). Never enqueue a second getter.
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                refreshWaiters.append(cont)
+            }
             return
         }
-        applyAvailability(mapped)
+
+        let withinFloor: Bool = {
+            guard !bypass, let last = lastPhysicalStartAt else { return false }
+            return t - last < minimumPhysicalInterval
+        }()
+
+        if withinFloor {
+            if let cached = cachedServiceStatus {
+                applyCachedServiceStatus(cached)
+            }
+            return
+        }
+
+        // Register waiter BEFORE kicking the worker so a fast result cannot resume an empty list.
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            refreshWaiters.append(cont)
+            if physicalInFlightToken == nil {
+                beginPhysicalRefreshLocked()
+            }
+        }
+    }
+
+    private func beginPhysicalRefreshLocked() {
+        let token = nextPhysicalToken
+        nextPhysicalToken &+= 1
+        physicalInFlightToken = token
+        lastPhysicalStartAt = now()
+        let epochAtStart = cacheEpoch
+        let reader = statusReader
+        let queue = statusQueue
+
+        refreshTimeoutTask?.cancel()
+        refreshTimeoutTask = Task { @MainActor [weak self] in
+            let ns = UInt64(max(self?.refreshTimeout ?? 3, 0) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: ns)
+            guard let self, !Task.isCancelled else { return }
+            self.handlePhysicalTimeout(token: token, epochAtStart: epochAtStart)
+        }
+
+        queue.async {
+            let value = reader.readStatus()
+            Task { @MainActor [weak self] in
+                self?.handlePhysicalResult(token: token, epochAtStart: epochAtStart, value: value)
+            }
+        }
+    }
+
+    private func handlePhysicalTimeout(token: UInt64, epochAtStart: UInt64) {
+        guard physicalInFlightToken == token else { return }
+        timedOutPhysicalTokens.insert(token)
+        // Complete waiters without waiting for the uncancellable getter.
+        if cacheEpoch == epochAtStart {
+            handshakeComplete = false
+            cachedServiceStatus = .unknown
+            applyAvailability(.error("serviceStatusTimeout"))
+        }
+        resumeRefreshWaiters()
+        // Keep physicalInFlightToken until the worker finishes.
+    }
+
+    private func handlePhysicalResult(
+        token: UInt64,
+        epochAtStart: UInt64,
+        value: PowerHelperServiceStatusValue
+    ) {
+        let wasTimedOut = timedOutPhysicalTokens.remove(token) != nil
+        if physicalInFlightToken == token {
+            physicalInFlightToken = nil
+        }
+        refreshTimeoutTask?.cancel()
+        refreshTimeoutTask = nil
+
+        defer {
+            if pendingPhysicalIntent, physicalInFlightToken == nil, !refreshWaiters.isEmpty {
+                pendingPhysicalIntent = false
+                beginPhysicalRefreshLocked()
+            } else if pendingPhysicalIntent, physicalInFlightToken == nil {
+                pendingPhysicalIntent = false
+                Task { await self.refreshAvailability(reason: .retry) }
+            }
+        }
+
+        // Stale / timed-out / superseded results never recreate ready evidence.
+        if wasTimedOut || cacheEpoch != epochAtStart {
+            resumeRefreshWaiters() // late joiners after timeout
+            return
+        }
+
+        lastSuccessfulSampleAt = now()
+        applyCachedServiceStatus(value)
+        resumeRefreshWaiters()
+    }
+
+    private func resumeRefreshWaiters() {
+        let waiters = refreshWaiters
+        refreshWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    private func applyCachedServiceStatus(_ status: PowerHelperServiceStatusValue) {
+        cachedServiceStatus = status
+        switch status {
+        case .requiresApproval, .notRegistered, .notFound, .unknown:
+            handshakeComplete = false
+            // Revoke hold confirmation / ready evidence immediately.
+            if proxy != nil, status != .unknown {
+                // Keep connection only for unknown/timeout; hard SM states drop ready.
+            }
+            let mapped = PowerHelperAvailabilityMapping.availability(
+                from: status,
+                handshake: nil
+            )
+            applyAvailability(mapped)
+        case .enabled:
+            // Enabled cache alone never means ready — derive from current handshake evidence.
+            let mapped = PowerHelperAvailabilityMapping.availability(
+                from: status,
+                handshake: handshakeComplete ? .ready : nil
+            )
+            applyAvailability(mapped)
+        }
+    }
+
+    private func invalidateServiceCache(allowFloorBypass: Bool) {
+        cacheEpoch &+= 1
+        cachedServiceStatus = nil
+        lastSuccessfulSampleAt = nil
+        if allowFloorBypass {
+            bypassFloorOnce = true
+        }
     }
 
     func register() async throws {
         try registerService()
-        refreshAvailability()
+        invalidateServiceCache(allowFloorBypass: true)
+        await refreshAvailability(reason: .userAction)
         if case .requiresApproval = availability { return }
         _ = try await status()
     }
@@ -298,10 +592,11 @@ final class PowerHelperClient: PowerHelperClienting {
         try requireRecoveryEvidence()
         try Self.verifyUnregisterEvidence(finalStatus, phase: .final)
 
-        invalidateConnection()
+        invalidateConnection(intentional: true)
         try unregisterService()
         handshakeComplete = false
-        refreshAvailability()
+        invalidateServiceCache(allowFloorBypass: true)
+        await refreshAvailability(reason: .userAction)
     }
 
     private func requireRecoveryEvidence() throws {
@@ -479,11 +774,20 @@ final class PowerHelperClient: PowerHelperClienting {
         proxy?.onConnectionEvent = nil
         proxy?.invalidate()
         proxy = nil
+        // Revoke ready/hold display synchronously.
         applyAvailability(.connecting)
+        cacheEpoch &+= 1
+        cachedServiceStatus = nil
+        lastSuccessfulSampleAt = nil
+        // Unexpected invalidation schedules one refresh; intentional teardown must not reconnect.
+        if !intentionalTeardown {
+            Task { await self.refreshAvailability(reason: .connectionInvalidated) }
+        }
         _ = event
     }
 
-    func invalidateConnection() {
+    func invalidateConnection(intentional: Bool = false) {
+        intentionalTeardown = intentional
         generation += 1
         handshakeComplete = false
         connectionToken = 0
@@ -491,6 +795,10 @@ final class PowerHelperClient: PowerHelperClienting {
         proxy?.invalidate()
         proxy = nil
         applyAvailability(.connecting)
+        if intentional {
+            // Reset after teardown so a later unexpected event can still refresh.
+            intentionalTeardown = false
+        }
     }
 
     private func beginGeneration() -> UInt64 {
