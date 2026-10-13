@@ -1810,4 +1810,48 @@ struct LidSleepGuardControllerTests {
             await Task.yield()
         }
         #expect(controller.wantsSleepDisabled)
-    }}
+    }
+
+    @Test("PERF1-NEW-4 recoveryBlocked to healthy-idle cancels armed retry", .timeLimit(.minutes(1)))
+    func perf1New4HealthyIdleCancelsArmedRetry() async throws {
+        let helper = FakeHelper()
+        helper.availability = .ready
+        helper.recoveryBlocked = true
+        let sleepGate = PERF1EvidenceSleepGate()
+        let (controller, _, _, _) = makeController(
+            helper: helper,
+            heartbeat: 3_600,
+            evidenceSleep: { await sleepGate.sleep($0) }
+        )
+        defer { controller.shutdown() }
+
+        await controller.refreshHelperAvailabilityAsync(reason: .wake)
+        #expect(controller.leftover == .recoveryBlocked)
+        let armed = ContinuousClock.now + .seconds(2)
+        while sleepGate.delayCount < 1, ContinuousClock.now < armed {
+            await Task.yield()
+        }
+        #expect(sleepGate.delayCount == 1)
+        let refreshBeforeHealthy = helper.refreshCalls.count
+        let statusBeforeHealthy = helper.statusCalls
+
+        // Recover to healthy idle (policy does not want hold) — must cancel armed retry.
+        helper.recoveryBlocked = false
+        await controller.refreshHelperAvailabilityAsync(reason: .wake)
+        #expect(controller.leftover == nil)
+        #expect(helper.statusCalls == statusBeforeHealthy + 1)
+
+        let retryRefreshesBefore = helper.refreshCalls.filter { $0 == .retry }.count
+        // Release the previously armed sleep — invalidated generation must do nothing.
+        sleepGate.releaseOne()
+        let settleDeadline = ContinuousClock.now + .seconds(1)
+        while ContinuousClock.now < settleDeadline {
+            await Task.yield()
+        }
+        #expect(helper.refreshCalls.filter { $0 == .retry }.count == retryRefreshesBefore)
+        #expect(helper.refreshCalls.count == refreshBeforeHealthy + 1)
+        #expect(helper.statusCalls == statusBeforeHealthy + 1)
+        #expect(helper.setCalls.filter { $0 }.isEmpty)
+        #expect(sleepGate.delayCount == 1)
+    }
+}
