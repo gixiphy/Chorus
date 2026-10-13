@@ -2028,6 +2028,11 @@ struct LidSleepGuardControllerTests {
         #expect(controller.leftover == .recoveryBlocked)
 
         let statusAfterLaunch = helper.statusCalls
+        // releaseOne() 在沒有等待者時是 no-op：先等重試任務真的睡進 gate，否則偶發漏掉這一拍。
+        let registered = ContinuousClock.now + .seconds(2)
+        while sleepGate.recordedDelays.isEmpty, ContinuousClock.now < registered {
+            await Task.yield()
+        }
         sleepGate.releaseOne()
         let deadline = ContinuousClock.now + .seconds(2)
         while helper.statusCalls <= statusAfterLaunch, ContinuousClock.now < deadline {
