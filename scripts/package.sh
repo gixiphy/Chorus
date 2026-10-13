@@ -153,10 +153,10 @@ fi
 # --verify --deep --strict 對開發簽章一樣會過，所以還要逐個巢狀 binary 確認
 # Developer ID、Hardened Runtime、timestamp（PKG-11）。無正式憑證不得標公證 PASS。
 verify_nested_devid() {
-  local path="$1"
+  local target="$1"
   local label="$2"
   local info
-  info=$(codesign -dv --verbose=4 "$path" 2>&1)
+  info=$(codesign -dv --verbose=4 "$target" 2>&1)
   if ! grep -q '^Authority=Developer ID Application' <<< "$info"; then
     echo "✗ $label 不是 Developer ID 憑證：" >&2
     grep '^Authority=' <<< "$info" >&2 || true
