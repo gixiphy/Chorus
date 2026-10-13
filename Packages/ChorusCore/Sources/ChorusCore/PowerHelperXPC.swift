@@ -148,6 +148,12 @@ public enum PMSetOutputParser {
         "highstandbythreshold", "gpuswitch", "halfdim", "lessbright",
         "lowpowermode", "powermode", "DestroyFVKeyOnStandby",
         "sleeppreventedby", "displaysleeppreventedby",
+        "Sleep On Power Button",
+    ]
+
+    /// Multi-word keys matched before whitespace splitting (longest first).
+    private static let multiWordSettingKeys: [String] = [
+        "Sleep On Power Button",
     ]
 
     /// 解析 `pmset -g` 輸出中的 SleepDisabled。
@@ -160,10 +166,10 @@ public enum PMSetOutputParser {
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        guard let rows = parseValidatedRows(trimmed) else { return nil }
+        guard let parsed = parseValidatedRows(trimmed) else { return nil }
 
         var seen: Bool?
-        for row in rows where row.key == "SleepDisabled" {
+        for row in parsed.rows where row.key == "SleepDisabled" {
             let value: Bool
             switch row.value {
             case "1": value = true
@@ -175,6 +181,11 @@ public enum PMSetOutputParser {
             }
             seen = value
         }
+        // Shortened/unclosed assertion annotation without an explicit SleepDisabled
+        // target cannot prove complete output (PERF-1 / NEW-1).
+        if seen == nil, parsed.hasUnclosedAnnotation {
+            return nil
+        }
         // 完整結構且無 SleepDisabled 列 → 視為未設定（false）
         return seen ?? false
     }
@@ -182,6 +193,13 @@ public enum PMSetOutputParser {
     private struct SettingRow: Equatable {
         var key: String
         var value: String
+        /// sleep/displaysleep annotation present but missing a closing `)`.
+        var unclosedAnnotation: Bool = false
+    }
+
+    private struct ParsedRows {
+        var rows: [SettingRow]
+        var hasUnclosedAnnotation: Bool
     }
 
     /// 嚴格標頭＋列文法；失敗回 nil。
@@ -192,7 +210,7 @@ public enum PMSetOutputParser {
     /// 型式正確的未知設定列，但 SleepDisabled 必須是明確的單一 0／1（不得帶註解／垃圾）。
     /// 精簡文法（無標頭）：每一非空列都必須是合法已知設定列，且
     /// （含 SleepDisabled）或（≥2 列）。不得靠 substring 僞標頭過關。
-    private static func parseValidatedRows(_ text: String) -> [SettingRow]? {
+    private static func parseValidatedRows(_ text: String) -> ParsedRows? {
         let lines = text.split(whereSeparator: \.isNewline).map {
             $0.trimmingCharacters(in: .whitespaces)
         }.filter { !$0.isEmpty }
@@ -202,6 +220,7 @@ public enum PMSetOutputParser {
         var hasHeader = false
         var rows: [SettingRow] = []
         var garbageLineCount = 0
+        var hasUnclosedAnnotation = false
 
         for line in lines {
             if isHeaderLine(line) {
@@ -210,6 +229,7 @@ public enum PMSetOutputParser {
             }
             switch classifySettingLine(line) {
             case .valid(let row):
+                if row.unclosedAnnotation { hasUnclosedAnnotation = true }
                 rows.append(row)
             case .malformedSleepDisabled, .malformedKnownKey:
                 return nil
@@ -223,18 +243,21 @@ public enum PMSetOutputParser {
 
         if hasHeader {
             guard garbageLineCount == 0, !rows.isEmpty else { return nil }
-            return rows
+            return ParsedRows(rows: rows, hasUnclosedAnnotation: hasUnclosedAnnotation)
         }
 
         // 精簡文法：禁止夾雜非設定列；不得用 contains 僞標頭
         guard garbageLineCount == 0, !rows.isEmpty else { return nil }
         let hasSleepDisabled = rows.contains { $0.key == "SleepDisabled" }
         guard hasSleepDisabled || rows.count >= 2 else { return nil }
-        return rows
+        return ParsedRows(rows: rows, hasUnclosedAnnotation: hasUnclosedAnnotation)
     }
 
     private static func isHeaderLine(_ line: String) -> Bool {
         if line == "System-wide power settings:" {
+            return true
+        }
+        if line == "Currently in use:" {
             return true
         }
         return ["Currently on AC Power:", "Currently on Battery Power:", "Currently on UPS Power:"].contains(line)
@@ -250,69 +273,117 @@ public enum PMSetOutputParser {
         case other
     }
 
-    /// Keys where Apple may append a balanced `(…)` assertion annotation after the value.
+    /// Keys where Apple may append a `(sleep|display sleep prevented by …)` annotation.
     private static let annotatableSettingKeys: Set<String> = [
         "sleep", "displaysleep",
     ]
 
     private static func classifySettingLine(_ line: String) -> LineClass {
-        let parts = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        guard let key = parts.first, !key.isEmpty else { return .other }
-
-        if key == "SleepDisabled" {
-            // 嚴格：恰好兩欄且值為 0／1。不得忽略「SleepDisabled: 1」或多餘 token。
-            guard parts.count == 2, parts[1] == "0" || parts[1] == "1" else {
+        // SleepDisabled: full-row anchored, case-sensitive, ASCII 0/1 only, trailing whitespace OK
+        // (line already trimmed). Never match by substring in another row.
+        if line == "SleepDisabled" || line.hasPrefix("SleepDisabled") {
+            let rest: Substring
+            if line == "SleepDisabled" {
                 return .malformedSleepDisabled
             }
-            return .valid(SettingRow(key: key, value: parts[1]))
+            guard line.hasPrefix("SleepDisabled") else { return .other }
+            rest = line.dropFirst("SleepDisabled".count)
+            guard let first = rest.first, first.isWhitespace else {
+                // e.g. SleepDisabled: / SleepDisabled= — not a whitespace-separated row.
+                return .malformedSleepDisabled
+            }
+            let tokens = rest.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            guard tokens.count == 1, tokens[0] == "0" || tokens[0] == "1" else {
+                return .malformedSleepDisabled
+            }
+            return .valid(SettingRow(key: "SleepDisabled", value: tokens[0]))
         }
 
+        if let matched = matchMultiWordSetting(line) {
+            return classifyParsedSetting(key: matched.key, value: matched.value, tail: matched.tail)
+        }
+
+        let parts = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard let key = parts.first, !key.isEmpty else { return .other }
         guard parts.count >= 2 else {
             return knownSettingKeys.contains(key) ? .malformedKnownKey : .other
         }
         let value = parts[1]
+        let tailParts = Array(parts.dropFirst(2))
+        return classifyParsedSetting(key: key, value: value, tail: tailParts)
+    }
+
+    private static func matchMultiWordSetting(
+        _ line: String
+    ) -> (key: String, value: String, tail: [String])? {
+        for key in multiWordSettingKeys {
+            guard line.hasPrefix(key) else { continue }
+            let rest = line.dropFirst(key.count)
+            guard let first = rest.first, first.isWhitespace else { return nil }
+            let tokens = rest.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            guard let value = tokens.first else { return nil }
+            return (key, value, Array(tokens.dropFirst()))
+        }
+        return nil
+    }
+
+    private static func classifyParsedSetting(key: String, value: String, tail: [String]) -> LineClass {
         guard isValidSettingValue(key: key, value: value) else {
             return knownSettingKeys.contains(key) ? .malformedKnownKey : .other
         }
 
-        // NEW-1: only sleep/displaysleep may carry a balanced parenthetical annotation;
-        // every other setting (known or unknown) must be exactly key + value.
-        if !isSupportedSettingTail(key: key, parts: parts) {
+        // Only sleep/displaysleep may carry an assertion annotation with the expected
+        // prefix; remainder is opaque (pmset may shorten / omit the closing paren).
+        let tailClass = classifySettingTail(key: key, tail: tail)
+        guard tailClass != .invalid else {
             return knownSettingKeys.contains(key) ? .malformedKnownKey : .other
         }
+        let unclosed = tailClass == .unclosedAnnotation
 
         if knownSettingKeys.contains(key) {
-            return .valid(SettingRow(key: key, value: value))
+            return .valid(SettingRow(key: key, value: value, unclosedAnnotation: unclosed))
         }
         // 未知鍵但文法像設定列（無垃圾尾）→ 標頭模式可忽略。
-        if looksLikeSettingKey(key) {
+        // Unclosed annotations are only defined for known annotatable keys.
+        if !unclosed, looksLikeSettingKey(key) {
             return .ignorableUnknownSetting
         }
         return .other
     }
 
-    /// Accept only empty tails, or a single balanced `(…)` annotation on annotatable keys.
-    private static func isSupportedSettingTail(key: String, parts: [String]) -> Bool {
-        guard parts.count > 2 else { return true }
-        guard annotatableSettingKeys.contains(key) else { return false }
-        let tail = parts[2...].joined(separator: " ")
-        guard tail.first == "(", tail.last == ")", tail.count > 2,
-              !tail.dropFirst().dropLast().trimmingCharacters(in: .whitespaces).isEmpty
-        else { return false }
-        var depth = 0
-        for (index, character) in tail.enumerated() {
-            if character == "(" {
-                depth += 1
-            } else if character == ")" {
-                depth -= 1
-                // Once the outer group closes, no more text or groups are permitted.
-                if depth < 0 || (depth == 0 && index != tail.count - 1) { return false }
-            }
+    private enum TailClass {
+        case none
+        case closedAnnotation
+        case unclosedAnnotation
+        case invalid
+    }
+
+    /// Empty tails always OK. Annotatable keys may have opaque text after the
+    /// expected parenthetical prefix; balanced parentheses are not required.
+    private static func classifySettingTail(key: String, tail: [String]) -> TailClass {
+        guard !tail.isEmpty else { return .none }
+        guard annotatableSettingKeys.contains(key) else { return .invalid }
+        let joined = tail.joined(separator: " ")
+        let expectedPrefix: String
+        switch key {
+        case "sleep":
+            expectedPrefix = "(sleep prevented by "
+        case "displaysleep":
+            expectedPrefix = "(display sleep prevented by "
+        default:
+            return .invalid
         }
-        return depth == 0
+        guard joined.hasPrefix(expectedPrefix), joined.count > expectedPrefix.count else {
+            return .invalid
+        }
+        return joined.last == ")" ? .closedAnnotation : .unclosedAnnotation
     }
 
     private static func looksLikeSettingKey(_ key: String) -> Bool {
+        // Multi-word keys use spaces; single-token keys are alnum/_/-.
+        if key.contains(" ") {
+            return multiWordSettingKeys.contains(key)
+        }
         guard key.unicodeScalars.count >= 2 else { return false }
         return key.unicodeScalars.allSatisfy { scalar in
             CharacterSet.alphanumerics.contains(scalar) || scalar == "_" || scalar == "-"

@@ -170,9 +170,9 @@ struct PowerHelperXPCTests {
         """) == nil)
     }
 
-    @Test("NEW-1 incomplete annotation / non-annotatable garbage tails fail closed")
+    @Test("NEW-1 / PERF1 annotation tails: valid target vs missing-target completeness")
     func annotationTailValidation() {
-        // Incomplete parenthetical — must not parse as a valid sleep row → nil.
+        // Missing-target: truncated annotation prefix cannot establish complete output → nil.
         #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
         System-wide power settings:
          Currently on AC Power:
@@ -180,6 +180,16 @@ struct PowerHelperXPCTests {
          disksleep         10
          displaysleep      2
         """) == nil)
+
+        // Valid SleepDisabled target + fixture-style shortened (unclosed) annotation → value.
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+         Currently on AC Power:
+         SleepDisabled     0
+         sleep 1 (sleep prevented by LINE.AudioService, LINE.
+         disksleep         10
+         displaysleep      2
+        """) == false)
 
         // Arbitrary garbage on a non-annotatable known key.
         #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
@@ -208,6 +218,98 @@ struct PowerHelperXPCTests {
          SleepDisabled     0
          displaysleep      2
         """) == false)
+    }
+
+    /// User-supplied M1 / macOS 27.0.1 `pmset -g` capture (docs/research/pmset-g-m1-macos27.txt).
+    /// Process exit / truncation metadata were not recorded in the text file; bytes preserved verbatim.
+    static let perf1M1MacOS27Fixture = """
+    System-wide power settings:
+     SleepDisabled\t\t0
+    Currently in use:
+     standby              1
+     Sleep On Power Button 1
+     hibernatefile        /var/vm/sleepimage
+     powernap             1
+     networkoversleep     0
+     disksleep            10
+     sleep                1 (sleep prevented by LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.
+     hibernatemode        3
+     ttyskeepawake        1
+     displaysleep         5
+     tcpkeepalive         1
+     lowpowermode         0
+     womp                 1
+    """
+
+    @Test("PERF1 real M1 macOS 27 fixture parses SleepDisabled 0/1")
+    func perf1RealM1Fixture() {
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: Self.perf1M1MacOS27Fixture) == false)
+        let on = Self.perf1M1MacOS27Fixture.replacingOccurrences(
+            of: "SleepDisabled\t\t0",
+            with: "SleepDisabled\t\t1"
+        )
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: on) == true)
+    }
+
+    @Test("PERF1 headers, multi-word key, paths, whitespace, annotation forms")
+    func perf1GrammarEdges() {
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+        Currently in use:
+        standby 1
+        SleepDisabled 0
+        """) == false)
+
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+        Currently in use:
+        Sleep On Power Button 1
+        hibernatefile /var/vm/sleepimage
+        SleepDisabled 1
+        """) == true)
+
+        // Tabs / spaces / CRLF
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: "SleepDisabled\t\t0\r\ndisksleep\t10\r\nsleep 1") == false)
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: "  SleepDisabled   1  \n  disksleep   10  ") == true)
+
+        // Full balanced annotations
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+        System-wide power settings:
+        Currently on AC Power:
+        sleep 0 (sleep prevented by power assertion)
+        displaysleep 0 (display sleep prevented by power assertion)
+        SleepDisabled 0
+        """) == false)
+
+        // Unclosed/shortened annotation without SleepDisabled target → incomplete → nil
+        let shortenedNoTarget = """
+        System-wide power settings:
+        Currently in use:
+        disksleep 10
+        sleep                1 (sleep prevented by LINE.AudioService, LINE.
+        displaysleep 5
+        """
+        #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: shortenedNoTarget) == nil)
+
+        // SleepDisabled strictness
+        for bad in [
+            "SleepDisabled",
+            "SleepDisabled:",
+            "SleepDisabled: 1",
+            "SleepDisabled=1",
+            "SleepDisabled 2",
+            "SleepDisabled 01",
+            "SleepDisabled -1",
+            "SleepDisabled １",
+            "SleepDisabled 1 extra",
+            "SleepDisabled 1 (note)",
+        ] {
+            #expect(PMSetOutputParser.sleepDisabled(fromPMSetG: """
+            System-wide power settings:
+            disksleep 10
+            \(bad)
+            """) == nil)
+        }
     }
 
     @Test("V-C03-7 / W0-10 ChorusPowerHelperXPC enumerates exactly two required methods")

@@ -1035,6 +1035,193 @@ struct PMSetRunnerTimeoutTests {
     }
 }
 
+@Suite("PERF1 PMSetRunner→startup A8 fixture regression")
+struct PowerHelperServicePERF1A8Tests {
+    /// Same bytes as ChorusCoreTests PowerHelperXPCTests.perf1M1MacOS27Fixture (do not load docs/).
+    private static let m1Fixture = """
+    System-wide power settings:
+     SleepDisabled\t\t0
+    Currently in use:
+     standby              1
+     Sleep On Power Button 1
+     hibernatefile        /var/vm/sleepimage
+     powernap             1
+     networkoversleep     0
+     disksleep            10
+     sleep                1 (sleep prevented by LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.AudioService, LINE.
+     hibernatemode        3
+     ttyskeepawake        1
+     displaysleep         5
+     tcpkeepalive         1
+     lowpowermode         0
+     womp                 1
+    """
+
+    private final class RecordingProcess: @unchecked Sendable {
+        var stdout: Data
+        var exitCode: Int32 = 0
+        var truncated = false
+        /// After a successful write, subsequent `-g` reads use this SleepDisabled line.
+        var sleepDisabledOverride: Bool?
+        private(set) var callCount = 0
+        private(set) var sawRealPMSet = false
+
+        init(stdout: Data) { self.stdout = stdout }
+
+        func run(
+            executableURL: URL,
+            arguments: [String],
+            timeout: TimeInterval
+        ) throws -> (exitCode: Int32, stdout: Data, stderr: Data, truncated: Bool) {
+            callCount += 1
+            if executableURL.path == "/usr/bin/pmset" {
+                // Production default path must never be executed; injection still records the URL.
+                sawRealPMSet = true
+            }
+            if arguments == PMSetArgumentBuilder.writeArguments(enabled: true)
+                || arguments == PMSetArgumentBuilder.writeArguments(enabled: false) {
+                let enabled = arguments.last == "1"
+                sleepDisabledOverride = enabled
+                return (exitCode, Data(), Data(), truncated)
+            }
+            // Read path
+            if let override = sleepDisabledOverride {
+                let text = "System-wide power settings:\nSleepDisabled\t\t\(override ? "1" : "0")\ndisksleep 10\nsleep 1\n"
+                return (exitCode, Data(text.utf8), Data(), truncated)
+            }
+            return (exitCode, stdout, Data(), truncated)
+        }
+    }
+
+    private func waitReady(_ service: PowerHelperService, seconds: TimeInterval = 2) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !service.startupReadyForTesting(), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    }
+
+    private func driveSet(
+        service: PowerHelperService,
+        enabled: Bool,
+        connectionID: UInt64 = 1,
+        uid: UInt32 = 501,
+        pid: Int32 = 1
+    ) -> (status: Data?, error: String?) {
+        let box = ReplyBox()
+        let exported = PowerHelperService.ExportedObject(
+            service: service, connectionID: connectionID, uid: uid, pid: pid
+        )
+        let sem = DispatchSemaphore(value: 0)
+        exported.setSleepDisabled(enabled) { data, error in
+            box.status = data
+            box.error = error
+            sem.signal()
+        }
+        _ = sem.wait(timeout: .now() + 5)
+        return (box.status, box.error)
+    }
+
+    @Test("PERF1 fixture 0 + missing ledger: startupReady, not recoveryBlocked, admit acquire")
+    func fixtureZeroFirstInstallAdmits() throws {
+        let io = RecordingProcess(stdout: Data(Self.m1Fixture.utf8))
+        let runner = PMSetRunner(
+            executableURL: URL(fileURLWithPath: "/tmp/chorus-perf1-fake-pmset"),
+            runProcess: io.run
+        )
+        let store = FakeLedgerStore()
+        let service = PowerHelperService(
+            runner: runner,
+            store: store,
+            safety: FakeSafety(),
+            helperBuild: "136",
+            onIdleExit: {}
+        )
+        service.start()
+        defer { service.stopTimersForTesting() }
+        waitReady(service)
+        #expect(service.startupReadyForTesting())
+        #expect(service.ledgerSnapshotForTesting().recoveryBlocked == false)
+        #expect(io.sawRealPMSet == false)
+        #expect(io.callCount >= 1)
+
+        let result = driveSet(service: service, enabled: true)
+        #expect(result.error == nil)
+        #expect(service.ledgerSnapshotForTesting().holders.count == 1)
+        #expect(io.sleepDisabledOverride == true)
+    }
+
+    @Test("PERF1 unparseable / nonzero / truncated block startup acquire")
+    func failClosedTransportAndParse() {
+        for makeIO in [
+            { () -> RecordingProcess in
+                let io = RecordingProcess(stdout: Data("not pmset output".utf8))
+                return io
+            },
+            { () -> RecordingProcess in
+                let io = RecordingProcess(stdout: Data(Self.m1Fixture.utf8))
+                io.exitCode = 1
+                return io
+            },
+            { () -> RecordingProcess in
+                let io = RecordingProcess(stdout: Data(Self.m1Fixture.utf8))
+                io.truncated = true
+                return io
+            },
+        ] as [() -> RecordingProcess] {
+            let io = makeIO()
+            let runner = PMSetRunner(
+                executableURL: URL(fileURLWithPath: "/tmp/chorus-perf1-fake-pmset"),
+                runProcess: io.run
+            )
+            let store = FakeLedgerStore()
+            let service = PowerHelperService(
+                runner: runner,
+                store: store,
+                safety: FakeSafety(),
+                helperBuild: "136",
+                onIdleExit: {}
+            )
+            service.start()
+            defer { service.stopTimersForTesting() }
+            waitReady(service)
+            #expect(service.ledgerSnapshotForTesting().recoveryBlocked == true)
+            let result = driveSet(service: service, enabled: true)
+            #expect(result.error == "recoveryBlocked")
+            #expect(service.ledgerSnapshotForTesting().holders.isEmpty)
+            #expect(store.saveCount == 0 || service.ledgerSnapshotForTesting().setByHelper == false)
+        }
+    }
+
+    @Test("PERF1 fixture SleepDisabled 1 + missing ledger → recoveryBlocked, no writes")
+    func fixtureOneMissingLedgerBlocked() {
+        let on = Self.m1Fixture.replacingOccurrences(of: "SleepDisabled\t\t0", with: "SleepDisabled\t\t1")
+        let io = RecordingProcess(stdout: Data(on.utf8))
+        let runner = PMSetRunner(
+            executableURL: URL(fileURLWithPath: "/tmp/chorus-perf1-fake-pmset"),
+            runProcess: io.run
+        )
+        let store = FakeLedgerStore()
+        let service = PowerHelperService(
+            runner: runner,
+            store: store,
+            safety: FakeSafety(),
+            helperBuild: "136",
+            onIdleExit: {}
+        )
+        service.start()
+        defer { service.stopTimersForTesting() }
+        waitReady(service)
+        #expect(service.ledgerSnapshotForTesting().recoveryBlocked == true)
+        let writesBefore = io.callCount
+        let result = driveSet(service: service, enabled: true)
+        #expect(result.error == "recoveryBlocked")
+        #expect(service.ledgerSnapshotForTesting().holders.isEmpty)
+        // No write argv after the initial startup read.
+        #expect(io.sleepDisabledOverride == nil)
+        #expect(io.callCount == writesBefore)
+    }
+}
+
 @Suite("PowerHelperService startup reconcile (W1-15)")
 struct PowerHelperServiceStartupTests {
     @Test("startup reconcile is async; RPC waits without same-queue deadlock")
