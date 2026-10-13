@@ -1,7 +1,7 @@
 import Foundation
 
 /// 防睡眠模式。時間一律以 uptime 秒計（不受使用者改系統時鐘影響）。
-public enum KeepAwakeMode: Sendable, Equatable, Codable, Hashable {
+public enum KeepAwakeMode: Sendable, Equatable, Hashable {
     case off
     /// 從啟用起算 N 秒後自動失效（選單提供 30m／1h）。
     case duration(seconds: Double)
@@ -14,16 +14,54 @@ public enum KeepAwakeMode: Sendable, Equatable, Codable, Hashable {
     /// （學 Amphetamine 的 "app trigger"）。判斷依據是**行程還在**，
     /// 不是它在不在最前景：影片、算圖、會議都可能被切到背景。
     case whileAppRunning(bundleID: String)
-    /// 有 AI agent 在工作時才防睡眠——agent 收工即自動失效
-    /// （學 Orca 的 "Keep computer awake: Agent"）。
+    /// 有 AI agent 在工作**或**整機高負載時才防睡眠。
+    /// agent 側看多來源 OR＋寬限；負載側看 CPU／GPU／網路狀態機。
+    /// 兩邊各自遲滯，OR 之後兩邊都放開才放開。
     ///
     /// 同時保持螢幕與系統清醒，避免工作被待機中斷。見 `assertionPlan`。
+    ///
+    /// 舊 JSON／FocusSession 的 `whileSystemBusy` 解碼成本 case。
     case whileAgentsWorking
-    /// 整機 CPU／GPU／網路持續高負載時才防睡眠——負載消退後自動解除。
-    case whileSystemBusy
 }
 
-/// 持有期間各擋哪一種待機。Agent 模式同時擋螢幕與系統待機，
+extension KeepAwakeMode: Codable {
+    /// 與舊合成 Codable 同形；`whileSystemBusy` 只用於解碼遷移。
+    private enum Wire: Codable, Equatable {
+        case off
+        case duration(seconds: Double)
+        case indefinite
+        case whileDisplayConnected(uuid: String)
+        case whileAppRunning(bundleID: String)
+        case whileAgentsWorking
+        case whileSystemBusy
+    }
+
+    public init(from decoder: Decoder) throws {
+        let wire = try Wire(from: decoder)
+        switch wire {
+        case .off: self = .off
+        case let .duration(seconds): self = .duration(seconds: seconds)
+        case .indefinite: self = .indefinite
+        case let .whileDisplayConnected(uuid): self = .whileDisplayConnected(uuid: uuid)
+        case let .whileAppRunning(bundleID): self = .whileAppRunning(bundleID: bundleID)
+        case .whileAgentsWorking, .whileSystemBusy: self = .whileAgentsWorking
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        let wire: Wire = switch self {
+        case .off: .off
+        case let .duration(seconds): .duration(seconds: seconds)
+        case .indefinite: .indefinite
+        case let .whileDisplayConnected(uuid): .whileDisplayConnected(uuid: uuid)
+        case let .whileAppRunning(bundleID): .whileAppRunning(bundleID: bundleID)
+        case .whileAgentsWorking: .whileAgentsWorking
+        }
+        try wire.encode(to: encoder)
+    }
+}
+
+/// 持有期間各擋哪一種待機。合併模式（`.whileAgentsWorking`）同時擋螢幕與系統待機，
 /// 其餘模式一定擋螢幕待機、系統待機看設定。
 public struct KeepAwakeAssertionPlan: Sendable, Equatable, Hashable {
     public let preventsDisplaySleep: Bool
@@ -42,7 +80,7 @@ public enum KeepAwakePlanner {
     ///   - startedAt: 進入該模式時的 uptime；`.duration` 以此起算。nil 視為未啟用。
     ///   - connectedDisplayUUIDs: 目前在線的顯示器 UUID。
     ///   - runningAppBundleIDs: 目前執行中的 App bundle ID。
-    ///   - agentsWorking: 目前是否有 AI agent 在工作（見 `AgentActivityPlanner`）。
+    ///   - agentsWorking: 目前是否有 AI agent 在工作（見 `AgentActivityPlanner`／hub）。
     ///   - systemBusy: 目前系統負載狀態機是否要求持有（見 `SystemLoadActivityPlanner`）。
     ///   - powerFloorTripped: 電量／溫度底線是否要求暫停（見 `PowerFloorPolicy`）。
     ///
@@ -75,16 +113,13 @@ public enum KeepAwakePlanner {
             return runningAppBundleIDs.contains(bundleID)
         case .whileAgentsWorking:
             guard startedAt != nil else { return false }
-            return agentsWorking
-        case .whileSystemBusy:
-            guard startedAt != nil else { return false }
-            return systemBusy
+            return agentsWorking || systemBusy
         }
     }
 
     /// 這個模式在持有期間各要擋哪一種待機。
     ///
-    /// 所有模式都擋螢幕待機。Agent 模式固定加擋系統待機，
+    /// 所有模式都擋螢幕待機。合併模式固定加擋系統待機，
     /// 其餘模式的系統待機保護依「連系統待機一起擋」開關決定。
     public static func assertionPlan(
         mode: KeepAwakeMode,
@@ -93,7 +128,7 @@ public enum KeepAwakePlanner {
         switch mode {
         case .whileAgentsWorking:
             KeepAwakeAssertionPlan(preventsDisplaySleep: true, preventsSystemSleep: true)
-        case .off, .duration, .indefinite, .whileDisplayConnected, .whileAppRunning, .whileSystemBusy:
+        case .off, .duration, .indefinite, .whileDisplayConnected, .whileAppRunning:
             KeepAwakeAssertionPlan(
                 preventsDisplaySleep: true,
                 preventsSystemSleep: alsoPreventSystemSleep
@@ -120,7 +155,7 @@ public enum KeepAwakePlanner {
         case .off: 0
         case .indefinite: -1
         case let .duration(seconds): seconds
-        case .whileDisplayConnected, .whileAppRunning, .whileAgentsWorking, .whileSystemBusy: -1
+        case .whileDisplayConnected, .whileAppRunning, .whileAgentsWorking: -1
         }
     }
 

@@ -319,8 +319,8 @@ public enum BackupPortability {
         // 裝置 UID 為鍵：同理
         "hiddenAudioDevices", "audioBridgeDisabled", "excludedDevices",
         "softwareVolumeDevices", "outputPriority", "virtualTargetUID",
-        // 綁定的是這台的螢幕／這台裝了什麼 App；負載模式旗標也綁機
-        // （另一台不應因匯入就開始監測）
+        // 綁定的是這台的螢幕／這台裝了什麼 App；legacy 負載旗標仍列在綁機
+        // （合併模式以可攜的 keepAwakeAgentMode 為準，restore 會吸收此欄）
         "keepAwakeDisplayUUID", "keepAwakeAppBundleID", "keepAwakeSystemLoadMode",
         // 崩潰紀錄綁機：另一台的那個外掛可能沒問題
         "effectQuarantine",
@@ -339,9 +339,9 @@ public enum BackupPortability {
         "autoBrightnessEnabled", "ambientCurve", "ambientDeviceOffset",
         "ambientScheduleEnabled", "ambientSchedule",
         "keepAwakePreventsSystemSleep",
-        // Agent 模式與它的偵測設定講的是「這個人怎麼跑 agent」，不是哪台 Mac。
-        // 綁機的那兩個（螢幕、App）在啟動時仍然優先（`AppState` 的還原順序是
-        // 螢幕 > App > agent），所以匯入的 `keepAwakeAgentMode = true`
+        // 合併模式（agent∨負載）與偵測設定講的是「這個人怎麼跑」，不是哪台 Mac。
+        // 綁機的那兩個（螢幕、App）在啟動時仍然優先（還原順序是
+        // 螢幕 > App > agent∨load），所以匯入的 `keepAwakeAgentMode = true`
         // 只有在兩者都空的時候才真的把模式打開。
         "keepAwakeAgentMode", "keepAwakeProcessDetection", "keepAwakeCustomProcessNames",
         "keepAwakeBatteryFloor",

@@ -81,33 +81,40 @@ struct KeepAwakeTests {
         ))
     }
 
-    @Test("Agent mode follows the working flag and stays armed when agents go quiet")
-    func agentBound() {
+    @Test("Merged mode ORs agent and load busy")
+    func mergedORTruthTable() {
         let mode = KeepAwakeMode.whileAgentsWorking
-        #expect(KeepAwakePlanner.shouldHoldAssertion(
-            mode: mode, startedAt: 0, now: 50,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: true
-        ,
-            systemBusy: false,
-            powerFloorTripped: false
-        ))
-        // agent 收工就放掉 assertion，但模式留著——下一輪再開工要能自己恢復
+        let cases: [(Bool, Bool, Bool)] = [
+            (false, false, false),
+            (true, false, true),
+            (false, true, true),
+            (true, true, true),
+        ]
+        for (agents, load, expected) in cases {
+            #expect(
+                KeepAwakePlanner.shouldHoldAssertion(
+                    mode: mode, startedAt: 0, now: 50,
+                    connectedDisplayUUIDs: [], runningAppBundleIDs: [],
+                    agentsWorking: agents, systemBusy: load,
+                    powerFloorTripped: false
+                ) == expected
+            )
+        }
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: 0, now: 50,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: false, systemBusy: false,
-            powerFloorTripped: false
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [],
+            agentsWorking: true, systemBusy: true,
+            powerFloorTripped: true
         ))
-        // 沒有 startedAt ＝ 沒真的啟用
         #expect(!KeepAwakePlanner.shouldHoldAssertion(
             mode: mode, startedAt: nil, now: 50,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [], agentsWorking: true
-        ,
-            systemBusy: false,
+            connectedDisplayUUIDs: [], runningAppBundleIDs: [],
+            agentsWorking: true, systemBusy: true,
             powerFloorTripped: false
         ))
     }
 
-    @Test("Agent mode keeps both the display and system awake, ignoring the toggle")
+    @Test("Merged mode keeps both the display and system awake, ignoring the toggle")
     func agentAssertionPlan() {
         for toggle in [true, false] {
             #expect(
@@ -122,7 +129,6 @@ struct KeepAwakeTests {
         let modes: [KeepAwakeMode] = [
             .off, .indefinite, .duration(seconds: 60),
             .whileDisplayConnected(uuid: "x"), .whileAppRunning(bundleID: "y"),
-            .whileSystemBusy,
         ]
         for mode in modes {
             #expect(
@@ -134,30 +140,6 @@ struct KeepAwakeTests {
                     == KeepAwakeAssertionPlan(preventsDisplaySleep: true, preventsSystemSleep: true)
             )
         }
-    }
-
-    @Test("Load mode holds only with startedAt and systemBusy")
-    func loadBound() {
-        let mode = KeepAwakeMode.whileSystemBusy
-        #expect(KeepAwakePlanner.shouldHoldAssertion(
-            mode: mode, startedAt: 0, now: 50,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [],
-            agentsWorking: false, systemBusy: true,
-            powerFloorTripped: false
-        ))
-        #expect(!KeepAwakePlanner.shouldHoldAssertion(
-            mode: mode, startedAt: 0, now: 50,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [],
-            agentsWorking: false, systemBusy: false,
-            powerFloorTripped: false
-        ))
-        #expect(!KeepAwakePlanner.shouldHoldAssertion(
-            mode: mode, startedAt: nil, now: 50,
-            connectedDisplayUUIDs: [], runningAppBundleIDs: [],
-            agentsWorking: false, systemBusy: true,
-            powerFloorTripped: false
-        ))
-        #expect(KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: 10, now: 30) == nil)
     }
 
     @Test("Remaining seconds counts down and floors at zero")
@@ -192,14 +174,43 @@ struct KeepAwakeTests {
         #expect(
             KeepAwakePlanner.decode(KeepAwakePlanner.encode(.whileAgentsWorking)) == .indefinite
         )
-        #expect(KeepAwakePlanner.encode(.whileSystemBusy) == -1)
-        #expect(KeepAwakePlanner.decode(KeepAwakePlanner.encode(.whileSystemBusy)) == .indefinite)
+        #expect(KeepAwakePlanner.encode(.whileAgentsWorking) == -1)
     }
 
-    @Test("Codable preserves the load mode case")
-    func loadModeCodable() throws {
-        let data = try JSONEncoder().encode(KeepAwakeMode.whileSystemBusy)
-        let decoded = try JSONDecoder().decode(KeepAwakeMode.self, from: data)
-        #expect(decoded == .whileSystemBusy)
+    @Test("Legacy whileSystemBusy JSON decodes as whileAgentsWorking")
+    func legacyLoadModeDecodable() throws {
+        let legacy = Data(#"{"whileSystemBusy":{}}"#.utf8)
+        let decoded = try JSONDecoder().decode(KeepAwakeMode.self, from: legacy)
+        #expect(decoded == .whileAgentsWorking)
+
+        let roundTrip = try JSONDecoder().decode(
+            KeepAwakeMode.self,
+            from: try JSONEncoder().encode(KeepAwakeMode.whileAgentsWorking)
+        )
+        #expect(roundTrip == .whileAgentsWorking)
+    }
+
+    @Test("All historical KeepAwakeMode JSON shapes still decode")
+    func allLegacyCasesDecodable() throws {
+        let fixtures: [(String, KeepAwakeMode)] = [
+            (#"{"off":{}}"#, .off),
+            (#"{"indefinite":{}}"#, .indefinite),
+            (#"{"duration":{"seconds":1800}}"#, .duration(seconds: 1800)),
+            (#"{"whileDisplayConnected":{"uuid":"A"}}"#, .whileDisplayConnected(uuid: "A")),
+            (#"{"whileAppRunning":{"bundleID":"com.x"}}"#, .whileAppRunning(bundleID: "com.x")),
+            (#"{"whileAgentsWorking":{}}"#, .whileAgentsWorking),
+            (#"{"whileSystemBusy":{}}"#, .whileAgentsWorking),
+        ]
+        for (json, expected) in fixtures {
+            let decoded = try JSONDecoder().decode(KeepAwakeMode.self, from: Data(json.utf8))
+            #expect(decoded == expected)
+        }
+    }
+
+    @Test("FocusSnapshot with legacy whileSystemBusy keepAwake still decodes")
+    func focusSnapshotLegacyKeepAwake() throws {
+        let json = Data(#"{"requests":[],"unrestorable":[],"keepAwake":{"whileSystemBusy":{}}}"#.utf8)
+        let snapshot = try JSONDecoder().decode(FocusSnapshot.self, from: json)
+        #expect(snapshot.keepAwake == .whileAgentsWorking)
     }
 }
