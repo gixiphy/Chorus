@@ -62,11 +62,11 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         ENABLE_HARDENED_RUNTIME: YES
         # 與 App 的 CFBundleVersion 對齊；package.sh 會同步更新。
-        CURRENT_PROJECT_VERSION: "137"
+        CURRENT_PROJECT_VERSION: "138"
         MARKETING_VERSION: "1.15.3"
         INFOPLIST_KEY_CFBundleIdentifier: com.hermes.Chorus.PowerHelper
         INFOPLIST_KEY_CFBundleName: ChorusPowerHelper
-        INFOPLIST_KEY_CFBundleVersion: "137"
+        INFOPLIST_KEY_CFBundleVersion: "138"
         INFOPLIST_KEY_CFBundleShortVersionString: "1.15.3"
         CODE_SIGN_ENTITLEMENTS: PowerHelper/ChorusPowerHelper.entitlements
         SWIFT_VERSION: "6.0"
@@ -141,7 +141,7 @@ targets:
         CFBundleDisplayName: Chorus
         CFBundleIconFile: Chorus
         CFBundleShortVersionString: "1.15.3"
-        CFBundleVersion: "137"
+        CFBundleVersion: "138"
         LSUIElement: true
         NSLocalNetworkUsageDescription: Chorus 會在區域網路上尋找你的其他 Mac，以同步亮度與音量。
         # 系統音訊擷取（CoreAudio process taps，B6）。這個 key 不在 Xcode 的
