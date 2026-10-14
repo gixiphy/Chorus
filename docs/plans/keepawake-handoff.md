@@ -1311,3 +1311,45 @@ xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
 - `LidSleepGuardController.publish`：語意快照相同不通知；helperStatus／leftover／forced-off／錯誤欄位變更仍會 publish。
 - 測試：`identicalPolicyDoesNotRepublish`、`lidKeepAwakeFeedbackConverges`（MainActor 外 5s 截止）。
 - 不碰 PowerHelper／PowerHelperClient。
+
+---
+
+## P4（Cursor，2026-10-14，perf／idleblank）
+
+### 改了哪些檔案
+- `Packages/ChorusCore/Sources/ChorusCore/AgentIdleBlank.swift`（`IdleBlankSignal`／`AgentIdleBlankProtection`；只有全部 inactive 才 blank；無效 idle 保守）
+- `Packages/ChorusCore/Tests/ChorusCoreTests/AgentIdleBlankTests.swift`（真值表：媒體／全螢幕、遠端、foreign assertion、unknown、無效 idle、3/5/10/15）
+- `Chorus/Display/AgentIdleBlanker.swift`（注入保護讀取器；外部 assertion 僅接近門檻／快取失效時查；blank／restore notice）
+- `Chorus/Display/IdleActivityReaders.swift`（**新增**：CG idle ∩ HIDIdleTime 取 min；全失敗 → `.nan`）
+- `Chorus/Display/IdleBlankProtectionReaders.swift`（**新增**：前景全螢幕、遠端／螢幕共享 bundle＋`kCGSessionOnConsoleKey`、`IOPMCopyAssertionsByProcess` 排除本 PID）
+- `Tests/ChorusAppTests/AgentIdleBlankerTests.swift`
+- 本機已 `xcodegen generate`（**不**提交 `*.xcodeproj`）
+
+### 測試
+```
+swift test --package-path Packages/ChorusCore
+→ 851 tests in 120 suites passed
+
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -only-testing:ChorusAppTests/AgentIdleBlankerTests
+→ status: success，passed_tests: 9
+```
+
+### 驗收條件
+- [x] Core policy：media／fullscreen、remote、foreign assertion、unknown、無效 idle、3/5/10/15
+- [x] App fake：影片／全螢幕擋熄、遠端擋熄、restore 只走 `restoreIdleBlank`、遠距門檻才查 foreign assertion、狀態變更 invalidate
+- [x] 非同步測試 5s 截止／suite `.timeLimit(.minutes(1))`
+- [x] 預設仍關閉＋5 分鐘、保留 3 分鐘、不覆寫已存（未改 `KeepAwakeAgentIdleMinutes.default`／設定遷移）
+- [x] 不用私有 MediaRemote；不新增全域輸入監控權限前提
+- [ ] 實機：影片／Screen Sharing／Universal Control／螢幕共享超過門檻不熄（P5；不可用標「未確認」）
+- [ ] 開啟熄屏後 5 分鐘閒置 CPU 不因保護查詢顯著升高（P5）
+
+### 偏離／給下游
+1. Fi #2：媒體無法可靠判定 → **前景全螢幕即不熄**（誤保護成本：非媒體全螢幕也不熄）。
+2. Fi #4：遠端偵測以公開 `NSWorkspace` bundle id／名稱＋`CGSessionCopyCurrentDictionary` 的 on-console；Universal Control／Screen Sharing 實機覆蓋 **P5 未確認**。抓不到或來源 unknown → 不熄。
+3. 外部 `PreventUserIdleDisplaySleep`：只在 idle ≥ threshold−60s（或快取空／失效）查 `IOPMCopyAssertionsByProcess`；TTL 60s；已熄屏不每 500ms 重打 powerd。
+4. Production `AgentIdleBlanker(displays:)` 接系統讀取器；測試 init 預設保護訊號 inactive（不影響既有 KeepAwakeControllerTests 注入）。
+5. 未改 `KeepAwakeController.swift`／`LidSleepGuardController.swift`／PowerHelper。
+
+### Spec 問題
+無（本 worktree 仍無 `docs/spec.md`；依計畫＋`docs/decisions.md` D-2026-10-14）。
