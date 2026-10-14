@@ -93,8 +93,7 @@ struct AgentIdleBlankTests {
     func foreignAssertionBlocksBlank() {
         let protection = AgentIdleBlankProtection(
             foreignDisplaySleepAssertion: .active,
-            mediaOrFullscreen: .inactive,
-            remoteSession: .inactive
+            mediaOrFullscreen: .inactive
         )
         #expect(decide(idleSeconds: 600, protection: protection) == .stay)
     }
@@ -103,18 +102,7 @@ struct AgentIdleBlankTests {
     func fullscreenBlocksBlank() {
         let protection = AgentIdleBlankProtection(
             foreignDisplaySleepAssertion: .inactive,
-            mediaOrFullscreen: .active,
-            remoteSession: .inactive
-        )
-        #expect(decide(idleSeconds: 600, protection: protection) == .stay)
-    }
-
-    @Test("Remote session active blocks blank")
-    func remoteSessionBlocksBlank() {
-        let protection = AgentIdleBlankProtection(
-            foreignDisplaySleepAssertion: .inactive,
-            mediaOrFullscreen: .inactive,
-            remoteSession: .active
+            mediaOrFullscreen: .active
         )
         #expect(decide(idleSeconds: 600, protection: protection) == .stay)
     }
@@ -124,18 +112,11 @@ struct AgentIdleBlankTests {
         arguments: [
             AgentIdleBlankProtection(
                 foreignDisplaySleepAssertion: .unknown,
-                mediaOrFullscreen: .inactive,
-                remoteSession: .inactive
+                mediaOrFullscreen: .inactive
             ),
             AgentIdleBlankProtection(
                 foreignDisplaySleepAssertion: .inactive,
-                mediaOrFullscreen: .unknown,
-                remoteSession: .inactive
-            ),
-            AgentIdleBlankProtection(
-                foreignDisplaySleepAssertion: .inactive,
-                mediaOrFullscreen: .inactive,
-                remoteSession: .unknown
+                mediaOrFullscreen: .unknown
             ),
         ]
     )
@@ -153,25 +134,17 @@ struct AgentIdleBlankTests {
         #expect(decide(idleSeconds: 0.1, isBlanked: true) == .restore)
     }
 
-    @Test("While blanked, active media or remote restores immediately")
+    @Test("While blanked, active media or foreign assertion restores immediately")
     func activeProtectionRestoresWhileBlanked() {
         let media = AgentIdleBlankProtection(
             foreignDisplaySleepAssertion: .inactive,
-            mediaOrFullscreen: .active,
-            remoteSession: .inactive
-        )
-        let remote = AgentIdleBlankProtection(
-            foreignDisplaySleepAssertion: .inactive,
-            mediaOrFullscreen: .inactive,
-            remoteSession: .active
+            mediaOrFullscreen: .active
         )
         let foreign = AgentIdleBlankProtection(
             foreignDisplaySleepAssertion: .active,
-            mediaOrFullscreen: .inactive,
-            remoteSession: .inactive
+            mediaOrFullscreen: .inactive
         )
         #expect(decide(idleSeconds: 600, isBlanked: true, protection: media) == .restore)
-        #expect(decide(idleSeconds: 600, isBlanked: true, protection: remote) == .restore)
         #expect(decide(idleSeconds: 600, isBlanked: true, protection: foreign) == .restore)
     }
 

@@ -1353,3 +1353,51 @@ xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
 
 ### Spec 問題
 無（本 worktree 仍無 `docs/spec.md`；依計畫＋`docs/decisions.md` D-2026-10-14）。
+
+### P4 第 2 輪（F1，2026-10-14）
+
+#### 改了哪些檔案
+- `Chorus/Display/AgentIdleBlanker.swift`
+- `Chorus/Display/IdleBlankProtectionReaders.swift`
+- `Packages/ChorusCore/Sources/ChorusCore/AgentIdleBlank.swift`
+- `Packages/ChorusCore/Tests/ChorusCoreTests/AgentIdleBlankTests.swift`
+- `Tests/ChorusAppTests/AgentIdleBlankerTests.swift`
+- `docs/decisions.md`
+- `docs/plans/keepawake-handoff.md`
+
+#### 測試指令與結果
+```sh
+# RED：舊 test seam 注入 remote `.active`，重現 UC 行程 false-positive 不熄屏
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -only-testing:ChorusAppTests/AgentIdleBlankerTests \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
+  -maximum-test-execution-time-allowance 120
+# → `Universal Control process presence without a session does not block blank`
+#   在 `blankCalls == 1` 失敗；修正後以架構回歸鎖定 production 無 process/session 通道，
+#   該 suite 13 passed
+
+swift test --package-path Packages/ChorusCore
+# → 850 passed，0 failed
+
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
+  -maximum-test-execution-time-allowance 120
+# → 784 passed，0 failed（57.813s）
+```
+上述建置／測試指令均以 Perl `alarm 1800` 設外層硬逾時，並透過 xcsift 解析；Core／App exit 0、errors 0。
+
+#### 驗收條件
+- [x] 移除 `remoteSession()`、Universal Control／Screen Sharing／Continuity Capture 等行程清單與 `kCGSessionOnConsoleKey` 分支
+- [x] production 不保留任何未證實的遠端「一律不熄」訊號
+- [x] 純 `AgentIdleBlankPolicy.decide` 的可注入輸入只剩 idle、媒體／前景全螢幕與外部 display-sleep assertion
+- [x] UC false-positive 行為先紅；最終架構回歸鎖定三個 production 檔不得再有 UC／viewer process/session 保護通道
+- [x] 原有媒體／全螢幕、foreign assertion、unknown、無效 idle 測試維持綠燈
+- [x] 未改 PowerHelper、系統設定、簽章、pmset、Release 測試開關或 `*.xcodeproj`
+
+#### 偏離 spec／決策
+- 依 Fi 2026-10-14 15:36 決定，修訂同日 D-2026-10-14 #4：P4 不處理 UC，閒置熄屏不再有遠端會話保護分支；`docs/decisions.md` 已追加 D-2026-10-14b。
+- 本 worktree 仍無 `docs/spec.md`；未自行修改 spec。
+
+#### 給下游的注意事項
+- 遠端或螢幕共享輸入若未更新 CG／HID idle，可能被判定閒置而熄屏；這是 Fi 本輪明確接受的漏判。
+- 本輪沒有找到並保留任何「便宜且確實代表連線中」的公開遠端訊號，因此沒有可交 Claude 判定的遠端訊號證據。

@@ -77,7 +77,6 @@ struct AgentIdleBlankerTests {
             displays: displays,
             idleSeconds: { idle },
             mediaOrFullscreen: { media },
-            remoteSession: { .inactive },
             foreignDisplayAssertion: { .inactive }
         )
         blanker.configure(enabled: true, minutes: .three)
@@ -92,22 +91,56 @@ struct AgentIdleBlankerTests {
         #expect(displays.blankCalls == 1)
     }
 
-    @Test("Remote session protection blocks blank")
-    func remoteSessionBlocksBlank() {
+    @Test("Idle past threshold blanks when all supported protections are inactive")
+    func supportedProtectionsInactiveBlank() {
         let displays = FakeDisplays()
         let idle = 600.0
         let blanker = AgentIdleBlanker(
             displays: displays,
             idleSeconds: { idle },
             mediaOrFullscreen: { .inactive },
-            remoteSession: { .active },
             foreignDisplayAssertion: { .inactive }
         )
         blanker.configure(enabled: true, minutes: .five)
         blanker.update(agentModeActive: true, holdingAssertion: true)
         blanker.evaluateForTesting()
-        #expect(!blanker.isBlanked)
-        #expect(displays.blankCalls == 0)
+        #expect(blanker.isBlanked)
+        #expect(displays.blankCalls == 1)
+    }
+
+    @Test("Universal Control and viewer process presence are not protection inputs")
+    func remoteProcessPresenceIsNotAProtectionInput() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let productionFiles = [
+            "Chorus/Display/AgentIdleBlanker.swift",
+            "Chorus/Display/IdleBlankProtectionReaders.swift",
+            "Packages/ChorusCore/Sources/ChorusCore/AgentIdleBlank.swift",
+        ]
+        let forbiddenTokens = [
+            "remoteSession",
+            "runningApplications",
+            "com.apple.universalcontrol",
+            "com.apple.ScreenSharing",
+            "ContinuityCapture",
+            "CGSessionCopyCurrentDictionary",
+            "kCGSessionOnConsoleKey",
+        ]
+
+        for relativePath in productionFiles {
+            let source = try String(
+                contentsOf: repositoryRoot.appendingPathComponent(relativePath),
+                encoding: .utf8
+            )
+            for token in forbiddenTokens {
+                #expect(
+                    !source.contains(token),
+                    "Unexpected remote process/session protection token \(token) in \(relativePath)"
+                )
+            }
+        }
     }
 
     @Test("Unknown protection source never blanks")
@@ -118,7 +151,6 @@ struct AgentIdleBlankerTests {
             displays: displays,
             idleSeconds: { idle },
             mediaOrFullscreen: { .unknown },
-            remoteSession: { .inactive },
             foreignDisplayAssertion: { .inactive }
         )
         blanker.configure(enabled: true, minutes: .five)
@@ -152,7 +184,6 @@ struct AgentIdleBlankerTests {
             displays: displays,
             idleSeconds: { idle },
             mediaOrFullscreen: { .inactive },
-            remoteSession: { .inactive },
             foreignDisplayAssertion: {
                 foreignCalls += 1
                 return .inactive
@@ -193,7 +224,6 @@ struct AgentIdleBlankerTests {
             displays: displays,
             idleSeconds: { idle },
             mediaOrFullscreen: { .inactive },
-            remoteSession: { .inactive },
             foreignDisplayAssertion: { .active }
         )
         blanker.configure(enabled: true, minutes: .five)
@@ -212,7 +242,6 @@ struct AgentIdleBlankerTests {
             displays: displays,
             idleSeconds: { idle },
             mediaOrFullscreen: { .inactive },
-            remoteSession: { .inactive },
             foreignDisplayAssertion: {
                 foreignCalls += 1
                 return .inactive
@@ -267,17 +296,15 @@ struct AgentIdleBlankerTests {
         #expect(displays.restoreCalls == 1)
     }
 
-    @Test("Blanked: media or remote turning active restores immediately")
-    func blankedProtectionActiveRestores() {
+    @Test("Blanked: media turning active restores immediately")
+    func blankedMediaActiveRestores() {
         let displays = FakeDisplays()
         let idle = 600.0
         var media: IdleBlankSignal = .inactive
-        var remote: IdleBlankSignal = .inactive
         let blanker = AgentIdleBlanker(
             displays: displays,
             idleSeconds: { idle },
-            mediaOrFullscreen: { media },
-            remoteSession: { remote }
+            mediaOrFullscreen: { media }
         )
         blanker.configure(enabled: true, minutes: .three)
         blanker.update(agentModeActive: true, holdingAssertion: true)
@@ -287,14 +314,6 @@ struct AgentIdleBlankerTests {
         blanker.evaluateForTesting()
         #expect(!blanker.isBlanked)
         #expect(displays.restoreCalls == 1)
-
-        media = .inactive
-        blanker.evaluateForTesting()
-        #expect(blanker.isBlanked)
-        remote = .active
-        blanker.evaluateForTesting()
-        #expect(!blanker.isBlanked)
-        #expect(displays.restoreCalls == 2)
     }
 
     @Test(

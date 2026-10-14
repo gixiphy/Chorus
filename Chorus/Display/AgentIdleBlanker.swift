@@ -18,7 +18,7 @@ extension DisplayManager: IdleBlankDisplayControlling {}
 /// 一有輸入、agent 收工、離開 agent 模式或 App 結束就恢復。
 ///
 /// 預設關閉——3644f2c 刻意讓 agent 模式擋螢幕待機，有些人就是要看著畫面。
-/// 熄屏前會看媒體／前景全螢幕、遠端連線、以及其他程序的
+/// 熄屏前會看媒體／前景全螢幕，以及其他程序的
 /// `PreventUserIdleDisplaySleep`；未知或讀取失敗時保守不熄。
 @MainActor
 @Observable
@@ -39,7 +39,6 @@ final class AgentIdleBlanker {
     @ObservationIgnored private var running = false
     @ObservationIgnored private let idleSeconds: () -> Double
     @ObservationIgnored private let mediaOrFullscreen: () -> IdleBlankSignal
-    @ObservationIgnored private let remoteSession: () -> IdleBlankSignal
     @ObservationIgnored private let foreignDisplayAssertion: () -> IdleBlankSignal
 
     @ObservationIgnored private var cachedForeignAssertion: IdleBlankSignal?
@@ -50,7 +49,6 @@ final class AgentIdleBlanker {
         self.displays = displays
         self.idleSeconds = { IdleActivityReaders.combinedIdleSeconds() }
         self.mediaOrFullscreen = { IdleBlankProtectionReaders.foregroundFullscreen() }
-        self.remoteSession = { IdleBlankProtectionReaders.remoteSession() }
         self.foreignDisplayAssertion = { IdleBlankProtectionReaders.foreignDisplaySleepAssertion() }
     }
 
@@ -59,13 +57,11 @@ final class AgentIdleBlanker {
         displays: any IdleBlankDisplayControlling,
         idleSeconds: @escaping () -> Double,
         mediaOrFullscreen: @escaping () -> IdleBlankSignal = { .inactive },
-        remoteSession: @escaping () -> IdleBlankSignal = { .inactive },
         foreignDisplayAssertion: @escaping () -> IdleBlankSignal = { .inactive }
     ) {
         self.displays = displays
         self.idleSeconds = idleSeconds
         self.mediaOrFullscreen = mediaOrFullscreen
-        self.remoteSession = remoteSession
         self.foreignDisplayAssertion = foreignDisplayAssertion
     }
 
@@ -121,8 +117,7 @@ final class AgentIdleBlanker {
         let idle = idleSeconds()
         let protection = AgentIdleBlankProtection(
             foreignDisplaySleepAssertion: resolveForeignAssertion(idleSeconds: idle),
-            mediaOrFullscreen: mediaOrFullscreen(),
-            remoteSession: remoteSession()
+            mediaOrFullscreen: mediaOrFullscreen()
         )
         let decision = AgentIdleBlankPolicy.decide(
             enabled: enabled,
@@ -187,7 +182,6 @@ final class AgentIdleBlanker {
             return "activity"
         }
         if protection.mediaOrFullscreen == .active { return "media" }
-        if protection.remoteSession == .active { return "remote" }
         if protection.foreignDisplaySleepAssertion == .active { return "foreignAssertion" }
         return "disarm"
     }

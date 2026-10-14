@@ -24,37 +24,33 @@ public enum IdleBlankSignal: Sendable, Equatable {
     case unknown
 }
 
-/// 熄屏前的保護來源快照（媒體／全螢幕、遠端連線、外部 assertion）。
+/// 熄屏前的保護來源快照（媒體／全螢幕、外部 assertion）。
 public struct AgentIdleBlankProtection: Sendable, Equatable {
     public var foreignDisplaySleepAssertion: IdleBlankSignal
     public var mediaOrFullscreen: IdleBlankSignal
-    public var remoteSession: IdleBlankSignal
 
     public init(
         foreignDisplaySleepAssertion: IdleBlankSignal,
-        mediaOrFullscreen: IdleBlankSignal,
-        remoteSession: IdleBlankSignal
+        mediaOrFullscreen: IdleBlankSignal
     ) {
         self.foreignDisplaySleepAssertion = foreignDisplaySleepAssertion
         self.mediaOrFullscreen = mediaOrFullscreen
-        self.remoteSession = remoteSession
     }
 
     public static let allInactive = AgentIdleBlankProtection(
         foreignDisplaySleepAssertion: .inactive,
-        mediaOrFullscreen: .inactive,
-        remoteSession: .inactive
+        mediaOrFullscreen: .inactive
     )
 
     /// 任一來源 active 或 unknown → 不可新熄屏。
     public var blocksBlank: Bool {
-        [foreignDisplaySleepAssertion, mediaOrFullscreen, remoteSession]
+        [foreignDisplaySleepAssertion, mediaOrFullscreen]
             .contains { $0 != .inactive }
     }
 
     /// 已熄屏時，明確 active 的保護來源應立即恢復螢幕。
     public var shouldRestoreWhileBlanked: Bool {
-        [foreignDisplaySleepAssertion, mediaOrFullscreen, remoteSession]
+        [foreignDisplaySleepAssertion, mediaOrFullscreen]
             .contains { $0 == .active }
     }
 }
