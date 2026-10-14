@@ -3,7 +3,7 @@ import Testing
 @testable import Chorus
 
 /// 落地的診斷紀錄：格式、輪替、與 `ChorusLog` 的分流（debug 不落地）。
-@Suite("診斷紀錄")
+@Suite("診斷紀錄", .timeLimit(.minutes(1)))
 struct DiagnosticLogTests {
     private func makeDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
@@ -103,5 +103,64 @@ struct DiagnosticLogTests {
     func instanceFileName() {
         #expect(DiagnosticLog.defaultFileName(instance: InstanceConfig(arguments: [])) == "chorus.log")
         #expect(DiagnosticLog.defaultFileName(instance: InstanceConfig(arguments: ["--instance", "b"])) == "chorus-b.log")
+    }
+
+    @Test("事件 API：notice/info/error 落地含事件名與欄位；debug 不落地")
+    func eventLevelRouting() throws {
+        let directory = try makeDirectory()
+        let sink = DiagnosticLog(directory: directory)
+        let log = ChorusLog(category: "display", sink: sink)
+
+        log.event(
+            KeepAwakeLogEvent.assertionCreated,
+            level: .notice,
+            fields: ["type": "display", "id": "42"]
+        )
+        log.event(
+            KeepAwakeLogEvent.throttleSummary,
+            level: .debug,
+            fields: ["triggered": "100", "executed": "5"]
+        )
+        log.event(
+            KeepAwakeLogEvent.idleBlank,
+            level: .info,
+            fields: ["reason": "idle"]
+        )
+        log.event(
+            KeepAwakeLogEvent.assertionReleased,
+            level: .error,
+            fields: ["type": "system"]
+        )
+
+        #expect(sink.flush(timeout: .seconds(5)))
+        let text = try String(contentsOf: sink.fileURL, encoding: .utf8)
+        #expect(text.contains(" N [display] event=\(KeepAwakeLogEvent.assertionCreated)"))
+        #expect(text.contains("type=display"))
+        #expect(text.contains("id=42"))
+        #expect(!text.contains(KeepAwakeLogEvent.throttleSummary))
+        #expect(!text.contains("triggered=100"))
+        #expect(text.contains(" I [display] event=\(KeepAwakeLogEvent.idleBlank)"))
+        #expect(text.contains("reason=idle"))
+        #expect(text.contains(" E [display] event=\(KeepAwakeLogEvent.assertionReleased)"))
+        #expect(text.contains("type=system"))
+    }
+
+    @Test("keepawake 事件名常數固定，供 P1/P2/P4 共用")
+    func keepAwakeEventNames() {
+        #expect(KeepAwakeLogEvent.assertionCreated == "keepawake.assertion.created")
+        #expect(KeepAwakeLogEvent.assertionReleased == "keepawake.assertion.released")
+        #expect(KeepAwakeLogEvent.assertionRecreated == "keepawake.assertion.recreated")
+        #expect(KeepAwakeLogEvent.throttleSummary == "keepawake.throttle.summary")
+        #expect(KeepAwakeLogEvent.idleBlank == "keepawake.idle.blank")
+        #expect(KeepAwakeLogEvent.idleRestore == "keepawake.idle.restore")
+    }
+
+    @Test("事件欄位格式穩定：鍵值依鍵名排序，空白與換行被壓平")
+    func eventFormatIsStable() {
+        let line = ChorusLog.formatEvent(
+            name: "keepawake.assertion.created",
+            fields: ["b": "two\nlines", "a": "one"]
+        )
+        #expect(line == "event=keepawake.assertion.created a=one b=two⏎lines")
     }
 }
