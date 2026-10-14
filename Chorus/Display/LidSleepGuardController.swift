@@ -83,6 +83,8 @@ final class LidSleepGuardController {
     @ObservationIgnored private var pendingReevaluate = false
     /// §14.2：update／policy 路徑內不回呼 onChange，避免與 KeepAwakeController.reevaluate 互撞。
     @ObservationIgnored private var suppressOnChange = false
+    /// P3：上次已通知上游的語意快照；相同結果不重複 publish（斷開 lid↔keepawake 回授）。
+    @ObservationIgnored private var lastUpstreamPublish: UpstreamPublishSnapshot?
 
     @ObservationIgnored private var setGeneration: UInt64 = 0
     /// Distinguishes recovery reads/retries even when no policy set was issued.
@@ -1423,6 +1425,50 @@ final class LidSleepGuardController {
 
     private func publish() {
         guard !suppressOnChange else { return }
+        let snap = currentUpstreamPublishSnapshot()
+        if snap == lastUpstreamPublish { return }
+        lastUpstreamPublish = snap
         onChange?()
+    }
+
+    /// 上游（KeepAwake／UI）關心的語意狀態。helperStatus／forced-off／leftover／錯誤變更仍會讓快照不同而通知。
+    private struct UpstreamPublishSnapshot: Equatable {
+        var state: LidSleepGuardState
+        var wantsSleepDisabled: Bool
+        var leftover: LeftoverSleepDisabled?
+        var contributingIDs: [String]
+        var helperAvailability: LidHelperAvailability
+        var helperSleepDisabled: Bool?
+        var helperCallerIsHolder: Bool?
+        var helperSetByHelper: Bool?
+        var helperForcedOffReason: String?
+        var helperRecoveryBlocked: Bool?
+        var helperPendingRestore: Bool?
+        var helperPersistRetryNeeded: Bool?
+        var externalInterferenceLatched: Bool
+        var awaitingForcedOffEvidence: Bool
+        var transientHelperError: String?
+        var lastForcedOffReason: String?
+    }
+
+    private func currentUpstreamPublishSnapshot() -> UpstreamPublishSnapshot {
+        UpstreamPublishSnapshot(
+            state: state,
+            wantsSleepDisabled: wantsSleepDisabled,
+            leftover: leftover,
+            contributingIDs: contributingSources.map(\.id),
+            helperAvailability: helper.availability,
+            helperSleepDisabled: helperStatus?.sleepDisabled,
+            helperCallerIsHolder: helperStatus?.callerIsHolder,
+            helperSetByHelper: helperStatus?.setByHelper,
+            helperForcedOffReason: helperStatus?.lastForcedOffReason,
+            helperRecoveryBlocked: helperStatus?.recoveryBlocked,
+            helperPendingRestore: helperStatus?.pendingRestore,
+            helperPersistRetryNeeded: helperStatus?.persistRetryNeeded,
+            externalInterferenceLatched: externalInterferenceLatched,
+            awaitingForcedOffEvidence: awaitingForcedOffEvidence,
+            transientHelperError: transientHelperError,
+            lastForcedOffReason: lastForcedOffReason
+        )
     }
 }

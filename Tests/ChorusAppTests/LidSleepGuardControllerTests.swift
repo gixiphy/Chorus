@@ -2482,4 +2482,48 @@ struct LidSleepGuardControllerTests {
         #expect(client.availability == .requiresApproval)
         #expect(makeCount.withLock { $0 } == 0)
     }
+
+    @Test(
+        "P3: identical policy outcome does not republish onChange",
+        .timeLimit(.minutes(1))
+    )
+    func identicalPolicyDoesNotRepublish() async throws {
+        let (controller, _, lid, _) = makeController(heartbeat: 3_600)
+        defer { controller.shutdown() }
+        var pubs = 0
+        controller.onChange = { pubs += 1 }
+        let power = PowerSnapshot(
+            hasInternalBattery: false, onBattery: false, percent: nil, thermal: .nominal
+        )
+        let idle = KeepAwakeBusyState(isBusy: false, contributing: [], releaseAt: nil)
+        controller.update(
+            agentModeActive: false, busy: idle, power: power, existingFloor: .off
+        )
+
+        lid.publish(.open)
+        try await Task.sleep(for: .milliseconds(30))
+        let afterFirst = pubs
+
+        for _ in 0..<100 {
+            lid.publish(.open)
+        }
+
+        // 截止在 MainActor 外，避免熱迴圈佔滿主執行緒時逾時無法推進。
+        let deadline = ContinuousClock.now + .seconds(5)
+        var last = pubs
+        var stableRounds = 0
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(40))
+            let current = pubs
+            if current == last {
+                stableRounds += 1
+                if stableRounds >= 4 { break }
+            } else {
+                last = current
+                stableRounds = 0
+            }
+        }
+        #expect(ContinuousClock.now < deadline)
+        #expect(pubs - afterFirst <= 5)
+    }
 }

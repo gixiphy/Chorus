@@ -2210,4 +2210,63 @@ struct KeepAwakeControllerTests {
         #expect(controller.reevaluationStats.executed == executedAfterShutdown)
         #expect(assertions.active.isEmpty)
     }
+
+    @Test(
+        "P3: cross-controller lid↔keepawake feedback converges within 5s",
+        .timeLimit(.minutes(1))
+    )
+    func lidKeepAwakeFeedbackConverges() async throws {
+        let assertions = FakeAssertions()
+        let lid = FakeLidObserver()
+        lid.reading = .noLid
+        lid.isClosed = nil
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "p3-fb-\(UUID().uuidString)")!)
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        settings.keepAwakeAgentIdleBlankEnabled = true
+        settings.keepAwakeAgentIdleMinutes = .three
+        settings.keepAwakeOrcaEnabled = false
+        settings.keepAwakeDesktopAgentsEnabled = false
+        settings.keepAwakeGrokBotEnabled = false
+        let controller = makeMergedController(
+            assertions: assertions,
+            settings: settings,
+            lid: lid,
+            reevaluationCoalesce: .milliseconds(20)
+        )
+        defer { controller.shutdown() }
+
+        // 合併模式關閉（agentMode=0）：仍會 update Lid Guard。
+        controller.activate(.off)
+        controller.resetReevaluationStatsForTesting()
+
+        // 一次真實 lid 事件點燃回授；之後不得無界自排。
+        lid.onChange?()
+        for _ in 0..<20 {
+            lid.onChange?()
+        }
+
+        let deadline = ContinuousClock.now + .seconds(5)
+        var lastExecuted = -1
+        var stableRounds = 0
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(40))
+            let executed = await MainActor.run { controller.reevaluationStats.executed }
+            let lidTriggers = await MainActor.run {
+                controller.reevaluationStats.triggeredByReason["lid"] ?? 0
+            }
+            if executed == lastExecuted {
+                stableRounds += 1
+                if stableRounds >= 4 {
+                    #expect(lidTriggers < 200)
+                    #expect(executed < 40)
+                    return
+                }
+            } else {
+                lastExecuted = executed
+                stableRounds = 0
+            }
+        }
+        Issue.record("feedback did not converge within 5s; executed=\(lastExecuted)")
+        #expect(Bool(false))
+    }
 }

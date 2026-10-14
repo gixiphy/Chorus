@@ -1306,3 +1306,8 @@ xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
 - display／system **各自** `last*AssertionVerifyAt`；新建另一類不得延後未檢查舊 ID。
 - 失效撤銷記 `assertion.released`（`reason=inactive`、`trigger`、舊 id／type）；重建失敗記 `assertion.recreated result=failed previousId=…`。
 - 測試：`perTypeVerifyDeadlineNotDelayedByOtherCreate`、`repeatedSystemToggleDoesNotStarveDisplayVerify`、`inactiveDropLogsReleasedAndRecreateFailureRecovery`。
+
+### P2/P3 回授斷鏈（2026-10-14）
+- `LidSleepGuardController.publish`：語意快照相同不通知；helperStatus／leftover／forced-off／錯誤欄位變更仍會 publish。
+- 測試：`identicalPolicyDoesNotRepublish`、`lidKeepAwakeFeedbackConverges`（MainActor 外 5s 截止）。
+- 不碰 PowerHelper／PowerHelperClient。
