@@ -145,8 +145,17 @@ final class KeepAwakeController {
     @ObservationIgnored private let notifier: any KeepAwakeNotifying
     @ObservationIgnored private let now: () -> Double
     @ObservationIgnored private let workspaceNotifications: NotificationCenter
+    @ObservationIgnored private let log: ChorusLog
+    /// 穩態持有不查 powerd；喚醒／session／此間隔才呼叫 `isActive`。
+    @ObservationIgnored private let assertionVerifyInterval: Double
     @ObservationIgnored private var displayAssertion: IOPMAssertionID?
     @ObservationIgnored private var systemAssertion: IOPMAssertionID?
+    /// 喚醒或電源相關通知要求下一輪 `hold` 驗證本程序 assertion。
+    @ObservationIgnored private var needsAssertionVerify = false
+    /// 本輪 reevaluate 是否應對既有 ID 呼叫 `isActive`（display＋system 共用）。
+    @ObservationIgnored private var verifyHeldAssertionsThisPass = false
+    /// 上次 `isActive` 驗證（或成功建立）的單調時間；用於 60 秒保底。
+    @ObservationIgnored private var lastAssertionVerifyAt: Double?
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private var wakeObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var sleepObserver: NSObjectProtocol?
@@ -171,7 +180,9 @@ final class KeepAwakeController {
         assertions: any KeepAwakeAsserting = SystemKeepAwakeAssertions(),
         notifier: any KeepAwakeNotifying = KeepAwakeNotifier(),
         now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
-        workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter
+        workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        log: ChorusLog = .display,
+        assertionVerifyInterval: Double = 60
     ) {
         self.settings = settings
         self.displayManager = displayManager
@@ -187,6 +198,8 @@ final class KeepAwakeController {
         self.notifier = notifier
         self.now = now
         self.workspaceNotifications = workspaceNotifications
+        self.log = log
+        self.assertionVerifyInterval = max(1, assertionVerifyInterval)
         alsoPreventSystemSleep = settings.keepAwakePreventsSystemSleep
         batteryFloor = settings.keepAwakeBatteryFloor
         agentProcessDetectionEnabled = settings.keepAwakeProcessDetection
@@ -532,6 +545,10 @@ final class KeepAwakeController {
             powerFloorTripped: pauseReason.isTripped
         )
         let plan = KeepAwakePlanner.assertionPlan(mode: mode, alsoPreventSystemSleep: alsoPreventSystemSleep)
+        verifyHeldAssertionsThisPass = shouldVerifyHeldAssertion()
+        if verifyHeldAssertionsThisPass {
+            needsAssertionVerify = false
+        }
         if shouldHold {
             if plan.preventsDisplaySleep {
                 hold(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep, reason: "Chorus 螢幕長亮")
@@ -637,6 +654,7 @@ final class KeepAwakeController {
                     if isWake {
                         self.handleDidWake()
                     } else {
+                        self.markAssertionsNeedVerify()
                         self.reevaluate()
                     }
                 }
@@ -665,7 +683,12 @@ final class KeepAwakeController {
         Task { @MainActor [weak self] in
             await self?.lidGuard.refreshFromHelper()
         }
+        markAssertionsNeedVerify()
         reevaluate()
+    }
+
+    private func markAssertionsNeedVerify() {
+        needsAssertionVerify = true
     }
 
     /// 合併模式進出時開／關來源 hub（含既有 agents＋新來源）。
@@ -723,19 +746,59 @@ final class KeepAwakeController {
     }
 
     private func hold(_ id: inout IOPMAssertionID?, type: String, reason: String) {
+        var recreating = false
         if let existing = id {
-            guard !assertions.isActive(existing) else { return }
+            // 本程序已成功建立且尚未釋放：穩態不查 IOPMAssertionCopyProperties。
+            guard verifyHeldAssertionsThisPass else { return }
+            lastAssertionVerifyAt = now()
+            if assertions.isActive(existing) { return }
             assertions.release(existing)
             id = nil
-            ChorusLog.display.notice("Keep awake assertion inactive; recreating type=\(type)")
+            recreating = true
         }
-        id = assertions.create(type: type, reason: reason)
+        guard let created = assertions.create(type: type, reason: reason) else {
+            id = nil
+            return
+        }
+        id = created
+        lastAssertionVerifyAt = now()
+        let label = Self.assertionTypeLabel(type)
+        if recreating {
+            log.event(
+                KeepAwakeLogEvent.assertionRecreated,
+                level: .notice,
+                fields: ["type": label, "id": "\(created)"]
+            )
+        } else {
+            log.event(
+                KeepAwakeLogEvent.assertionCreated,
+                level: .notice,
+                fields: ["type": label, "id": "\(created)"]
+            )
+        }
+    }
+
+    private func shouldVerifyHeldAssertion() -> Bool {
+        if needsAssertionVerify { return true }
+        guard let last = lastAssertionVerifyAt else { return false }
+        return now() - last >= assertionVerifyInterval
     }
 
     private func release(_ id: inout IOPMAssertionID?) {
         guard let existing = id else { return }
         assertions.release(existing)
         id = nil
+        log.event(
+            KeepAwakeLogEvent.assertionReleased,
+            level: .notice,
+            fields: ["id": "\(existing)"]
+        )
+    }
+
+    private static func assertionTypeLabel(_ type: String) -> String {
+        if type == kIOPMAssertionTypePreventUserIdleDisplaySleep { return "display" }
+        if type == kIOPMAssertionTypePreventUserIdleSystemSleep { return "system" }
+        return "other"
     }
 
     private func assertionEffectiveForLease() -> Bool {

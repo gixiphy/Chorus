@@ -6,15 +6,18 @@ import Testing
 @testable import Chorus
 
 @MainActor
-@Suite("KeepAwakeController")
+@Suite("KeepAwakeController", .timeLimit(.minutes(1)))
 struct KeepAwakeControllerTests {
     final class FakeAssertions: KeepAwakeAsserting {
         var active: [IOPMAssertionID: String] = [:]
         var failingTypes: Set<String> = []
         var nextID: IOPMAssertionID = 0
         var released: [IOPMAssertionID] = []
+        private(set) var isActiveCallCount = 0
+        private(set) var createCallCount = 0
 
         func create(type: String, reason: String) -> IOPMAssertionID? {
+            createCallCount += 1
             guard !failingTypes.contains(type) else { return nil }
             let id = nextID
             nextID += 1
@@ -22,10 +25,19 @@ struct KeepAwakeControllerTests {
             return id
         }
 
-        func isActive(_ id: IOPMAssertionID) -> Bool { active[id] != nil }
+        func isActive(_ id: IOPMAssertionID) -> Bool {
+            isActiveCallCount += 1
+            return active[id] != nil
+        }
         func release(_ id: IOPMAssertionID) {
             released.append(id)
             active.removeValue(forKey: id)
+        }
+
+        func resetCounts() {
+            isActiveCallCount = 0
+            createCallCount = 0
+            released = []
         }
     }
 
@@ -118,7 +130,9 @@ struct KeepAwakeControllerTests {
         notifier: FakeNotifier? = nil,
         now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
         agentActivity: AgentActivityMonitor? = nil,
-        lidHelper: FakeLidHelper? = nil
+        lidHelper: FakeLidHelper? = nil,
+        log: ChorusLog = ChorusLog.display,
+        assertionVerifyInterval: Double = 60
     ) -> KeepAwakeController {
         let settings = settings
             ?? SettingsStore(defaults: UserDefaults(suiteName: "keep-awake-\(UUID().uuidString)")!)
@@ -136,7 +150,9 @@ struct KeepAwakeControllerTests {
             powerSource: powerSource ?? FakePowerSource(),
             assertions: assertions,
             notifier: notifier,
-            now: now
+            now: now,
+            log: log,
+            assertionVerifyInterval: assertionVerifyInterval
         )
     }
 
@@ -161,22 +177,30 @@ struct KeepAwakeControllerTests {
         #expect(!controller.activationFailed)
     }
 
-    @Test("A zero-valued ID is owned, healthy assertions stay held, and lost ones recover")
+    @Test("A zero-valued ID is owned, healthy assertions stay held without probing, and wake recovers lost ones")
     func repairsLostAssertion() {
         let assertions = FakeAssertions()
         let controller = makeController(assertions: assertions)
         defer { controller.shutdown() }
         controller.activate(.indefinite)
         #expect(assertions.active[0] == kIOPMAssertionTypePreventUserIdleDisplaySleep)
+        assertions.resetCounts()
         controller.reevaluate()
         #expect(assertions.nextID == 1)
         #expect(assertions.released.isEmpty)
+        #expect(assertions.isActiveCallCount == 0)
 
         assertions.active = [:]
+        // 穩態 reevaluate 不查 powerd；喚醒才標記待驗證。
         controller.reevaluate()
+        #expect(assertions.nextID == 1)
+        #expect(assertions.isActiveCallCount == 0)
+
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
         #expect(controller.isHolding)
         #expect(assertions.nextID == 2)
         #expect(assertions.released == [0])
+        #expect(assertions.isActiveCallCount == 1)
         controller.deactivate()
         #expect(assertions.active.isEmpty)
         #expect(!controller.isHolding)
@@ -1576,5 +1600,143 @@ struct KeepAwakeControllerTests {
         #expect(decoded.mode == "whileAgentsWorking")
         #expect(decoded.assertionEffective == true)
         #expect(decoded.contributing.isEmpty)
+    }
+
+    // MARK: - P1 assertion hold cache
+
+    @Test("Steady hold: 100 reevaluates do not call isActive")
+    func steadyHoldSkipsIsActiveQuery() {
+        let assertions = FakeAssertions()
+        let controller = makeController(assertions: assertions)
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        #expect(controller.isHolding)
+        assertions.resetCounts()
+        for _ in 0..<100 {
+            controller.reevaluate()
+        }
+        #expect(controller.isHolding)
+        #expect(assertions.isActiveCallCount == 0)
+        #expect(assertions.createCallCount == 0)
+        #expect(assertions.nextID == 1)
+    }
+
+    @Test("Wake verifies and recreates when the system dropped the assertion")
+    func wakeVerifiesAndRecreatesDroppedAssertion() {
+        let assertions = FakeAssertions()
+        let controller = makeController(assertions: assertions)
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        assertions.resetCounts()
+        assertions.active = [:]
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        #expect(controller.isHolding)
+        #expect(assertions.isActiveCallCount == 1)
+        #expect(assertions.createCallCount == 1)
+        #expect(assertions.released == [0])
+        #expect(assertions.active.count == 1)
+    }
+
+    @Test("Session become-active also forces assertion verification")
+    func sessionBecomeActiveVerifiesAssertion() {
+        let assertions = FakeAssertions()
+        let controller = makeController(assertions: assertions)
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        assertions.resetCounts()
+        assertions.active = [:]
+        NSWorkspace.shared.notificationCenter.post(
+            name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil
+        )
+        #expect(controller.isHolding)
+        #expect(assertions.isActiveCallCount == 1)
+        #expect(assertions.createCallCount == 1)
+    }
+
+    @Test("60s heartbeat verifies; inactive assertion is recreated")
+    func heartbeatVerifiesAfterInterval() {
+        let assertions = FakeAssertions()
+        var time = 1_000.0
+        let controller = makeController(
+            assertions: assertions,
+            now: { time },
+            assertionVerifyInterval: 60
+        )
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        assertions.resetCounts()
+        time = 1_030
+        controller.reevaluate()
+        #expect(assertions.isActiveCallCount == 0)
+
+        assertions.active = [:]
+        time = 1_060
+        controller.reevaluate()
+        #expect(assertions.isActiveCallCount == 1)
+        #expect(assertions.createCallCount == 1)
+        #expect(controller.isHolding)
+    }
+
+    @Test("Create failure leaves isHolding false; later retry recovers")
+    func createFailureDoesNotMarkHoldingUntilRetrySucceeds() {
+        let assertions = FakeAssertions()
+        assertions.failingTypes = [kIOPMAssertionTypePreventUserIdleDisplaySleep]
+        let controller = makeController(assertions: assertions)
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        #expect(!controller.isHolding)
+        #expect(controller.activationFailed)
+        #expect(assertions.active.isEmpty)
+
+        assertions.failingTypes = []
+        controller.reevaluate()
+        #expect(controller.isHolding)
+        #expect(!controller.activationFailed)
+        #expect(assertions.active[0] != nil)
+    }
+
+    @Test("Deactivate releases owned assertion without probing isActive")
+    func deactivateReleasesWithoutProbe() {
+        let assertions = FakeAssertions()
+        let controller = makeController(assertions: assertions)
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        assertions.resetCounts()
+        controller.deactivate()
+        #expect(!controller.isHolding)
+        #expect(assertions.active.isEmpty)
+        #expect(assertions.released == [0])
+        #expect(assertions.isActiveCallCount == 0)
+    }
+
+    @Test("Assertion create/release/recreate each emit one notice event")
+    func assertionLifecycleNoticesOnce() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-ka-log-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sink = DiagnosticLog(directory: directory)
+        let log = ChorusLog(category: "display", sink: sink)
+        let assertions = FakeAssertions()
+        let controller = makeController(assertions: assertions, log: log)
+        defer { controller.shutdown() }
+
+        controller.activate(.indefinite)
+        #expect(sink.flush(timeout: .seconds(5)))
+        var text = try String(contentsOf: sink.fileURL, encoding: .utf8)
+        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionCreated)"))
+        #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionCreated).count - 1 == 1)
+
+        assertions.active = [:]
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        #expect(sink.flush(timeout: .seconds(5)))
+        text = try String(contentsOf: sink.fileURL, encoding: .utf8)
+        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionRecreated)"))
+        #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionRecreated).count - 1 == 1)
+
+        controller.deactivate()
+        #expect(sink.flush(timeout: .seconds(5)))
+        text = try String(contentsOf: sink.fileURL, encoding: .utf8)
+        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionReleased)"))
+        #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionReleased).count - 1 == 1)
     }
 }
