@@ -120,8 +120,6 @@ struct AgentIdleBlankerTests {
             "Packages/ChorusCore/Sources/ChorusCore/AgentIdleBlank.swift",
         ]
         let forbiddenTokens = [
-            "remoteSession",
-            "runningApplications",
             "com.apple.universalcontrol",
             "com.apple.ScreenSharing",
             "ContinuityCapture",

@@ -8,7 +8,7 @@ import Testing
 struct KeepAwakeSourceHubTests {
     @Test("P2: 100 identical recomputes do not re-notify onBusyChanged")
     func identicalRecomputeDoesNotNotify() {
-        var clock = Date(timeIntervalSince1970: 9_000_000)
+        let clock = Date(timeIntervalSince1970: 9_000_000)
         let leases = KeepAwakeLeaseSource(
             wallNow: { clock },
             uptimeNow: { clock.timeIntervalSince1970 }

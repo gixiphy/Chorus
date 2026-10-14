@@ -1346,7 +1346,7 @@ xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
 
 ### 偏離／給下游
 1. Fi #2：媒體無法可靠判定 → **前景全螢幕即不熄**（誤保護成本：非媒體全螢幕也不熄）。
-2. Fi #4：遠端偵測以公開 `NSWorkspace` bundle id／名稱＋`CGSessionCopyCurrentDictionary` 的 on-console；Universal Control／Screen Sharing 實機覆蓋 **P5 未確認**。抓不到或來源 unknown → 不熄。
+2. Fi #4：遠端偵測以公開 `NSWorkspace` bundle id／名稱＋`CGSessionCopyCurrentDictionary` 的 on-console；Universal Control／Screen Sharing 實機覆蓋 **P5 未確認**。抓不到或來源 unknown → 不熄。（已由 P4 第 2 輪／D-2026-10-14b 移除）
 3. 外部 `PreventUserIdleDisplaySleep`：只在 idle ≥ threshold−60s（或快取空／失效）查 `IOPMCopyAssertionsByProcess`；TTL 60s；已熄屏不每 500ms 重打 powerd。
 4. Production `AgentIdleBlanker(displays:)` 接系統讀取器；測試 init 預設保護訊號 inactive（不影響既有 KeepAwakeControllerTests 注入）。
 5. 未改 `KeepAwakeController.swift`／`LidSleepGuardController.swift`／PowerHelper。
@@ -1401,3 +1401,58 @@ xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
 #### 給下游的注意事項
 - 遠端或螢幕共享輸入若未更新 CG／HID idle，可能被判定閒置而熄屏；這是 Fi 本輪明確接受的漏判。
 - 本輪沒有找到並保留任何「便宜且確實代表連線中」的公開遠端訊號，因此沒有可交 Claude 判定的遠端訊號證據。
+
+## 全分支審查修正（Cursor，第 1 輪）
+
+### 改了哪些檔案
+- `Chorus/Display/KeepAwakeController.swift`
+- `Chorus/Display/AgentIdleBlanker.swift`
+- `Tests/ChorusAppTests/KeepAwakeControllerTests.swift`
+- `Tests/ChorusAppTests/AgentIdleBlankerTests.swift`
+- `Tests/ChorusAppTests/KeepAwakeSourceHubTests.swift`
+- `docs/plans/keepawake-handoff.md`
+
+未改 `PowerHelper/`、`PowerHelperClient.swift`、特權 XPC／pmset 路徑、`project.yml` 或 `*.xcodeproj`。
+
+### RED／GREEN 與全套測試
+```sh
+# RED：F1 的 max-duration／pause-expiry tick、F2 的 active／unknown pre-blank、
+# F3 的 session／power trigger 均失敗；修正後目標套件通過。
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -only-testing:ChorusAppTests/KeepAwakeControllerTests \
+  -only-testing:ChorusAppTests/AgentIdleBlankerTests \
+  -only-testing:ChorusAppTests/KeepAwakeSourceHubTests \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
+  -maximum-test-execution-time-allowance 120 SWIFT_EMIT_LOC_STRINGS=NO
+# → 107 passed，0 failed
+
+swift test --package-path Packages/ChorusCore
+# → 850 passed，0 failed
+
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
+  -maximum-test-execution-time-allowance 120 SWIFT_EMIT_LOC_STRINGS=NO
+# → 788 passed，0 failed（55.984s）
+```
+上述指令均有 Perl `alarm` 外層逾時並經 xcsift；最終 App 全套只有
+`CrashReportCollector.swift` 3 項既有 `nonisolated(unsafe)` warning。
+
+### 驗收條件
+- [x] F1：`.whileAgentsWorking` 的 `.tick` 強制越過 unchanged no-op；跨 3 小時 deadline 當輪 `wants=false` 並啟動 `set(false)`。
+- [x] F1：暫停到期、輸入不變時，tick 當輪恢復 `wants=true` 並啟動 `set(true)`。
+- [x] F1：deadline／pause 測試都先在上限前做 assertion verify，跨界 tick 的 `isActive` 呼叫仍為 0，未恢復逐 tick 查 powerd。
+- [x] F2：候選 `.blank` 且本輪未取得新鮮外部 assertion 時，熄屏前重查一次並重算；active／unknown 都不熄屏。
+- [x] F3：wake／session／power 分別保留有限 trigger，消費後清空；heartbeat 仍獨立。
+- [x] F4：移除 source tripwire 中過寬的 `remoteSession`／`runningApplications`，保留具體政策 token。
+- [x] F5／Claude m3：coalesce worker 睡到當輪 deadline，醒後重讀延長後 deadline；generation／取消 guard 與既有競態測試維持。
+- [x] Claude m6：`let s` 改為 `let stats`。
+- [x] Claude m7：指定 `clock` 改為 `let`。
+- [x] Claude m9：P4 第 1 輪舊遠端敘述標註已由第 2 輪／D-2026-10-14b 移除。
+- [ ] Claude m2：依本輪指示只記錄、不處理；`mediaOrFullscreen()` 的低門檻呼叫成本仍待後續量測／修正。
+- [ ] Claude m6 檔案／函式長度：依本輪指示只記錄、不拆檔。
+
+### 偏離 spec／給下游
+- 無 spec 修改；現有 worktree 仍無 `docs/spec.md`，依效能計畫、D-2026-10-14b 與兩份全分支審查執行。
+- F1 採審查建議的既有 5 秒 tick force，未新增計時架構。
+- m2 與 m6 長度問題刻意留待後續，不冒稱完成。
+- TCC 是否曾顯示對話框未確認；本輪未點擊、未自動化、未改 TCC。

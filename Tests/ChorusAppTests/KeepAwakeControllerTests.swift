@@ -1735,6 +1735,54 @@ struct KeepAwakeControllerTests {
         #expect(assertions.createCallCount == 1)
     }
 
+    @Test(
+        "Full review F3: assertion lifecycle logs preserve the verification trigger",
+        arguments: ["wake", "session", "power"]
+    )
+    func assertionLifecyclePreservesVerifyTrigger(expectedTrigger: String) throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-ka-trigger-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sink = DiagnosticLog(directory: directory)
+        let log = ChorusLog(category: "display", sink: sink)
+        let assertions = FakeAssertions()
+        let power = FakePowerSource()
+        let center = NotificationCenter()
+        let controller = makeController(
+            assertions: assertions,
+            powerSource: power,
+            log: log,
+            workspaceNotifications: center,
+            reevaluationCoalesce: .zero
+        )
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        assertions.active = [:]
+
+        switch expectedTrigger {
+        case "wake":
+            center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        case "session":
+            center.post(name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
+        case "power":
+            power.publish(power.snapshot)
+            controller.flushCoalescedReevaluationForTesting()
+        default:
+            Issue.record("unexpected trigger fixture \(expectedTrigger)")
+        }
+
+        #expect(sink.flush(timeout: .seconds(5)))
+        let text = try String(contentsOf: sink.fileURL, encoding: .utf8)
+        #expect(
+            diagnosticEventFields(text, event: KeepAwakeLogEvent.assertionReleased).last?["trigger"]
+                == expectedTrigger
+        )
+        #expect(
+            diagnosticEventFields(text, event: KeepAwakeLogEvent.assertionRecreated).last?["trigger"]
+                == expectedTrigger
+        )
+    }
+
     @Test("60s heartbeat verifies; inactive assertion is recreated")
     func heartbeatVerifiesAfterInterval() {
         let assertions = FakeAssertions()

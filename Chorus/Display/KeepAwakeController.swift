@@ -110,6 +110,12 @@ enum KeepAwakeReevaluationUrgency: Sendable {
     case safety
 }
 
+private enum AssertionVerifyTrigger: String {
+    case power
+    case session
+    case wake
+}
+
 struct KeepAwakeReevaluationStats: Equatable, Sendable {
     var triggered = 0
     var coalesced = 0
@@ -232,10 +238,10 @@ final class KeepAwakeController {
     @ObservationIgnored private var displayAssertion: IOPMAssertionID?
     @ObservationIgnored private var systemAssertion: IOPMAssertionID?
     /// 喚醒或電源相關通知要求下一輪 `hold` 驗證本程序 assertion。
-    @ObservationIgnored private var needsAssertionVerify = false
+    @ObservationIgnored private var pendingAssertionVerifyTrigger: AssertionVerifyTrigger?
     /// 本輪是否強制驗證所有既有 ID（喚醒／session／電源）；與 per-type 保底分開。
     @ObservationIgnored private var forceVerifyThisPass = false
-    /// 本輪驗證的觸發來源（`wake`／`heartbeat`），寫進 released／recreated 事件。
+    /// 本輪驗證的觸發來源，寫進 released／recreated 事件。
     @ObservationIgnored private var verifyTrigger = "heartbeat"
     /// display／system 各自的上次 `isActive` 或成功建立時間；新建不得延後另一類保底。
     @ObservationIgnored private var lastDisplayAssertionVerifyAt: Double?
@@ -656,7 +662,7 @@ final class KeepAwakeController {
                 || reason == .wake
                 || reason == .session
                 || isAgentTick
-                || needsAssertionVerify
+                || pendingAssertionVerifyTrigger != nil
             performReevaluation(forceInputChange: force)
         case .normal:
             scheduleCoalescedReevaluation()
@@ -665,7 +671,7 @@ final class KeepAwakeController {
 
     private func handlePowerSourceChange() {
         // review #6：電源通知也標記待驗證。
-        markAssertionsNeedVerify()
+        markAssertionsNeedVerify(trigger: .power)
         let snapshot = powerSource.snapshot
         let next = PowerFloorPolicy.evaluate(
             snapshot: snapshot,
@@ -718,8 +724,7 @@ final class KeepAwakeController {
                 guard let deadline = self.coalesceDeadline else { break }
                 let remaining = ContinuousClock.now.duration(to: deadline)
                 if remaining <= .zero { break }
-                let slice = min(remaining, .milliseconds(50))
-                do { try await Task.sleep(for: slice) } catch { return }
+                do { try await ContinuousClock().sleep(until: deadline) } catch { return }
             }
             guard let self,
                   !Task.isCancelled,
@@ -807,7 +812,7 @@ final class KeepAwakeController {
             }()
         )
 
-        let verifyDue = needsAssertionVerify
+        let verifyDue = pendingAssertionVerifyTrigger != nil
             || isAssertionVerifyDue(type: kIOPMAssertionTypePreventUserIdleDisplaySleep, held: displayAssertion != nil)
             || isAssertionVerifyDue(type: kIOPMAssertionTypePreventUserIdleSystemSleep, held: systemAssertion != nil)
         let durationExpired = {
@@ -835,10 +840,10 @@ final class KeepAwakeController {
         }
         lastInputSnapshot = snapshot
 
-        forceVerifyThisPass = needsAssertionVerify
-        verifyTrigger = forceVerifyThisPass ? "wake" : "heartbeat"
+        forceVerifyThisPass = pendingAssertionVerifyTrigger != nil
+        verifyTrigger = pendingAssertionVerifyTrigger?.rawValue ?? "heartbeat"
         if forceVerifyThisPass {
-            needsAssertionVerify = false
+            pendingAssertionVerifyTrigger = nil
         }
         if shouldHold {
             if plan.preventsDisplaySleep {
@@ -890,15 +895,15 @@ final class KeepAwakeController {
         let last = lastThrottleSummaryAt ?? 0
         guard currentTime - last >= 60 else { return }
         lastThrottleSummaryAt = currentTime
-        let s = reevaluationStats
+        let stats = reevaluationStats
         log.event(
             KeepAwakeLogEvent.throttleSummary,
             level: .debug,
             fields: [
-                "triggered": "\(s.triggered)",
-                "coalesced": "\(s.coalesced)",
-                "executed": "\(s.executed)",
-                "skipped": "\(s.skippedUnchanged)",
+                "triggered": "\(stats.triggered)",
+                "coalesced": "\(stats.coalesced)",
+                "executed": "\(stats.executed)",
+                "skipped": "\(stats.skippedUnchanged)",
             ]
         )
     }
@@ -985,7 +990,7 @@ final class KeepAwakeController {
                     if isWake {
                         self.handleDidWake()
                     } else {
-                        self.markAssertionsNeedVerify()
+                        self.markAssertionsNeedVerify(trigger: .session)
                         self.requestReevaluation(reason: .session, urgency: .immediate)
                     }
                 }
@@ -1014,13 +1019,13 @@ final class KeepAwakeController {
         Task { @MainActor [weak self] in
             await self?.lidGuard.refreshFromHelper()
         }
-        markAssertionsNeedVerify()
+        markAssertionsNeedVerify(trigger: .wake)
         // 喚醒必須繞過「輸入沒變」捷徑（P1-3 → P2）。
         requestReevaluation(reason: .wake, urgency: .immediate)
     }
 
-    private func markAssertionsNeedVerify() {
-        needsAssertionVerify = true
+    private func markAssertionsNeedVerify(trigger: AssertionVerifyTrigger) {
+        pendingAssertionVerifyTrigger = trigger
     }
 
     /// 合併模式進出時開／關來源 hub（含既有 agents＋新來源）。
