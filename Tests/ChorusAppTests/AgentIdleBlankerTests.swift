@@ -208,12 +208,12 @@ struct AgentIdleBlankerTests {
         idle = 300
         blanker.evaluateForTesting()
         #expect(blanker.isBlanked)
-        #expect(foreignCalls == 1)
+        #expect(foreignCalls == 2) // blank transition performs one final fresh check
 
         for _ in 0..<10 {
             blanker.evaluateForTesting()
         }
-        #expect(foreignCalls == 1) // blanked ticks must not hammer powerd
+        #expect(foreignCalls == 2) // blanked ticks must not hammer powerd
     }
 
     @Test("Foreign assertion active near threshold blocks blank")
@@ -229,6 +229,38 @@ struct AgentIdleBlankerTests {
         blanker.configure(enabled: true, minutes: .five)
         blanker.update(agentModeActive: true, holdingAssertion: true)
         blanker.evaluateForTesting()
+        #expect(!blanker.isBlanked)
+        #expect(displays.blankCalls == 0)
+    }
+
+    @Test(
+        "Full review F2: blank candidate rechecks a fresh foreign assertion",
+        arguments: [IdleBlankSignal.active, .unknown]
+    )
+    func blankCandidateRechecksForeignAssertion(signalBeforeBlank: IdleBlankSignal) {
+        let displays = FakeDisplays()
+        var idle = 170.0
+        var foreign: IdleBlankSignal = .inactive
+        var foreignCalls = 0
+        let blanker = AgentIdleBlanker(
+            displays: displays,
+            idleSeconds: { idle },
+            mediaOrFullscreen: { .inactive },
+            foreignDisplayAssertion: {
+                foreignCalls += 1
+                return foreign
+            }
+        )
+        blanker.configure(enabled: true, minutes: .three)
+        blanker.update(agentModeActive: true, holdingAssertion: true)
+        let callsNearThreshold = foreignCalls
+        #expect(callsNearThreshold == 2)
+
+        foreign = signalBeforeBlank
+        idle = 180
+        blanker.evaluateForTesting()
+
+        #expect(foreignCalls == callsNearThreshold + 1)
         #expect(!blanker.isBlanked)
         #expect(displays.blankCalls == 0)
     }

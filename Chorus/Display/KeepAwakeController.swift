@@ -647,9 +647,15 @@ final class KeepAwakeController {
         switch urgency {
         case .safety, .immediate:
             cancelCoalescedReevaluation()
+            let isAgentTick: Bool = {
+                guard reason == .tick else { return false }
+                if case .whileAgentsWorking = mode { return true }
+                return false
+            }()
             let force = urgency == .safety
                 || reason == .wake
                 || reason == .session
+                || isAgentTick
                 || needsAssertionVerify
             performReevaluation(forceInputChange: force)
         case .normal:

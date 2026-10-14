@@ -126,6 +126,7 @@ struct KeepAwakeControllerTests {
         helper: FakeLidHelper = FakeLidHelper(),
         notifier: FakeNotifier,
         lid: FakeLidObserver = FakeLidObserver(),
+        now: @escaping () -> Double = { 1_000 },
         e2eNamedInstance: Bool = false
     ) -> LidSleepGuardController {
         LidSleepGuardController(
@@ -133,7 +134,7 @@ struct KeepAwakeControllerTests {
             helper: helper,
             lid: lid,
             notifier: notifier,
-            now: { 1_000 },
+            now: now,
             e2eNamedInstance: e2eNamedInstance,
             sessionStore: LidClosedSessionStore(suiteName: "ka-lid-\(UUID().uuidString)"),
             sleepDisabledProbe: { nil },
@@ -979,8 +980,10 @@ struct KeepAwakeControllerTests {
         powerSource: FakePowerSource? = nil,
         idleBlanker: AgentIdleBlanker? = nil,
         now: @escaping @Sendable () -> Double = { 0 },
+        lidNow: @escaping () -> Double = { 1_000 },
         workspaceNotifications: NotificationCenter = NotificationCenter(),
-        reevaluationCoalesce: Duration = .milliseconds(250)
+        reevaluationCoalesce: Duration = .milliseconds(250),
+        assertionVerifyInterval: Double = 60
     ) -> KeepAwakeController {
         let settings = settings
             ?? SettingsStore(defaults: UserDefaults(suiteName: "merge-ka-\(UUID().uuidString)")!)
@@ -1005,7 +1008,13 @@ struct KeepAwakeControllerTests {
             displayManager: DisplayManager(settings: settings),
             agentActivity: hub.agentActivity,
             sourceHub: hub,
-            lidGuard: makeLidGuard(settings: settings, helper: helper, notifier: notifier, lid: lid),
+            lidGuard: makeLidGuard(
+                settings: settings,
+                helper: helper,
+                notifier: notifier,
+                lid: lid,
+                now: lidNow
+            ),
             systemLoad: monitor,
             powerSource: powerSource ?? FakePowerSource(),
             idleBlanker: idleBlanker,
@@ -1013,6 +1022,7 @@ struct KeepAwakeControllerTests {
             notifier: notifier,
             now: now,
             workspaceNotifications: workspaceNotifications,
+            assertionVerifyInterval: assertionVerifyInterval,
             reevaluationCoalesce: reevaluationCoalesce
         )
     }
@@ -2362,6 +2372,150 @@ struct KeepAwakeControllerTests {
             await Task.yield()
         }
         #expect(helper.setCalls.contains(false))
+    }
+
+    @Test(
+        "Full review F1: unchanged agent tick crosses Lid max deadline without re-querying assertions",
+        .timeLimit(.minutes(1))
+    )
+    func unchangedAgentTickCrossesLidMaxDeadline() async throws {
+        let clock = ManualDoubleClock(1_001)
+        let settings = SettingsStore(
+            defaults: UserDefaults(suiteName: "f1-lid-deadline-\(UUID().uuidString)")!
+        )
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let lid = FakeLidObserver()
+        lid.isClosed = true
+        lid.reading = .closed
+        let helper = FakeLidHelper()
+        let assertions = FakeAssertions()
+        let power = FakePowerSource()
+        let controller = makeMergedController(
+            assertions: assertions,
+            settings: settings,
+            lidHelper: helper,
+            lid: lid,
+            powerSource: power,
+            now: { clock.time },
+            lidNow: { clock.time },
+            reevaluationCoalesce: .zero,
+            assertionVerifyInterval: 60
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "f1-deadline", ttl: 600)
+
+        let acquireDeadline = ContinuousClock.now + .seconds(2)
+        while !controller.lidGuard.isActuallyHoldingSleepDisabled,
+              ContinuousClock.now < acquireDeadline
+        {
+            await Task.yield()
+        }
+        try #require(controller.lidGuard.wantsSleepDisabled)
+        try #require(helper.setCalls.contains(true))
+        try #require(controller.lidGuard.isActuallyHoldingSleepDisabled)
+
+        clock.time = 11_798
+        assertions.resetCounts()
+        power.publish(power.snapshot)
+        controller.flushCoalescedReevaluationForTesting()
+        #expect(assertions.isActiveCallCount == 2)
+        #expect(controller.lidGuard.wantsSleepDisabled)
+        assertions.resetCounts()
+
+        let releasesBeforeTick = helper.setCalls.filter { !$0 }.count
+        clock.time = 11_802
+        controller.requestReevaluation(reason: .tick, urgency: .immediate)
+
+        #expect(!controller.lidGuard.wantsSleepDisabled)
+        #expect(controller.lidGuard.phase == .blocked(.maxDuration(limitSeconds: 10_800)))
+        #expect(assertions.isActiveCallCount == 0)
+        let releaseDeadline = ContinuousClock.now + .seconds(2)
+        while helper.setCalls.filter({ !$0 }).count == releasesBeforeTick,
+              ContinuousClock.now < releaseDeadline
+        {
+            await Task.yield()
+        }
+        #expect(
+            helper.setCalls.filter { !$0 }.count > releasesBeforeTick,
+            "setCalls=\(helper.setCalls), before=\(releasesBeforeTick)"
+        )
+    }
+
+    @Test(
+        "Full review F1: unchanged agent tick resumes Lid hold when user pause expires",
+        .timeLimit(.minutes(1))
+    )
+    func unchangedAgentTickResumesExpiredLidPause() async throws {
+        let clock = ManualDoubleClock(20_000)
+        let settings = SettingsStore(
+            defaults: UserDefaults(suiteName: "f1-lid-pause-\(UUID().uuidString)")!
+        )
+        settings.keepAwakeLidGuard = LidSleepSettings(enabled: true)
+        let lid = FakeLidObserver()
+        lid.isClosed = true
+        lid.reading = .closed
+        let helper = FakeLidHelper()
+        let assertions = FakeAssertions()
+        let power = FakePowerSource()
+        let controller = makeMergedController(
+            assertions: assertions,
+            settings: settings,
+            lidHelper: helper,
+            lid: lid,
+            powerSource: power,
+            now: { clock.time },
+            lidNow: { clock.time },
+            reevaluationCoalesce: .zero,
+            assertionVerifyInterval: 60
+        )
+        defer { controller.shutdown() }
+        controller.lidGuard.debugPauseDurationSeconds = 5
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "f1-pause", ttl: 600)
+
+        let acquireDeadline = ContinuousClock.now + .seconds(2)
+        while !controller.lidGuard.isActuallyHoldingSleepDisabled,
+              ContinuousClock.now < acquireDeadline
+        {
+            await Task.yield()
+        }
+        try #require(controller.lidGuard.wantsSleepDisabled)
+        try #require(helper.setCalls.contains(true))
+        try #require(controller.lidGuard.isActuallyHoldingSleepDisabled)
+
+        clock.time = 20_001
+        controller.lidGuard.pauseForOneHour()
+        let pauseDeadline = ContinuousClock.now + .seconds(2)
+        while !helper.setCalls.contains(false), ContinuousClock.now < pauseDeadline {
+            await Task.yield()
+        }
+        try #require(!controller.lidGuard.wantsSleepDisabled)
+        try #require(helper.setCalls.contains(false))
+
+        clock.time = 20_002
+        assertions.resetCounts()
+        power.publish(power.snapshot)
+        controller.flushCoalescedReevaluationForTesting()
+        #expect(assertions.isActiveCallCount == 2)
+        assertions.resetCounts()
+
+        let acquiresBeforeTick = helper.setCalls.filter { $0 }.count
+        clock.time = 20_007
+        controller.requestReevaluation(reason: .tick, urgency: .immediate)
+
+        #expect(controller.lidGuard.wantsSleepDisabled)
+        #expect(assertions.isActiveCallCount == 0)
+        let resumeDeadline = ContinuousClock.now + .seconds(2)
+        while helper.setCalls.filter({ $0 }).count == acquiresBeforeTick,
+              ContinuousClock.now < resumeDeadline
+        {
+            await Task.yield()
+        }
+        #expect(
+            helper.setCalls.filter { $0 }.count > acquiresBeforeTick,
+            "setCalls=\(helper.setCalls), before=\(acquiresBeforeTick)"
+        )
     }
 
     @Test(

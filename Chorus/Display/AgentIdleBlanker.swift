@@ -115,11 +115,12 @@ final class AgentIdleBlanker {
 
     private func evaluate() {
         let idle = idleSeconds()
-        let protection = AgentIdleBlankProtection(
-            foreignDisplaySleepAssertion: resolveForeignAssertion(idleSeconds: idle),
+        let foreign = resolveForeignAssertion(idleSeconds: idle)
+        var protection = AgentIdleBlankProtection(
+            foreignDisplaySleepAssertion: foreign.signal,
             mediaOrFullscreen: mediaOrFullscreen()
         )
-        let decision = AgentIdleBlankPolicy.decide(
+        var decision = AgentIdleBlankPolicy.decide(
             enabled: enabled,
             agentModeActive: agentModeActive,
             holdingAssertion: holdingAssertion,
@@ -128,6 +129,18 @@ final class AgentIdleBlanker {
             isBlanked: isBlanked,
             protection: protection
         )
+        if case .blank = decision, !foreign.isFresh {
+            protection.foreignDisplaySleepAssertion = queryForeignAssertion(now: .now)
+            decision = AgentIdleBlankPolicy.decide(
+                enabled: enabled,
+                agentModeActive: agentModeActive,
+                holdingAssertion: holdingAssertion,
+                idleSeconds: idle,
+                thresholdSeconds: thresholdSeconds,
+                isBlanked: isBlanked,
+                protection: protection
+            )
+        }
         switch decision {
         case .stay:
             break
@@ -144,15 +157,21 @@ final class AgentIdleBlanker {
         }
     }
 
-    private func resolveForeignAssertion(idleSeconds: Double) -> IdleBlankSignal {
+    private func resolveForeignAssertion(
+        idleSeconds: Double
+    ) -> (signal: IdleBlankSignal, isFresh: Bool) {
         let now = ContinuousClock.now
         if shouldQueryForeignAssertion(idleSeconds: idleSeconds, now: now) {
-            let value = foreignDisplayAssertion()
-            cachedForeignAssertion = value
-            lastForeignQueryAt = now
-            return value
+            return (queryForeignAssertion(now: now), true)
         }
-        return cachedForeignAssertion ?? .inactive
+        return (cachedForeignAssertion ?? .inactive, false)
+    }
+
+    private func queryForeignAssertion(now: ContinuousClock.Instant) -> IdleBlankSignal {
+        let value = foreignDisplayAssertion()
+        cachedForeignAssertion = value
+        lastForeignQueryAt = now
+        return value
     }
 
     private func shouldQueryForeignAssertion(idleSeconds: Double, now: ContinuousClock.Instant) -> Bool {
