@@ -247,14 +247,17 @@ struct ChorusLog: Sendable {
         emit(level, Self.formatEvent(name: name, fields: fields))
     }
 
-    /// `event=<name> k=v …`；鍵依名稱排序，值內換行改 `⏎`。
+    /// `event=<name> k=v …`；鍵依名稱排序，值內 CR／LF 改 `⏎`。
     static func formatEvent(name: String, fields: [String: String]) -> String {
         let flattenedFields = fields
+            .sorted { $0.key < $1.key }
             .map { key, value in
-                let flat = value.replacingOccurrences(of: "\n", with: "⏎")
+                let flat = value
+                    .replacingOccurrences(of: "\r\n", with: "⏎")
+                    .replacingOccurrences(of: "\n", with: "⏎")
+                    .replacingOccurrences(of: "\r", with: "⏎")
                 return "\(key)=\(flat)"
             }
-            .sorted()
         if flattenedFields.isEmpty {
             return "event=\(name)"
         }

@@ -1731,12 +1731,165 @@ struct KeepAwakeControllerTests {
         #expect(sink.flush(timeout: .seconds(5)))
         text = try String(contentsOf: sink.fileURL, encoding: .utf8)
         #expect(text.contains("event=\(KeepAwakeLogEvent.assertionRecreated)"))
+        #expect(text.contains("trigger=wake"))
         #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionRecreated).count - 1 == 1)
 
         controller.deactivate()
         #expect(sink.flush(timeout: .seconds(5)))
         text = try String(contentsOf: sink.fileURL, encoding: .utf8)
-        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionReleased)"))
+        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionReleased) id=1 type=display"))
         #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionReleased).count - 1 == 1)
+    }
+
+    // MARK: - P1 review (adversarial)
+
+    @Test("Review: wake recreate failure clears ID, reports failure, and later tick retries without probing")
+    func reviewWakeRecreateFailureRetries() {
+        let assertions = FakeAssertions()
+        let center = NotificationCenter()
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "rv-ka-\(UUID().uuidString)")!)
+        let controller = KeepAwakeController(
+            settings: settings,
+            displayManager: DisplayManager(settings: settings),
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            powerSource: FakePowerSource(),
+            assertions: assertions,
+            notifier: FakeNotifier(),
+            workspaceNotifications: center
+        )
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        #expect(assertions.active[0] != nil)
+        assertions.resetCounts()
+        assertions.active = [:]
+        assertions.failingTypes = [kIOPMAssertionTypePreventUserIdleDisplaySleep]
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        #expect(!controller.isHolding)
+        #expect(controller.activationFailed)
+        #expect(assertions.released == [0])
+        #expect(assertions.isActiveCallCount == 1)
+
+        // Still failing: retry create, no probe of a nil ID.
+        controller.reevaluate()
+        #expect(assertions.createCallCount == 2)
+        #expect(assertions.isActiveCallCount == 1)
+
+        assertions.failingTypes = []
+        controller.reevaluate()
+        #expect(controller.isHolding)
+        #expect(!controller.activationFailed)
+        #expect(assertions.isActiveCallCount == 1)
+        #expect(assertions.active.count == 1)
+        // Wake flag consumed: no further probes.
+        controller.reevaluate()
+        #expect(assertions.isActiveCallCount == 1)
+    }
+
+    @Test("Review: agent mode wake drops only system assertion (ID 0 display kept)")
+    func reviewAgentWakeRecreatesOnlyDroppedSystem() {
+        let assertions = FakeAssertions()
+        let center = NotificationCenter()
+        let controller = makeMergedController(assertions: assertions, workspaceNotifications: center)
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "rv", ttl: 600)
+        controller.reevaluate()
+        #expect(controller.isHolding)
+        #expect(assertions.active.count == 2)
+        let systemID = assertions.active.first { $0.value == kIOPMAssertionTypePreventUserIdleSystemSleep }!.key
+        let displayID = assertions.active.first { $0.value == kIOPMAssertionTypePreventUserIdleDisplaySleep }!.key
+        assertions.resetCounts()
+        assertions.active.removeValue(forKey: systemID)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        #expect(controller.isHolding)
+        #expect(assertions.isActiveCallCount == 2)
+        #expect(assertions.createCallCount == 1)
+        #expect(assertions.released == [systemID])
+        #expect(assertions.active[displayID] == kIOPMAssertionTypePreventUserIdleDisplaySleep)
+    }
+
+    @Test("Review: fast busy -> idle -> busy inside grace never releases or probes")
+    func reviewFastBusyIdleBusyKeepsHold() {
+        let wallBase = Date(timeIntervalSince1970: 1_000)
+        let wallOffset = ManualDoubleClock(0)
+        let clock = ManualDoubleClock(0)
+        let leases = KeepAwakeLeaseSource(
+            graceSeconds: 300,
+            wallNow: { wallBase.addingTimeInterval(wallOffset.time) },
+            uptimeNow: { clock.time }
+        )
+        let hub = KeepAwakeSourceHub(
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil),
+            leases: leases,
+            graceSeconds: 300,
+            tickInterval: .seconds(3_600),
+            now: { wallBase.addingTimeInterval(wallOffset.time) }
+        )
+        let assertions = FakeAssertions()
+        let controller = makeMergedController(assertions: assertions, sourceHub: hub, now: { clock.time })
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        _ = hub.leases.hold(id: "a", ttl: 600)
+        controller.reevaluate()
+        #expect(controller.isHolding)
+        assertions.resetCounts()
+        for i in 0..<20 {
+            clock.time = Double(i)
+            wallOffset.time = Double(i)
+            _ = hub.leases.release(id: "a")
+            hub.tick()
+            controller.reevaluate()
+            #expect(controller.isHolding)
+            _ = hub.leases.hold(id: "a", ttl: 600)
+            controller.reevaluate()
+            #expect(controller.isHolding)
+        }
+        #expect(assertions.released.isEmpty)
+        #expect(assertions.createCallCount == 0)
+        #expect(assertions.isActiveCallCount == 0)
+    }
+
+    @Test("Review: pending wake verify then shutdown releases both and wake cannot reacquire")
+    func reviewShutdownAfterWakeFlag() {
+        let assertions = FakeAssertions()
+        let center = NotificationCenter()
+        let controller = makeMergedController(assertions: assertions, workspaceNotifications: center)
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "rv", ttl: 600)
+        controller.reevaluate()
+        #expect(assertions.active.count == 2)
+        assertions.resetCounts()
+        controller.shutdown()
+        #expect(assertions.active.isEmpty)
+        #expect(assertions.released.count == 2)
+        #expect(assertions.isActiveCallCount == 0)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        center.post(name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
+        controller.reevaluate()
+        #expect(assertions.createCallCount == 0)
+        #expect(assertions.isActiveCallCount == 0)
+        #expect(!controller.isHolding)
+    }
+
+    @Test("Review: re-hold after release restarts heartbeat window from creation")
+    func reviewHeartbeatResetsOnCreate() {
+        let assertions = FakeAssertions()
+        var time = 0.0
+        let controller = makeController(assertions: assertions, now: { time })
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        controller.deactivate()
+        time = 1_000
+        controller.activate(.indefinite)
+        assertions.resetCounts()
+        time = 1_030
+        controller.reevaluate()
+        #expect(assertions.isActiveCallCount == 0)
+        time = 1_061
+        controller.reevaluate()
+        #expect(assertions.isActiveCallCount == 1)
+        time = 1_062
+        controller.reevaluate()
+        #expect(assertions.isActiveCallCount == 1)
     }
 }

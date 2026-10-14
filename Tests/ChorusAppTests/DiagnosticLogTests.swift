@@ -155,12 +155,15 @@ struct DiagnosticLogTests {
         #expect(KeepAwakeLogEvent.idleRestore == "keepawake.idle.restore")
     }
 
-    @Test("事件欄位格式穩定：鍵值依鍵名排序，空白與換行被壓平")
+    @Test("事件欄位格式穩定：依鍵名排序，CR／LF 被壓平")
     func eventFormatIsStable() {
         let line = ChorusLog.formatEvent(
             name: "keepawake.assertion.created",
-            fields: ["b": "two\nlines", "a": "one"]
+            fields: ["b": "two\nlines", "a": "one", "c": "x\r\ny\rz"]
         )
-        #expect(line == "event=keepawake.assertion.created a=one b=two⏎lines")
+        #expect(line == "event=keepawake.assertion.created a=one b=two⏎lines c=x⏎y⏎z")
+        // 依鍵名而非整段 `k=v` 字串排序：`a` 必須排在 `a-b` 前。
+        let keyed = ChorusLog.formatEvent(name: "e", fields: ["a-b": "2", "a": "1"])
+        #expect(keyed == "event=e a=1 a-b=2")
     }
 }

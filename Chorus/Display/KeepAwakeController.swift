@@ -154,6 +154,8 @@ final class KeepAwakeController {
     @ObservationIgnored private var needsAssertionVerify = false
     /// 本輪 reevaluate 是否應對既有 ID 呼叫 `isActive`（display＋system 共用）。
     @ObservationIgnored private var verifyHeldAssertionsThisPass = false
+    /// 本輪驗證的觸發來源（`wake`／`heartbeat`），只寫進 recreated 事件。
+    @ObservationIgnored private var verifyTrigger = "heartbeat"
     /// 上次 `isActive` 驗證（或成功建立）的單調時間；用於 60 秒保底。
     @ObservationIgnored private var lastAssertionVerifyAt: Double?
     @ObservationIgnored private var tickTask: Task<Void, Never>?
@@ -545,6 +547,7 @@ final class KeepAwakeController {
             powerFloorTripped: pauseReason.isTripped
         )
         let plan = KeepAwakePlanner.assertionPlan(mode: mode, alsoPreventSystemSleep: alsoPreventSystemSleep)
+        verifyTrigger = needsAssertionVerify ? "wake" : "heartbeat"
         verifyHeldAssertionsThisPass = shouldVerifyHeldAssertion()
         if verifyHeldAssertionsThisPass {
             needsAssertionVerify = false
@@ -553,16 +556,16 @@ final class KeepAwakeController {
             if plan.preventsDisplaySleep {
                 hold(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep, reason: "Chorus 螢幕長亮")
             } else {
-                release(&displayAssertion)
+                release(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
             }
             if plan.preventsSystemSleep {
                 hold(&systemAssertion, type: kIOPMAssertionTypePreventUserIdleSystemSleep, reason: "Chorus 防止系統待機")
             } else {
-                release(&systemAssertion)
+                release(&systemAssertion, type: kIOPMAssertionTypePreventUserIdleSystemSleep)
             }
         } else {
-            release(&displayAssertion)
-            release(&systemAssertion)
+            release(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
+            release(&systemAssertion, type: kIOPMAssertionTypePreventUserIdleSystemSleep)
             // 計時到期就把模式收乾淨，UI 才不會停在「開啟中」。
             // 電量／溫度暫停**不收**：倒數照常走，恢復後繼續持有直到時間到。
             // 螢幕／App 綁定模式**不收**：螢幕接回來、App 再開時要能自己恢復。
@@ -767,7 +770,7 @@ final class KeepAwakeController {
             log.event(
                 KeepAwakeLogEvent.assertionRecreated,
                 level: .notice,
-                fields: ["type": label, "id": "\(created)"]
+                fields: ["type": label, "id": "\(created)", "trigger": verifyTrigger]
             )
         } else {
             log.event(
@@ -784,14 +787,14 @@ final class KeepAwakeController {
         return now() - last >= assertionVerifyInterval
     }
 
-    private func release(_ id: inout IOPMAssertionID?) {
+    private func release(_ id: inout IOPMAssertionID?, type: String) {
         guard let existing = id else { return }
         assertions.release(existing)
         id = nil
         log.event(
             KeepAwakeLogEvent.assertionReleased,
             level: .notice,
-            fields: ["id": "\(existing)"]
+            fields: ["type": Self.assertionTypeLabel(type), "id": "\(existing)"]
         )
     }
 
