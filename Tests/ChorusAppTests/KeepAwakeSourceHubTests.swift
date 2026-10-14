@@ -4,8 +4,39 @@ import Testing
 @testable import Chorus
 
 @MainActor
-@Suite("KeepAwakeSourceHub")
+@Suite("KeepAwakeSourceHub", .timeLimit(.minutes(1)))
 struct KeepAwakeSourceHubTests {
+    @Test("P2: 100 identical recomputes do not re-notify onBusyChanged")
+    func identicalRecomputeDoesNotNotify() {
+        var clock = Date(timeIntervalSince1970: 9_000_000)
+        let leases = KeepAwakeLeaseSource(
+            wallNow: { clock },
+            uptimeNow: { clock.timeIntervalSince1970 }
+        )
+        let hub = KeepAwakeSourceHub(
+            agentActivity: AgentActivityMonitor(sources: [], processSampler: nil, now: { clock }),
+            leases: leases,
+            tickInterval: .seconds(3_600),
+            now: { clock }
+        )
+        hub.configure(
+            KeepAwakeSourceSettings(orcaEnabled: false, desktopAgentsEnabled: false, grokBotEnabled: false)
+        )
+        var notifies = 0
+        hub.onBusyChanged = { notifies += 1 }
+        hub.start()
+        _ = leases.hold(id: "stable", ttl: 600)
+        #expect(hub.isBusy)
+        let afterHold = notifies
+        let suppressedBefore = hub.notifyStats.suppressedIdentical
+        for _ in 0..<100 {
+            hub.recompute()
+        }
+        #expect(notifies == afterHold)
+        #expect(hub.notifyStats.suppressedIdentical - suppressedBefore == 100)
+        hub.stop()
+    }
+
     final class FakePresence: OrcaPresenceChecking, @unchecked Sendable {
         var running = true
         func isOrcaRunning() -> Bool { running }

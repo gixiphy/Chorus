@@ -3,12 +3,44 @@ import ChorusCore
 import Foundation
 import IOKit.pwr_mgt
 import Observation
+import Synchronization
 
 @MainActor
 protocol KeepAwakeAsserting {
     func create(type: String, reason: String) -> IOPMAssertionID?
     func isActive(_ id: IOPMAssertionID) -> Bool
     func release(_ id: IOPMAssertionID)
+}
+
+/// `create` 持續失敗時的 error log 節流（review #7／P0：避免日誌變負載）。
+enum KeepAwakeCreateErrorThrottle {
+    private struct State {
+        var lastLogAt: [String: Double] = [:]
+        var suppressedSinceLog: [String: Int] = [:]
+    }
+
+    private static let state = Mutex(State())
+    private static let defaultInterval: Double = 60
+
+    static func resetForTesting() {
+        state.withLock { $0 = State() }
+    }
+
+    /// - Returns: `shouldLog` 為 true 時應寫一行 error；`suppressed` 為本次一併彙總的略過數。
+    static func noteFailure(type: String, now: Double, interval: Double = defaultInterval) -> (
+        shouldLog: Bool, suppressed: Int
+    ) {
+        state.withLock { state in
+            if let last = state.lastLogAt[type], now - last < interval {
+                state.suppressedSinceLog[type, default: 0] += 1
+                return (false, state.suppressedSinceLog[type] ?? 0)
+            }
+            let suppressed = state.suppressedSinceLog[type] ?? 0
+            state.lastLogAt[type] = now
+            state.suppressedSinceLog[type] = 0
+            return (true, suppressed)
+        }
+    }
 }
 
 struct SystemKeepAwakeAssertions: KeepAwakeAsserting {
@@ -18,7 +50,22 @@ struct SystemKeepAwakeAssertions: KeepAwakeAsserting {
             type as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), reason as CFString, &id
         )
         guard result == kIOReturnSuccess else {
-            ChorusLog.display.error("Keep awake assertion failed: type=\(type), IOReturn=\(result)")
+            let label = type == kIOPMAssertionTypePreventUserIdleDisplaySleep ? "display"
+                : type == kIOPMAssertionTypePreventUserIdleSystemSleep ? "system" : "other"
+            let note = KeepAwakeCreateErrorThrottle.noteFailure(
+                type: label, now: ProcessInfo.processInfo.systemUptime
+            )
+            if note.shouldLog {
+                if note.suppressed > 0 {
+                    ChorusLog.display.error(
+                        "Keep awake assertion failed: type=\(type), IOReturn=\(result), suppressed=\(note.suppressed)"
+                    )
+                } else {
+                    ChorusLog.display.error(
+                        "Keep awake assertion failed: type=\(type), IOReturn=\(result)"
+                    )
+                }
+            }
             return nil
         }
         return id
@@ -35,6 +82,40 @@ struct SystemKeepAwakeAssertions: KeepAwakeAsserting {
     func release(_ id: IOPMAssertionID) {
         IOPMAssertionRelease(id)
     }
+}
+
+enum KeepAwakeReevaluationReason: String, Sendable {
+    case hub
+    case lid
+    case load
+    case power
+    case tick
+    case wake
+    case session
+    case direct
+    case settings
+    case displays
+    case apps
+    case hold
+    case pending
+    case sleep
+}
+
+enum KeepAwakeReevaluationUrgency: Sendable {
+    /// 250ms trailing coalesce（一般 callback）。
+    case normal
+    /// 同步立即執行（公開 `reevaluate()`、tick、wake）。
+    case immediate
+    /// 同步且不可延後（power floor trip、模式關閉後釋放）。
+    case safety
+}
+
+struct KeepAwakeReevaluationStats: Equatable, Sendable {
+    var triggered = 0
+    var coalesced = 0
+    var executed = 0
+    var skippedUnchanged = 0
+    var triggeredByReason: [String: Int] = [:]
 }
 
 /// 螢幕長亮（M9）。公開 API `IOPMAssertionCreateWithName`，無需任何權限。
@@ -85,7 +166,7 @@ final class KeepAwakeController {
         didSet {
             guard alsoPreventSystemSleep != oldValue else { return }
             settings.keepAwakePreventsSystemSleep = alsoPreventSystemSleep
-            reevaluate()
+            requestReevaluation(reason: .settings, urgency: .immediate)
         }
     }
 
@@ -94,7 +175,7 @@ final class KeepAwakeController {
         didSet {
             guard batteryFloor != oldValue else { return }
             settings.keepAwakeBatteryFloor = batteryFloor
-            reevaluate()
+            requestReevaluation(reason: .settings, urgency: .immediate)
         }
     }
 
@@ -169,6 +250,15 @@ final class KeepAwakeController {
     @ObservationIgnored private var pendingReevaluate = false
     /// 同一次觸發不重複發通知；恢復後清掉。
     @ObservationIgnored private var didNotifyCurrentTrip = false
+    /// P2：一般 callback 的 trailing coalesce 間隔。
+    @ObservationIgnored private let reevaluationCoalesce: Duration
+    @ObservationIgnored private var coalesceTask: Task<Void, Never>?
+    @ObservationIgnored private var coalesceDeadline: ContinuousClock.Instant?
+    @ObservationIgnored private var lastInputSnapshot: ReevaluationInputSnapshot?
+    @ObservationIgnored private var lastThrottleSummaryAt: Double?
+    @ObservationIgnored private(set) var reevaluationStats = KeepAwakeReevaluationStats()
+    /// 本輪是否強制略過「輸入未變」捷徑（喚醒／safety／verify）。
+    @ObservationIgnored private var forceInputChangeThisPass = false
 
     init(
         settings: SettingsStore,
@@ -184,7 +274,8 @@ final class KeepAwakeController {
         now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
         workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter,
         log: ChorusLog = .display,
-        assertionVerifyInterval: Double = 60
+        assertionVerifyInterval: Double = 60,
+        reevaluationCoalesce: Duration = .milliseconds(250)
     ) {
         self.settings = settings
         self.displayManager = displayManager
@@ -202,6 +293,7 @@ final class KeepAwakeController {
         self.workspaceNotifications = workspaceNotifications
         self.log = log
         self.assertionVerifyInterval = max(1, assertionVerifyInterval)
+        self.reevaluationCoalesce = reevaluationCoalesce
         alsoPreventSystemSleep = settings.keepAwakePreventsSystemSleep
         batteryFloor = settings.keepAwakeBatteryFloor
         agentProcessDetectionEnabled = settings.keepAwakeProcessDetection
@@ -209,14 +301,42 @@ final class KeepAwakeController {
         agentIdleBlankEnabled = settings.keepAwakeAgentIdleBlankEnabled
         agentIdleBlankMinutes = settings.keepAwakeAgentIdleMinutes
         hub.configure(settings.keepAwakeSourceSettings)
-        hub.onBusyChanged = { [weak self] in self?.reevaluate() }
-        self.lidGuard.onChange = { [weak self] in self?.reevaluate() }
-        systemLoad.onDecisionChanged = { [weak self] in self?.reevaluate() }
-        powerSource.onChange = { [weak self] in self?.reevaluate() }
+        hub.onBusyChanged = { [weak self] in
+            guard let self else { return }
+            // busy 布林翻轉要同步（lease hold／grace 邊界）；細節變更可 coalesce。
+            let flipped = self.lastInputSnapshot.map { $0.hubBusy != self.sourceHub.isBusy } ?? true
+            self.requestReevaluation(reason: .hub, urgency: flipped ? .immediate : .normal)
+        }
+        self.lidGuard.onChange = { [weak self] in
+            self?.requestReevaluation(reason: .lid, urgency: .normal)
+        }
+        systemLoad.onDecisionChanged = { [weak self] in
+            guard let self else { return }
+            let flipped = self.lastInputSnapshot.map {
+                $0.loadShouldHold != self.systemLoad.evaluation.shouldHold
+            } ?? true
+            self.requestReevaluation(reason: .load, urgency: flipped ? .immediate : .normal)
+        }
+        powerSource.onChange = { [weak self] in
+            self?.handlePowerSourceChange()
+        }
         // `didSet` 在 init 裡不會跑，設定得在這裡自己推一次給 monitor。
         hub.agentActivity.configureProcessDetection(
             enabled: agentProcessDetectionEnabled, customProcessNames: agentCustomProcessNames
         )
+    }
+
+    func resetReevaluationStatsForTesting() {
+        reevaluationStats = KeepAwakeReevaluationStats()
+    }
+
+    /// 測試用：取消 debounce 並立即跑一輪（若有待排）。
+    func flushCoalescedReevaluationForTesting() {
+        let hadPending = coalesceDeadline != nil || coalesceTask != nil
+        cancelCoalescedReevaluation()
+        if hadPending {
+            requestReevaluation(reason: .pending, urgency: .immediate)
+        }
     }
 
     /// 選單明確選用：寫入互斥持久化旗標，再 activate。
@@ -324,7 +444,7 @@ final class KeepAwakeController {
             settings.keepAwakeSystemLoadConfiguration = normalized
         }
         if systemLoad.applyConfiguration(normalized) {
-            reevaluate()
+            requestReevaluation(reason: .settings, urgency: .immediate)
         }
     }
 
@@ -341,7 +461,7 @@ final class KeepAwakeController {
         settings.keepAwakeSystemLoadConfiguration = normalized
         if case .whileAgentsWorking = mode {
             systemLoad.applyConfiguration(normalized)
-            reevaluate()
+            requestReevaluation(reason: .settings, urgency: .immediate)
         }
     }
 
@@ -349,12 +469,14 @@ final class KeepAwakeController {
         guard !shutDown || mode == .off else { return }
         self.mode = mode
         startedAt = mode == .off ? nil : now()
+        lastInputSnapshot = nil
         updateAppObservers()
         updateWakeObservers()
         updateAgentMonitor()
         updateSystemLoadMonitor()
         updatePowerSourceMonitor()
-        reevaluate()
+        let urgency: KeepAwakeReevaluationUrgency = mode == .off ? .safety : .immediate
+        requestReevaluation(reason: .settings, urgency: urgency)
         // 長亮期間持續核對 assertion；建立失敗或失效後仍須重試。
         tickTask?.cancel()
         tickTask = nil
@@ -372,7 +494,7 @@ final class KeepAwakeController {
                     if case .whileAgentsWorking = self.mode {
                         self.systemLoad.evaluate(now: self.now())
                     }
-                    self.reevaluate()
+                    self.requestReevaluation(reason: .tick, urgency: .immediate)
                 }
             }
         }
@@ -385,7 +507,7 @@ final class KeepAwakeController {
     /// 顯示器組合變更 → 重新評估「接著某台螢幕時防睡眠」；合併模式重探 GPU。
     func displaysDidChange() {
         if case .whileDisplayConnected = mode {
-            reevaluate()
+            requestReevaluation(reason: .displays, urgency: .immediate)
         }
         if case .whileAgentsWorking = mode {
             systemLoad.invalidateGPUCapability()
@@ -395,7 +517,7 @@ final class KeepAwakeController {
     /// App 啟動／結束 → 重新評估「這個 App 執行中才防睡眠」。
     func runningAppsDidChange() {
         guard case .whileAppRunning = mode else { return }
-        reevaluate()
+        requestReevaluation(reason: .apps, urgency: .immediate)
     }
 
     /// App 結束前釋放（核心其實也會自動回收，但明確釋放比較乾淨）。
@@ -403,6 +525,7 @@ final class KeepAwakeController {
     /// Lid Guard 必須在 deactivate **之前**同步 set(false)（spec §7.1）。
     func shutdown() {
         shutDown = true
+        cancelCoalescedReevaluation()
         lidGuard.shutdown()
         idleBlanker.stop()
         deactivate()
@@ -429,7 +552,7 @@ final class KeepAwakeController {
         switch result {
         case let .held(expiresAt, clampedTTL):
             // Lease notify → hub → reevaluate is sync; re-read effectiveness after.
-            reevaluate()
+            requestReevaluation(reason: .hold, urgency: .immediate)
             let uptime = sourceHub.leases.currentUptime()
             let assertion = assertionEffectiveForLease()
             let lid = lidEffectiveForLease()
@@ -509,26 +632,110 @@ final class KeepAwakeController {
         return encodeOK(KeepAwakeStatusRecoveryWire(response: response, evidence: lidGuard.helperStatus))
     }
 
+    /// 公開同步入口：測試／CLI／UI 依賴同步語意；內部走立即執行且不再自激無界 Task。
     func reevaluate() {
+        requestReevaluation(reason: .direct, urgency: .immediate)
+    }
+
+    func requestReevaluation(reason: KeepAwakeReevaluationReason, urgency: KeepAwakeReevaluationUrgency) {
+        guard !shutDown || reason == .settings || reason == .direct else { return }
+        reevaluationStats.triggered += 1
+        reevaluationStats.triggeredByReason[reason.rawValue, default: 0] += 1
+
+        switch urgency {
+        case .safety, .immediate:
+            cancelCoalescedReevaluation()
+            let force = urgency == .safety
+                || reason == .wake
+                || reason == .session
+                || needsAssertionVerify
+            performReevaluation(forceInputChange: force)
+        case .normal:
+            scheduleCoalescedReevaluation()
+        }
+    }
+
+    private func handlePowerSourceChange() {
+        // review #6：電源通知也標記待驗證。
+        markAssertionsNeedVerify()
+        let next = PowerFloorPolicy.evaluate(
+            snapshot: powerSource.snapshot,
+            floor: batteryFloor,
+            previous: pauseReason
+        )
+        if next.isTripped != pauseReason.isTripped {
+            requestReevaluation(reason: .power, urgency: .safety)
+        } else {
+            requestReevaluation(reason: .power, urgency: .normal)
+        }
+    }
+
+    private func scheduleCoalescedReevaluation() {
+        if coalesceDeadline != nil {
+            reevaluationStats.coalesced += 1
+        }
+        let delay = reevaluationCoalesce
+        if delay <= .zero {
+            // 測試用零延遲：合併到下一個 MainActor 回合，同批仍只排一個 Task。
+            coalesceDeadline = ContinuousClock.now
+            guard coalesceTask == nil else { return }
+            coalesceTask = Task { @MainActor [weak self] in
+                guard let self, !self.shutDown else { return }
+                self.coalesceTask = nil
+                self.coalesceDeadline = nil
+                self.performReevaluation(forceInputChange: false)
+            }
+            return
+        }
+        coalesceDeadline = ContinuousClock.now + delay
+        guard coalesceTask == nil else { return }
+        coalesceTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, !self.shutDown else { return }
+                guard let deadline = self.coalesceDeadline else { break }
+                let remaining = ContinuousClock.now.duration(to: deadline)
+                if remaining <= .zero { break }
+                let slice = min(remaining, .milliseconds(50))
+                do { try await Task.sleep(for: slice) } catch { return }
+            }
+            guard let self else { return }
+            self.coalesceTask = nil
+            self.coalesceDeadline = nil
+            guard !Task.isCancelled, !self.shutDown else { return }
+            self.performReevaluation(forceInputChange: false)
+        }
+    }
+
+    private func cancelCoalescedReevaluation() {
+        coalesceTask?.cancel()
+        coalesceTask = nil
+        coalesceDeadline = nil
+    }
+
+    private func performReevaluation(forceInputChange: Bool) {
         if reevaluating {
             pendingReevaluate = true
+            if forceInputChange {
+                forceInputChangeThisPass = true
+            }
             return
         }
         reevaluating = true
+        let force = forceInputChange || forceInputChangeThisPass
+        forceInputChangeThisPass = false
         defer {
             reevaluating = false
             if pendingReevaluate {
                 pendingReevaluate = false
-                // Async — bound callback depth independently of hub/lease sync notify (V1-2).
-                Task { @MainActor [weak self] in
-                    self?.reevaluate()
-                }
+                // 不再 Task{reevaluate()} 無界自激；併入 trailing coalesce。
+                requestReevaluation(reason: .pending, urgency: .normal)
             }
         }
         if case .whileAgentsWorking = mode {
             sourceHub.configure(settings.keepAwakeSourceSettings)
         }
         let currentTime = now()
+        // UI 倒數每輪更新，不因 assertion no-op 凍結。
         remainingSeconds = KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: startedAt, now: currentTime)
         let connected = Set(displayManager?.displays.map(\.uuid) ?? [])
         // 執行中 App 清單每次現查——只有綁定 App 模式會走到，
@@ -547,8 +754,61 @@ final class KeepAwakeController {
             powerFloorTripped: pauseReason.isTripped
         )
         let plan = KeepAwakePlanner.assertionPlan(mode: mode, alsoPreventSystemSleep: alsoPreventSystemSleep)
+        let snapshot = ReevaluationInputSnapshot(
+            mode: mode,
+            startedAt: startedAt,
+            shouldHold: shouldHold,
+            preventsDisplaySleep: plan.preventsDisplaySleep,
+            preventsSystemSleep: plan.preventsSystemSleep,
+            hubBusy: sourceHub.isBusy,
+            hubReleaseAt: sourceHub.busy.releaseAt,
+            hubContributingIDs: sourceHub.busy.contributing.map(\.id),
+            loadShouldHold: systemLoad.evaluation.shouldHold,
+            loadCooldown: systemLoad.evaluation.cooldownRemaining,
+            power: powerSource.snapshot,
+            batteryFloor: batteryFloor,
+            pauseTripped: pauseReason.isTripped,
+            alsoPreventSystemSleep: alsoPreventSystemSleep,
+            agentIdleBlankEnabled: agentIdleBlankEnabled,
+            agentIdleBlankMinutes: agentIdleBlankMinutes,
+            displayConnectedMatch: {
+                if case let .whileDisplayConnected(uuid) = mode { return connected.contains(uuid) }
+                return nil
+            }(),
+            appRunningMatch: {
+                if case let .whileAppRunning(bundleID) = mode { return running.contains(bundleID) }
+                return nil
+            }()
+        )
+
+        let verifyDue = shouldVerifyHeldAssertion()
+        let durationExpired = {
+            if case .duration = mode {
+                return KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: startedAt, now: currentTime) == 0
+            }
+            return false
+        }()
+        // create 失敗後 shouldHold 仍真但尚未持有：不可 no-op，否則永遠不重試。
+        let awaitingSuccessfulHold = shouldHold && (
+            (plan.preventsDisplaySleep && displayAssertion == nil)
+                || (plan.preventsSystemSleep && systemAssertion == nil)
+        )
+        let skipSideEffects = !force
+            && !verifyDue
+            && !durationExpired
+            && !awaitingSuccessfulHold
+            && lastInputSnapshot == snapshot
+
+        reevaluationStats.executed += 1
+        if skipSideEffects {
+            reevaluationStats.skippedUnchanged += 1
+            emitThrottleSummaryIfNeeded(now: currentTime)
+            return
+        }
+        lastInputSnapshot = snapshot
+
         verifyTrigger = needsAssertionVerify ? "wake" : "heartbeat"
-        verifyHeldAssertionsThisPass = shouldVerifyHeldAssertion()
+        verifyHeldAssertionsThisPass = verifyDue
         if verifyHeldAssertionsThisPass {
             needsAssertionVerify = false
         }
@@ -569,14 +829,14 @@ final class KeepAwakeController {
             // 計時到期就把模式收乾淨，UI 才不會停在「開啟中」。
             // 電量／溫度暫停**不收**：倒數照常走，恢復後繼續持有直到時間到。
             // 螢幕／App 綁定模式**不收**：螢幕接回來、App 再開時要能自己恢復。
-            if case .duration = mode,
-               KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: startedAt, now: currentTime) == 0 {
+            if durationExpired {
                 mode = .off
                 startedAt = nil
                 remainingSeconds = nil
                 tickTask?.cancel()
                 updateWakeObservers()
                 updatePowerSourceMonitor()
+                lastInputSnapshot = nil
             }
         }
         isHolding = shouldHold
@@ -595,6 +855,46 @@ final class KeepAwakeController {
             power: powerSource.snapshot,
             existingFloor: batteryFloor
         )
+        emitThrottleSummaryIfNeeded(now: currentTime)
+    }
+
+    private func emitThrottleSummaryIfNeeded(now currentTime: Double) {
+        let last = lastThrottleSummaryAt ?? 0
+        guard currentTime - last >= 60 else { return }
+        lastThrottleSummaryAt = currentTime
+        let s = reevaluationStats
+        log.event(
+            KeepAwakeLogEvent.throttleSummary,
+            level: .debug,
+            fields: [
+                "triggered": "\(s.triggered)",
+                "coalesced": "\(s.coalesced)",
+                "executed": "\(s.executed)",
+                "skipped": "\(s.skippedUnchanged)",
+            ]
+        )
+    }
+
+    /// 輸入快照：相同則略過 assertion／helper／idle blanker 有副作用路徑。
+    private struct ReevaluationInputSnapshot: Equatable {
+        var mode: KeepAwakeMode
+        var startedAt: Double?
+        var shouldHold: Bool
+        var preventsDisplaySleep: Bool
+        var preventsSystemSleep: Bool
+        var hubBusy: Bool
+        var hubReleaseAt: Date?
+        var hubContributingIDs: [String]
+        var loadShouldHold: Bool
+        var loadCooldown: Double?
+        var power: PowerSnapshot
+        var batteryFloor: KeepAwakeBatteryFloor
+        var pauseTripped: Bool
+        var alsoPreventSystemSleep: Bool
+        var agentIdleBlankEnabled: Bool
+        var agentIdleBlankMinutes: KeepAwakeAgentIdleMinutes
+        var displayConnectedMatch: Bool?
+        var appRunningMatch: Bool?
     }
 
     private func updateIdleBlanker() {
@@ -658,7 +958,7 @@ final class KeepAwakeController {
                         self.handleDidWake()
                     } else {
                         self.markAssertionsNeedVerify()
-                        self.reevaluate()
+                        self.requestReevaluation(reason: .session, urgency: .immediate)
                     }
                 }
             })
@@ -669,7 +969,7 @@ final class KeepAwakeController {
         if case .whileAgentsWorking = mode {
             // 只停負載取樣；不要無條件放掉 assertion，否則 agent 持有會在睡前被拆掉。
             systemLoad.stop()
-            reevaluate()
+            requestReevaluation(reason: .sleep, urgency: .immediate)
         }
     }
 
@@ -687,7 +987,8 @@ final class KeepAwakeController {
             await self?.lidGuard.refreshFromHelper()
         }
         markAssertionsNeedVerify()
-        reevaluate()
+        // 喚醒必須繞過「輸入沒變」捷徑（P1-3 → P2）。
+        requestReevaluation(reason: .wake, urgency: .immediate)
     }
 
     private func markAssertionsNeedVerify() {

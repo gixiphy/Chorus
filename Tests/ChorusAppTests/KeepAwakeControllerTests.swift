@@ -132,7 +132,9 @@ struct KeepAwakeControllerTests {
         agentActivity: AgentActivityMonitor? = nil,
         lidHelper: FakeLidHelper? = nil,
         log: ChorusLog = ChorusLog.display,
-        assertionVerifyInterval: Double = 60
+        assertionVerifyInterval: Double = 60,
+        workspaceNotifications: NotificationCenter = NotificationCenter(),
+        reevaluationCoalesce: Duration = .milliseconds(250)
     ) -> KeepAwakeController {
         let settings = settings
             ?? SettingsStore(defaults: UserDefaults(suiteName: "keep-awake-\(UUID().uuidString)")!)
@@ -151,8 +153,10 @@ struct KeepAwakeControllerTests {
             assertions: assertions,
             notifier: notifier,
             now: now,
+            workspaceNotifications: workspaceNotifications,
             log: log,
-            assertionVerifyInterval: assertionVerifyInterval
+            assertionVerifyInterval: assertionVerifyInterval,
+            reevaluationCoalesce: reevaluationCoalesce
         )
     }
 
@@ -180,7 +184,8 @@ struct KeepAwakeControllerTests {
     @Test("A zero-valued ID is owned, healthy assertions stay held without probing, and wake recovers lost ones")
     func repairsLostAssertion() {
         let assertions = FakeAssertions()
-        let controller = makeController(assertions: assertions)
+        let center = NotificationCenter()
+        let controller = makeController(assertions: assertions, workspaceNotifications: center)
         defer { controller.shutdown() }
         controller.activate(.indefinite)
         #expect(assertions.active[0] == kIOPMAssertionTypePreventUserIdleDisplaySleep)
@@ -196,7 +201,7 @@ struct KeepAwakeControllerTests {
         #expect(assertions.nextID == 1)
         #expect(assertions.isActiveCallCount == 0)
 
-        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
         #expect(controller.isHolding)
         #expect(assertions.nextID == 2)
         #expect(assertions.released == [0])
@@ -228,17 +233,20 @@ struct KeepAwakeControllerTests {
     func wakeAndExpiry() {
         let assertions = FakeAssertions()
         var time = 100.0
-        let controller = makeController(assertions: assertions, now: { time })
+        let center = NotificationCenter()
+        let controller = makeController(
+            assertions: assertions, now: { time }, workspaceNotifications: center
+        )
         defer { controller.shutdown() }
         controller.activate(.duration(seconds: 60))
         assertions.active = [:]
-        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
         #expect(controller.isHolding)
         #expect(assertions.active.count == 1)
         #expect(assertions.nextID == 2)
 
         time = 160
-        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
         #expect(controller.mode == .off)
         #expect(!controller.isHolding)
         #expect(controller.remainingSeconds == nil)
@@ -248,10 +256,11 @@ struct KeepAwakeControllerTests {
     @Test("Shutdown cancels retry work and wake notifications cannot reacquire assertions")
     func shutdownStopsRecovery() async throws {
         let assertions = FakeAssertions()
-        let controller = makeController(assertions: assertions)
+        let center = NotificationCenter()
+        let controller = makeController(assertions: assertions, workspaceNotifications: center)
         controller.activate(.duration(seconds: 60))
         controller.shutdown()
-        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
         try await Task.sleep(for: .milliseconds(1_200))
         #expect(controller.mode == .off)
         #expect(!controller.isHolding)
@@ -946,7 +955,8 @@ struct KeepAwakeControllerTests {
         powerSource: FakePowerSource? = nil,
         idleBlanker: AgentIdleBlanker? = nil,
         now: @escaping @Sendable () -> Double = { 0 },
-        workspaceNotifications: NotificationCenter = NotificationCenter()
+        workspaceNotifications: NotificationCenter = NotificationCenter(),
+        reevaluationCoalesce: Duration = .milliseconds(250)
     ) -> KeepAwakeController {
         let settings = settings
             ?? SettingsStore(defaults: UserDefaults(suiteName: "merge-ka-\(UUID().uuidString)")!)
@@ -978,7 +988,8 @@ struct KeepAwakeControllerTests {
             assertions: assertions,
             notifier: notifier,
             now: now,
-            workspaceNotifications: workspaceNotifications
+            workspaceNotifications: workspaceNotifications,
+            reevaluationCoalesce: reevaluationCoalesce
         )
     }
 
@@ -1624,12 +1635,13 @@ struct KeepAwakeControllerTests {
     @Test("Wake verifies and recreates when the system dropped the assertion")
     func wakeVerifiesAndRecreatesDroppedAssertion() {
         let assertions = FakeAssertions()
-        let controller = makeController(assertions: assertions)
+        let center = NotificationCenter()
+        let controller = makeController(assertions: assertions, workspaceNotifications: center)
         defer { controller.shutdown() }
         controller.activate(.indefinite)
         assertions.resetCounts()
         assertions.active = [:]
-        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
         #expect(controller.isHolding)
         #expect(assertions.isActiveCallCount == 1)
         #expect(assertions.createCallCount == 1)
@@ -1640,12 +1652,13 @@ struct KeepAwakeControllerTests {
     @Test("Session become-active also forces assertion verification")
     func sessionBecomeActiveVerifiesAssertion() {
         let assertions = FakeAssertions()
-        let controller = makeController(assertions: assertions)
+        let center = NotificationCenter()
+        let controller = makeController(assertions: assertions, workspaceNotifications: center)
         defer { controller.shutdown() }
         controller.activate(.indefinite)
         assertions.resetCounts()
         assertions.active = [:]
-        NSWorkspace.shared.notificationCenter.post(
+        center.post(
             name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil
         )
         #expect(controller.isHolding)
@@ -1717,7 +1730,10 @@ struct KeepAwakeControllerTests {
         let sink = DiagnosticLog(directory: directory)
         let log = ChorusLog(category: "display", sink: sink)
         let assertions = FakeAssertions()
-        let controller = makeController(assertions: assertions, log: log)
+        let center = NotificationCenter()
+        let controller = makeController(
+            assertions: assertions, log: log, workspaceNotifications: center
+        )
         defer { controller.shutdown() }
 
         controller.activate(.indefinite)
@@ -1727,7 +1743,7 @@ struct KeepAwakeControllerTests {
         #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionCreated).count - 1 == 1)
 
         assertions.active = [:]
-        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
         #expect(sink.flush(timeout: .seconds(5)))
         text = try String(contentsOf: sink.fileURL, encoding: .utf8)
         #expect(text.contains("event=\(KeepAwakeLogEvent.assertionRecreated)"))
@@ -1891,5 +1907,189 @@ struct KeepAwakeControllerTests {
         time = 1_062
         controller.reevaluate()
         #expect(assertions.isActiveCallCount == 1)
+    }
+
+    // MARK: - P2 reevaluate throttle
+
+    @Test(
+        "P2 storm: 100 identical general callbacks yield ≤5 actual reevaluations",
+        .timeLimit(.minutes(1))
+    )
+    func stormIdenticalCallbacksBoundReevaluations() async throws {
+        let assertions = FakeAssertions()
+        let power = FakePowerSource()
+        let controller = makeController(
+            assertions: assertions,
+            powerSource: power,
+            reevaluationCoalesce: .milliseconds(50)
+        )
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        #expect(controller.isHolding)
+        controller.resetReevaluationStatsForTesting()
+        assertions.resetCounts()
+
+        let deadline = ContinuousClock.now + .seconds(5)
+        for _ in 0..<100 {
+            power.publish(power.snapshot)
+        }
+        // Trailing coalesce：短窗內只應跑少數次；等待 debounce 落地。
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(ContinuousClock.now < deadline)
+        #expect(controller.reevaluationStats.executed <= 5)
+        #expect(assertions.createCallCount == 0)
+        #expect(assertions.released.isEmpty)
+        #expect(controller.isHolding)
+    }
+
+    @Test(
+        "P2 storm: hub→lid callback feedback does not unbounded-execute",
+        .timeLimit(.minutes(1))
+    )
+    func stormHubLidFeedbackBounded() async throws {
+        let assertions = FakeAssertions()
+        let controller = makeMergedController(
+            assertions: assertions,
+            reevaluationCoalesce: .milliseconds(50)
+        )
+        defer { controller.shutdown() }
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "storm", ttl: 600)
+        controller.reevaluate()
+        #expect(controller.isHolding)
+        controller.resetReevaluationStatsForTesting()
+        assertions.resetCounts()
+
+        let deadline = ContinuousClock.now + .seconds(5)
+        for _ in 0..<100 {
+            controller.sourceHub.onBusyChanged?()
+            controller.lidGuard.onChange?()
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(ContinuousClock.now < deadline)
+        #expect(controller.reevaluationStats.executed <= 5)
+        #expect(assertions.createCallCount == 0)
+        #expect(assertions.released.isEmpty)
+        // 回授鏈計數寫入交接：哪種 reason 被觸發。
+        #expect(controller.reevaluationStats.triggeredByReason["hub"] ?? 0 >= 100)
+        #expect(controller.reevaluationStats.triggeredByReason["lid"] ?? 0 >= 100)
+    }
+
+    @Test(
+        "P2: identical input skips assertion side effects; wake still forces verify",
+        .timeLimit(.minutes(1))
+    )
+    func identicalInputSkipsSideEffectsButWakeForces() async throws {
+        let assertions = FakeAssertions()
+        let center = NotificationCenter()
+        let controller = makeController(
+            assertions: assertions,
+            workspaceNotifications: center,
+            reevaluationCoalesce: .milliseconds(10)
+        )
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        assertions.resetCounts()
+        controller.resetReevaluationStatsForTesting()
+
+        for _ in 0..<20 {
+            controller.reevaluate()
+        }
+        #expect(assertions.createCallCount == 0)
+        #expect(assertions.isActiveCallCount == 0)
+        #expect(controller.reevaluationStats.skippedUnchanged >= 1)
+
+        assertions.active = [:]
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        #expect(assertions.isActiveCallCount == 1)
+        #expect(assertions.createCallCount == 1)
+        #expect(controller.isHolding)
+    }
+
+    @Test("P2: powerSource.onChange marks assertion verify (review #6)")
+    func powerChangeMarksAssertionVerify() {
+        let assertions = FakeAssertions()
+        let power = FakePowerSource()
+        let controller = makeController(
+            assertions: assertions,
+            powerSource: power,
+            reevaluationCoalesce: .milliseconds(0)
+        )
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        assertions.resetCounts()
+        assertions.active = [:]
+        // Same snapshot content — still must mark verify + reevaluate.
+        power.publish(power.snapshot)
+        controller.flushCoalescedReevaluationForTesting()
+        #expect(assertions.isActiveCallCount == 1)
+        #expect(assertions.createCallCount == 1)
+        #expect(controller.isHolding)
+    }
+
+    @Test(
+        "P2: power floor trip is not delayed by debounce",
+        .timeLimit(.minutes(1))
+    )
+    func powerFloorTripBypassesDebounce() async throws {
+        let assertions = FakeAssertions()
+        let power = FakePowerSource()
+        let settings = SettingsStore(defaults: UserDefaults(suiteName: "p2-floor-\(UUID().uuidString)")!)
+        settings.keepAwakeBatteryFloor = .percent20
+        let controller = makeController(
+            assertions: assertions,
+            settings: settings,
+            powerSource: power,
+            reevaluationCoalesce: .seconds(30)
+        )
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        #expect(controller.isHolding)
+        power.publish(
+            PowerSnapshot(
+                hasInternalBattery: true, onBattery: true, percent: 5, thermal: .nominal
+            )
+        )
+        // No flush / no waiting for 30s coalesce — safety path is sync.
+        #expect(controller.pauseReason.isTripped)
+        #expect(!controller.isHolding)
+        #expect(assertions.active.isEmpty)
+    }
+
+    @Test("P2: create failure error log throttle (review #7)")
+    func createFailureErrorLogThrottle() {
+        KeepAwakeCreateErrorThrottle.resetForTesting()
+        #expect(KeepAwakeCreateErrorThrottle.noteFailure(type: "display", now: 100).shouldLog)
+        #expect(!KeepAwakeCreateErrorThrottle.noteFailure(type: "display", now: 110).shouldLog)
+        #expect(!KeepAwakeCreateErrorThrottle.noteFailure(type: "display", now: 150).shouldLog)
+        let again = KeepAwakeCreateErrorThrottle.noteFailure(type: "display", now: 160)
+        #expect(again.shouldLog)
+        #expect(again.suppressed == 2)
+        #expect(KeepAwakeCreateErrorThrottle.noteFailure(type: "system", now: 160).shouldLog)
+    }
+
+    @Test(
+        "P2: shutdown cancels coalesced reevaluation",
+        .timeLimit(.minutes(1))
+    )
+    func shutdownCancelsCoalescedReevaluation() async throws {
+        let assertions = FakeAssertions()
+        let power = FakePowerSource()
+        let controller = makeController(
+            assertions: assertions,
+            powerSource: power,
+            reevaluationCoalesce: .seconds(30)
+        )
+        controller.activate(.indefinite)
+        controller.resetReevaluationStatsForTesting()
+        for _ in 0..<10 {
+            power.publish(power.snapshot)
+        }
+        controller.shutdown()
+        try await Task.sleep(for: .milliseconds(50))
+        let executedAfterShutdown = controller.reevaluationStats.executed
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(controller.reevaluationStats.executed == executedAfterShutdown)
+        #expect(assertions.active.isEmpty)
     }
 }

@@ -85,6 +85,14 @@ final class KeepAwakeSourceHub {
 
     @ObservationIgnored var onBusyChanged: (() -> Void)?
 
+    /// P2：相同 busy／reports 時略過通知的計數（測試／診斷）。
+    private(set) var notifyStats = NotifyStats()
+
+    struct NotifyStats: Equatable, Sendable {
+        var delivered = 0
+        var suppressedIdentical = 0
+    }
+
     let agentActivity: AgentActivityMonitor
     let orca: OrcaActivitySource
     let desktop: DesktopAgentSource
@@ -155,6 +163,7 @@ final class KeepAwakeSourceHub {
         desktop.clearMtimeClamp()
         reports = []
         busy = .init(isBusy: false, contributing: [], releaseAt: nil)
+        notifyStats = NotifyStats()
     }
 
     func configure(_ settings: KeepAwakeSourceSettings) {
@@ -215,7 +224,10 @@ final class KeepAwakeSourceHub {
         busy = KeepAwakeBusyAggregator.evaluate(next, now: instant, graceSeconds: graceSeconds)
         // §14.3／C7-6：busy 布林不變但來源／細節／releaseAt 變了也要通知。
         if previousBusy != busy || previousReports != reports {
+            notifyStats.delivered += 1
             onBusyChanged?()
+        } else {
+            notifyStats.suppressedIdentical += 1
         }
     }
 

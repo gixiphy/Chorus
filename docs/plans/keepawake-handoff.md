@@ -1204,3 +1204,100 @@ Release build → success；nm 無 testConnection／KeepingHandlers 符號
 ### 給下游
 - Claude＋Codex 雙審（D-2026-10-13／計畫 §7）後才能請 Fi 准 push／PR
 - 手動 M1–M3 需 Fi 執行 `launchctl bootout`（agent 不碰 sudo）
+
+---
+
+## P0（Cursor，2026-10-14，perf／idleblank）
+
+### 改了哪些檔案
+- `Chorus/Support/DiagnosticLog.swift`（`ChorusLog.event`、level 分流、`KeepAwakeLogEvent`）
+- `Tests/ChorusAppTests/DiagnosticLogTests.swift`
+- `docs/decisions.md`（D-2026-10-14；先前 commit）
+
+### 測試
+```
+swift test --package-path Packages/ChorusCore → 843 passed
+xcodebuild test -scheme Chorus -only-testing:ChorusAppTests/DiagnosticLogTests → 通過（見 review-w1-claude）
+```
+
+### 驗收條件
+- [x] notice／info／error 落地；debug 不落地
+- [x] KeepAwake 事件名常數（assertion／throttle／idle）
+- [ ] 實機 `log show` 可見性（P5／未確認）
+
+### 偏離／下游
+- 無。P1／P2 用 `KeepAwakeLogEvent` 與 debug 彙總。
+
+---
+
+## P1（Cursor，2026-10-14，perf／idleblank）
+
+### 改了哪些檔案
+- `Chorus/Display/KeepAwakeController.swift`（assertion 持有快取、喚醒／60s 保底重驗）
+- `Tests/ChorusAppTests/KeepAwakeControllerTests.swift`
+- review fix `f6c05a6`：event key 排序、released `type`、recreated `trigger`
+
+### 測試
+```
+xcodebuild test … KeepAwakeControllerTests／DiagnosticLogTests → 70 passed（f6c05a6）
+swift test --package-path Packages/ChorusCore → 843 passed
+```
+
+### 驗收條件
+- [x] 穩態 100× reevaluate 不查 `isActive`
+- [x] 喚醒／session／保底重驗與失敗重試、ID=0
+- [x] 只釋放本程序 assertion
+- [ ] M5 實機 sample／`pmset -g assertions`（P5）
+
+### 偏離／下游
+- major #1（高頻 Task 迴圈）交 P2；喚醒必須繞過 P2「輸入未變」捷徑（已在 P2 保留）。
+
+---
+
+## P2（Cursor，2026-10-14，perf／idleblank）
+
+### 改了哪些檔案
+- `Chorus/Display/KeepAwakeController.swift`
+- `Chorus/Display/KeepAwakeSourceHub.swift`
+- `Tests/ChorusAppTests/KeepAwakeControllerTests.swift`
+- `Tests/ChorusAppTests/KeepAwakeSourceHubTests.swift`
+- `docs/plans/keepawake-handoff.md`（本段）
+
+### 回授鏈（計數／程式推導）
+1. **主鏈（對應 M5 `completeTaskWithClosure`）**：`KeepAwakeController.performReevaluation` → `lidGuard.update`（`suppressOnChange=true`）→ Lid 內部若 `pendingReevaluate` 則 `Task { Lid.reevaluate() }` → 離開 update 後 `suppressOnChange=false` → `publish()` → `lidGuard.onChange` → 再進 controller reevaluate；舊實作再用 `pendingReevaluate` + `Task { reevaluate() }` 無界自激。
+2. **次鏈**：`hub.onBusyChanged`／`systemLoad.onDecisionChanged`／`powerSource.onChange` 在 reevaluate 期間重入 → 舊 `pendingReevaluate` Task 放大。
+3. **非主因**：`sourceHub.configure` 同設定已 idempotent；相同 busy／reports 的 `recompute` 本就不通知（P2 補 `notifyStats.suppressedIdentical`）。
+4. 風暴測試計數：`triggeredByReason["hub"]`／`["lid"]` 各 ≥100，但 `executed ≤ 5`（trailing coalesce + 輸入快照 no-op）。
+
+### 實作要點
+- 單一入口 `requestReevaluation(reason:urgency:)`：一般 callback **250ms trailing coalesce**；wake／tick／settings／busy 布林翻轉／power floor trip 為 immediate／safety。
+- 輸入快照相同且非 verify／duration 到期／awaiting create 重試 → 略過 assertion／lid／idle 副作用；UI `remainingSeconds` 仍更新。
+- review **#6**：`powerSource.onChange` → `markAssertionsNeedVerify()`。
+- review **#7**：`KeepAwakeCreateErrorThrottle`（60s／type，彙總 suppressed）。
+- review **#5**：本交接 P0／P1／P2 段落。
+- `makeController` 預設私有 `NotificationCenter`（review #4）。
+
+### 測試
+```
+swift test --package-path Packages/ChorusCore
+→ 843 passed
+
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -only-testing:ChorusAppTests/KeepAwakeControllerTests \
+  -only-testing:ChorusAppTests/KeepAwakeSourceHubTests
+→ 81 passed（含 P2 風暴／hub identical recompute）
+```
+
+### 驗收條件
+- [x] 100 相同一般回呼 → ≤5 次實際 `executed`
+- [x] 相同輸入不 create／release；wake 仍強制 verify
+- [x] power floor trip 不被 debounce 延後
+- [x] create failure log 節流單元測試
+- [x] shutdown 取消待排 coalesce
+- [x] 非同步測試 5s 截止／suite `.timeLimit(.minutes(1))`
+- [ ] M5 實機 5 分鐘 ps／sample（P5）
+
+### 偏離／給下游
+1. hub／load **布林翻轉**用 immediate（否則 lease hold 測試與 CLI hold 回應會看到過期 isHolding）；細節變更仍 coalesce。
+2. Lid 內部仍可能自排 Task；靠 controller 側 no-op 跳過 `lidGuard.update` 斷鏈。未改 `LidSleepGuardController.swift`（非 P2 檔案範圍）。
+3. 節流彙總 `keepawake.throttle.summary` 為 **debug**（每 60s），不落地檔案。
