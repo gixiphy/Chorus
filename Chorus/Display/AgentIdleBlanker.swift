@@ -44,7 +44,6 @@ final class AgentIdleBlanker {
 
     @ObservationIgnored private var cachedForeignAssertion: IdleBlankSignal?
     @ObservationIgnored private var lastForeignQueryAt: ContinuousClock.Instant?
-    @ObservationIgnored private var foreignCacheGeneration = 0
 
     /// Production：合併活動秒數＋公開 API 保護讀取器。
     init(displays: any IdleBlankDisplayControlling) {
@@ -113,8 +112,10 @@ final class AgentIdleBlanker {
     /// 測試縫：立刻依目前狀態跑一輪決策。
     func evaluateForTesting() { evaluate() }
 
-    /// 測試縫：外部 assertion 查詢次數相關的快取世代。
-    var foreignAssertionCacheGenerationForTesting: Int { foreignCacheGeneration }
+    /// 測試縫：把上次外部 assertion 查詢時間往前推，模擬 TTL 過期。
+    func ageForeignAssertionCacheForTesting(by duration: Duration) {
+        lastForeignQueryAt = lastForeignQueryAt.map { $0 - duration }
+    }
 
     private func evaluate() {
         let idle = idleSeconds()
@@ -154,26 +155,24 @@ final class AgentIdleBlanker {
             let value = foreignDisplayAssertion()
             cachedForeignAssertion = value
             lastForeignQueryAt = now
-            foreignCacheGeneration += 1
             return value
         }
         return cachedForeignAssertion ?? .inactive
     }
 
     private func shouldQueryForeignAssertion(idleSeconds: Double, now: ContinuousClock.Instant) -> Bool {
-        // 已熄屏：不每 500ms 打 powerd；僅在無快取時查一次。
-        if isBlanked {
-            return cachedForeignAssertion == nil
+        guard let last = lastForeignQueryAt, cachedForeignAssertion != nil else {
+            // 無快取：已熄屏或接近門檻才查；無效 idle 不會熄屏，仍查一次記未知。
+            return isBlanked || !AgentIdleBlankPolicy.isValidIdleSeconds(idleSeconds)
+                || idleSeconds >= max(0, thresholdSeconds - Self.foreignAssertionNearThresholdSeconds)
         }
-        guard AgentIdleBlankPolicy.isValidIdleSeconds(idleSeconds) else {
-            // 無效 idle 不會熄屏；仍允許在快取空時記一次未知。
-            return cachedForeignAssertion == nil
-        }
+        let expired = now - last >= Self.foreignAssertionCacheTTL
+        // 已熄屏：不每 500ms 打 powerd，但仍按 TTL 低頻重驗，媒體開始時才能恢復。
+        if isBlanked { return expired }
+        guard AgentIdleBlankPolicy.isValidIdleSeconds(idleSeconds) else { return false }
         let near =
             idleSeconds >= max(0, thresholdSeconds - Self.foreignAssertionNearThresholdSeconds)
-        guard near else { return false }
-        guard let last = lastForeignQueryAt, cachedForeignAssertion != nil else { return true }
-        return now - last >= Self.foreignAssertionCacheTTL
+        return near && expired
     }
 
     private func invalidateForeignAssertionCache() {

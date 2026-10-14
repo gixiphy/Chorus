@@ -35,33 +35,36 @@ enum IdleBlankProtectionReaders {
         ) as? [[String: Any]] else {
             return .unknown
         }
+        // CGWindow bounds 是 Quartz 全域座標（主螢幕左上原點、y 向下），
+        // 要跟 CGDisplayBounds 比，不能跟 NSScreen.frame（左下原點）比。
+        let displayBounds = NSScreen.screens.compactMap { screen -> CGRect? in
+            let key = NSDeviceDescriptionKey("NSScreenNumber")
+            guard let number = screen.deviceDescription[key] as? NSNumber else { return nil }
+            return CGDisplayBounds(CGDirectDisplayID(number.uint32Value))
+        }
+        return fullscreenSignal(windowInfos: infoList, frontPID: pid, displayBounds: displayBounds)
+    }
 
-        let screens = NSScreen.screens
-        guard !screens.isEmpty else { return .unknown }
-
-        var sawFrontWindow = false
-        for info in infoList {
+    /// 純函式：前景 App 是否有視窗蓋滿任一螢幕（Quartz 座標）。
+    /// 視窗清單讀得到但前景 App 沒有可見視窗（例如 Finder 只剩桌面）→ inactive。
+    static func fullscreenSignal(
+        windowInfos: [[String: Any]],
+        frontPID: pid_t,
+        displayBounds: [CGRect]
+    ) -> IdleBlankSignal {
+        guard !displayBounds.isEmpty else { return .unknown }
+        for info in windowInfos {
             guard let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
-                  ownerPID == pid
+                  ownerPID == frontPID,
+                  let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+                  let windowRect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+                  windowRect.width > 0, windowRect.height > 0
             else { continue }
-            guard let boundsDict = info[kCGWindowBounds as String] as? [String: CGFloat]
-                    ?? (info[kCGWindowBounds as String] as? NSDictionary) as? [String: CGFloat],
-                  let x = boundsDict["X"],
-                  let y = boundsDict["Y"],
-                  let w = boundsDict["Width"],
-                  let h = boundsDict["Height"],
-                  w > 0, h > 0
-            else { continue }
-            sawFrontWindow = true
-            let windowRect = CGRect(x: x, y: y, width: w, height: h)
-            for screen in screens {
-                // CGWindow bounds 與 NSScreen.frame 同為 AppKit/CG 左下原點。
-                if windowCoversScreen(windowRect, screen.frame) {
-                    return .active
-                }
+            if displayBounds.contains(where: { windowCoversScreen(windowRect, $0) }) {
+                return .active
             }
         }
-        return sawFrontWindow ? .inactive : .unknown
+        return .inactive
     }
 
     /// 遠端／Universal Control／螢幕共享：偵測到會話 → active；
@@ -112,8 +115,19 @@ enum IdleBlankProtectionReaders {
         }
         let byPID = unmanaged.takeRetainedValue() as NSDictionary
         let selfPID = Int(ProcessInfo.processInfo.processIdentifier)
-        let targetType = kIOPMAssertionTypePreventUserIdleDisplaySleep as String
+        return displaySleepSignal(assertionsByPID: byPID, selfPID: selfPID)
+    }
 
+    /// 擋 display idle sleep 的 assertion 類型。舊名 `NoDisplaySleepAssertion`
+    /// （`kIOPMAssertionTypeNoDisplaySleep`）在 `IOPMCopyAssertionsByProcess` 以原名回報，
+    /// 不會被正規化成 `PreventUserIdleDisplaySleep`，兩個都要認。
+    private static let displaySleepAssertionTypes: Set<String> = [
+        kIOPMAssertionTypePreventUserIdleDisplaySleep as String,
+        kIOPMAssertionTypeNoDisplaySleep as String,
+    ]
+
+    /// 純函式：解析 `IOPMCopyAssertionsByProcess` 結果；排除 `selfPID`。
+    static func displaySleepSignal(assertionsByPID byPID: NSDictionary, selfPID: Int) -> IdleBlankSignal {
         for (key, value) in byPID {
             let pid: Int
             if let number = key as? NSNumber {
@@ -133,7 +147,7 @@ enum IdleBlankProtectionReaders {
                     (assertion[kIOPMAssertionTypeKey] as? String)
                     ?? (assertion["AssertType"] as? String)
                     ?? (assertion["AssertionType"] as? String)
-                guard type == targetType else { continue }
+                guard let type, displaySleepAssertionTypes.contains(type) else { continue }
                 let level =
                     (assertion[kIOPMAssertionLevelKey] as? NSNumber)?.uint32Value
                     ?? (assertion["AssertLevel"] as? NSNumber)?.uint32Value
