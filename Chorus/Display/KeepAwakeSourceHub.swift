@@ -85,8 +85,8 @@ final class KeepAwakeSourceHub {
 
     @ObservationIgnored var onBusyChanged: (() -> Void)?
 
-    /// P2：相同 busy／reports 時略過通知的計數（測試／診斷）。
-    private(set) var notifyStats = NotifyStats()
+    /// P2：相同 busy／reports 時略過通知的計數（測試／診斷）。不進 Observation，避免每次 recompute 觸發 mutation 追蹤。
+    @ObservationIgnored private(set) var notifyStats = NotifyStats()
 
     struct NotifyStats: Equatable, Sendable {
         var delivered = 0

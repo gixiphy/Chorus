@@ -2526,4 +2526,61 @@ struct LidSleepGuardControllerTests {
         #expect(ContinuousClock.now < deadline)
         #expect(pubs - afterFirst <= 5)
     }
+
+    @Test(
+        "Review W2: publish dedupe still delivers forced-off, recovery block and availability drops",
+        .timeLimit(.minutes(1))
+    )
+    func publishDedupeKeepsMeaningfulChanges() async throws {
+        let helper = FakeHelper()
+        let (controller, _, _, _) = makeController(helper: helper, heartbeat: 3_600)
+        defer { controller.shutdown() }
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        let armDeadline = ContinuousClock.now + .seconds(5)
+        while !controller.isActuallyHoldingSleepDisabled, ContinuousClock.now < armDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(controller.isActuallyHoldingSleepDisabled)
+        var pubs = 0
+        controller.onChange = { pubs += 1 }
+
+        // Identical evidence: deduped.
+        await controller.refreshFromHelper()
+        await controller.refreshFromHelper()
+        let identical = pubs
+
+        // Helper forced-off (external pmset clear): must reach upstream.
+        helper.injectExternalInterference()
+        await controller.refreshFromHelper()
+        let forcedDeadline = ContinuousClock.now + .seconds(5)
+        while pubs == identical, ContinuousClock.now < forcedDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(pubs > identical)
+        #expect(!controller.isActuallyHoldingSleepDisabled)
+        #expect(controller.helperStatus?.lastForcedOffReason == "externalInterference")
+
+        // Recovery block flips: must reach upstream.
+        let beforeBlock = pubs
+        helper.recoveryBlocked = true
+        await controller.refreshFromHelper()
+        let blockDeadline = ContinuousClock.now + .seconds(5)
+        while pubs == beforeBlock, ContinuousClock.now < blockDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(pubs > beforeBlock)
+
+        // Helper connection drop: availability is part of the upstream snapshot.
+        let beforeDrop = pubs
+        helper.availability = .connecting
+        helper.onAvailabilityChange?()
+        let dropDeadline = ContinuousClock.now + .seconds(5)
+        while pubs == beforeDrop, ContinuousClock.now < dropDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(pubs > beforeDrop)
+        #expect(identical <= 1)
+    }
 }
