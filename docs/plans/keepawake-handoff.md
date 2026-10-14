@@ -1301,3 +1301,8 @@ xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
 1. hub／load **布林翻轉**用 immediate（否則 lease hold 測試與 CLI hold 回應會看到過期 isHolding）；細節變更仍 coalesce。
 2. Lid 內部仍可能自排 Task；靠 controller 側 no-op 跳過 `lidGuard.update` 斷鏈。未改 `LidSleepGuardController.swift`（非 P2 檔案範圍）。
 3. 節流彙總 `keepawake.throttle.summary` 為 **debug**（每 60s），不落地檔案。
+
+### P1 R2（Codex 退回修正，2026-10-14）
+- display／system **各自** `last*AssertionVerifyAt`；新建另一類不得延後未檢查舊 ID。
+- 失效撤銷記 `assertion.released`（`reason=inactive`、`trigger`、舊 id／type）；重建失敗記 `assertion.recreated result=failed previousId=…`。
+- 測試：`perTypeVerifyDeadlineNotDelayedByOtherCreate`、`repeatedSystemToggleDoesNotStarveDisplayVerify`、`inactiveDropLogsReleasedAndRecreateFailureRecovery`。

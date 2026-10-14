@@ -233,12 +233,13 @@ final class KeepAwakeController {
     @ObservationIgnored private var systemAssertion: IOPMAssertionID?
     /// 喚醒或電源相關通知要求下一輪 `hold` 驗證本程序 assertion。
     @ObservationIgnored private var needsAssertionVerify = false
-    /// 本輪 reevaluate 是否應對既有 ID 呼叫 `isActive`（display＋system 共用）。
-    @ObservationIgnored private var verifyHeldAssertionsThisPass = false
-    /// 本輪驗證的觸發來源（`wake`／`heartbeat`），只寫進 recreated 事件。
+    /// 本輪是否強制驗證所有既有 ID（喚醒／session／電源）；與 per-type 保底分開。
+    @ObservationIgnored private var forceVerifyThisPass = false
+    /// 本輪驗證的觸發來源（`wake`／`heartbeat`），寫進 released／recreated 事件。
     @ObservationIgnored private var verifyTrigger = "heartbeat"
-    /// 上次 `isActive` 驗證（或成功建立）的單調時間；用於 60 秒保底。
-    @ObservationIgnored private var lastAssertionVerifyAt: Double?
+    /// display／system 各自的上次 `isActive` 或成功建立時間；新建不得延後另一類保底。
+    @ObservationIgnored private var lastDisplayAssertionVerifyAt: Double?
+    @ObservationIgnored private var lastSystemAssertionVerifyAt: Double?
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private var wakeObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var sleepObserver: NSObjectProtocol?
@@ -781,7 +782,9 @@ final class KeepAwakeController {
             }()
         )
 
-        let verifyDue = shouldVerifyHeldAssertion()
+        let verifyDue = needsAssertionVerify
+            || isAssertionVerifyDue(type: kIOPMAssertionTypePreventUserIdleDisplaySleep, held: displayAssertion != nil)
+            || isAssertionVerifyDue(type: kIOPMAssertionTypePreventUserIdleSystemSleep, held: systemAssertion != nil)
         let durationExpired = {
             if case .duration = mode {
                 return KeepAwakePlanner.remainingSeconds(mode: mode, startedAt: startedAt, now: currentTime) == 0
@@ -807,25 +810,25 @@ final class KeepAwakeController {
         }
         lastInputSnapshot = snapshot
 
-        verifyTrigger = needsAssertionVerify ? "wake" : "heartbeat"
-        verifyHeldAssertionsThisPass = verifyDue
-        if verifyHeldAssertionsThisPass {
+        forceVerifyThisPass = needsAssertionVerify
+        verifyTrigger = forceVerifyThisPass ? "wake" : "heartbeat"
+        if forceVerifyThisPass {
             needsAssertionVerify = false
         }
         if shouldHold {
             if plan.preventsDisplaySleep {
                 hold(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep, reason: "Chorus 螢幕長亮")
             } else {
-                release(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
+                release(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep, reason: "policy")
             }
             if plan.preventsSystemSleep {
                 hold(&systemAssertion, type: kIOPMAssertionTypePreventUserIdleSystemSleep, reason: "Chorus 防止系統待機")
             } else {
-                release(&systemAssertion, type: kIOPMAssertionTypePreventUserIdleSystemSleep)
+                release(&systemAssertion, type: kIOPMAssertionTypePreventUserIdleSystemSleep, reason: "policy")
             }
         } else {
-            release(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
-            release(&systemAssertion, type: kIOPMAssertionTypePreventUserIdleSystemSleep)
+            release(&displayAssertion, type: kIOPMAssertionTypePreventUserIdleDisplaySleep, reason: "policy")
+            release(&systemAssertion, type: kIOPMAssertionTypePreventUserIdleSystemSleep, reason: "policy")
             // 計時到期就把模式收乾淨，UI 才不會停在「開啟中」。
             // 電量／溫度暫停**不收**：倒數照常走，恢復後繼續持有直到時間到。
             // 螢幕／App 綁定模式**不收**：螢幕接回來、App 再開時要能自己恢復。
@@ -1051,27 +1054,60 @@ final class KeepAwakeController {
 
     private func hold(_ id: inout IOPMAssertionID?, type: String, reason: String) {
         var recreating = false
+        var previousID: IOPMAssertionID?
         if let existing = id {
             // 本程序已成功建立且尚未釋放：穩態不查 IOPMAssertionCopyProperties。
-            guard verifyHeldAssertionsThisPass else { return }
-            lastAssertionVerifyAt = now()
+            // display／system 各自判斷保底；喚醒等 force 則兩者都查。
+            guard forceVerifyThisPass || isAssertionVerifyDue(type: type, held: true) else { return }
+            setAssertionVerifyAt(type: type, at: now())
             if assertions.isActive(existing) { return }
+            previousID = existing
             assertions.release(existing)
             id = nil
             recreating = true
+            let label = Self.assertionTypeLabel(type)
+            log.event(
+                KeepAwakeLogEvent.assertionReleased,
+                level: .notice,
+                fields: [
+                    "type": label,
+                    "id": "\(existing)",
+                    "reason": "inactive",
+                    "trigger": verifyTrigger,
+                ]
+            )
         }
         guard let created = assertions.create(type: type, reason: reason) else {
             id = nil
+            if recreating, let previousID {
+                let label = Self.assertionTypeLabel(type)
+                log.event(
+                    KeepAwakeLogEvent.assertionRecreated,
+                    level: .notice,
+                    fields: [
+                        "type": label,
+                        "trigger": verifyTrigger,
+                        "result": "failed",
+                        "previousId": "\(previousID)",
+                    ]
+                )
+            }
             return
         }
         id = created
-        lastAssertionVerifyAt = now()
+        // 只推進「這個 type」的期限；不得延後另一類未檢查的舊 ID。
+        setAssertionVerifyAt(type: type, at: now())
         let label = Self.assertionTypeLabel(type)
         if recreating {
             log.event(
                 KeepAwakeLogEvent.assertionRecreated,
                 level: .notice,
-                fields: ["type": label, "id": "\(created)", "trigger": verifyTrigger]
+                fields: [
+                    "type": label,
+                    "id": "\(created)",
+                    "trigger": verifyTrigger,
+                    "previousId": previousID.map { "\($0)" } ?? "",
+                ].filter { !$0.value.isEmpty }
             )
         } else {
             log.event(
@@ -1082,20 +1118,42 @@ final class KeepAwakeController {
         }
     }
 
-    private func shouldVerifyHeldAssertion() -> Bool {
-        if needsAssertionVerify { return true }
-        guard let last = lastAssertionVerifyAt else { return false }
+    private func isAssertionVerifyDue(type: String, held: Bool) -> Bool {
+        guard held else { return false }
+        guard let last = assertionVerifyAt(type: type) else { return false }
         return now() - last >= assertionVerifyInterval
     }
 
-    private func release(_ id: inout IOPMAssertionID?, type: String) {
+    private func assertionVerifyAt(type: String) -> Double? {
+        if type == kIOPMAssertionTypePreventUserIdleDisplaySleep {
+            return lastDisplayAssertionVerifyAt
+        }
+        if type == kIOPMAssertionTypePreventUserIdleSystemSleep {
+            return lastSystemAssertionVerifyAt
+        }
+        return nil
+    }
+
+    private func setAssertionVerifyAt(type: String, at time: Double) {
+        if type == kIOPMAssertionTypePreventUserIdleDisplaySleep {
+            lastDisplayAssertionVerifyAt = time
+        } else if type == kIOPMAssertionTypePreventUserIdleSystemSleep {
+            lastSystemAssertionVerifyAt = time
+        }
+    }
+
+    private func release(_ id: inout IOPMAssertionID?, type: String, reason: String = "policy") {
         guard let existing = id else { return }
         assertions.release(existing)
         id = nil
         log.event(
             KeepAwakeLogEvent.assertionReleased,
             level: .notice,
-            fields: ["type": Self.assertionTypeLabel(type), "id": "\(existing)"]
+            fields: [
+                "type": Self.assertionTypeLabel(type),
+                "id": "\(existing)",
+                "reason": reason,
+            ]
         )
     }
 

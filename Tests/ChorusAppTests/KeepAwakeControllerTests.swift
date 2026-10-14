@@ -1746,6 +1746,9 @@ struct KeepAwakeControllerTests {
         center.post(name: NSWorkspace.didWakeNotification, object: nil)
         #expect(sink.flush(timeout: .seconds(5)))
         text = try String(contentsOf: sink.fileURL, encoding: .utf8)
+        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionReleased)"))
+        #expect(text.contains("reason=inactive"))
+        #expect(text.contains("trigger=wake"))
         #expect(text.contains("event=\(KeepAwakeLogEvent.assertionRecreated)"))
         #expect(text.contains("trigger=wake"))
         #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionRecreated).count - 1 == 1)
@@ -1753,8 +1756,12 @@ struct KeepAwakeControllerTests {
         controller.deactivate()
         #expect(sink.flush(timeout: .seconds(5)))
         text = try String(contentsOf: sink.fileURL, encoding: .utf8)
-        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionReleased) id=1 type=display"))
-        #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionReleased).count - 1 == 1)
+        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionReleased)"))
+        #expect(text.contains("id=1"))
+        #expect(text.contains("type=display"))
+        #expect(text.contains("reason=policy"))
+        // inactive 撤銷一次 + deactivate 一次。
+        #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionReleased).count - 1 == 2)
     }
 
     // MARK: - P1 review (adversarial)
@@ -1907,6 +1914,117 @@ struct KeepAwakeControllerTests {
         time = 1_062
         controller.reevaluate()
         #expect(assertions.isActiveCallCount == 1)
+    }
+
+    // MARK: - P1 R2 (Codex review)
+
+    @Test("P1R2: creating system does not delay display heartbeat verify")
+    func perTypeVerifyDeadlineNotDelayedByOtherCreate() {
+        var time = 0.0
+        let assertions = FakeAssertions()
+        let controller = makeController(
+            assertions: assertions,
+            now: { time },
+            assertionVerifyInterval: 60
+        )
+        defer { controller.shutdown() }
+        controller.alsoPreventSystemSleep = false
+        controller.activate(.indefinite)
+        #expect(assertions.active.count == 1)
+        let displayID = assertions.active.first!.key
+
+        time = 1
+        assertions.active.removeValue(forKey: displayID)
+
+        time = 50
+        controller.alsoPreventSystemSleep = true
+        #expect(assertions.active.values.contains(kIOPMAssertionTypePreventUserIdleSystemSleep))
+        // 共用時鐘的舊 bug：此處會把保底推到 t=110。per-type 後 display 仍以 t=0 起算。
+        assertions.resetCounts()
+        time = 60
+        controller.reevaluate()
+        #expect(assertions.isActiveCallCount >= 1)
+        #expect(assertions.released.contains(displayID))
+        #expect(assertions.createCallCount >= 1)
+        #expect(
+            assertions.active.values.contains(kIOPMAssertionTypePreventUserIdleDisplaySleep)
+        )
+        #expect(controller.isHolding)
+    }
+
+    @Test("P1R2: toggling alsoPreventSystemSleep every 50s still catches stale display")
+    func repeatedSystemToggleDoesNotStarveDisplayVerify() {
+        var time = 0.0
+        let assertions = FakeAssertions()
+        let controller = makeController(
+            assertions: assertions,
+            now: { time },
+            assertionVerifyInterval: 60
+        )
+        defer { controller.shutdown() }
+        controller.alsoPreventSystemSleep = false
+        controller.activate(.indefinite)
+        let displayID = assertions.active.first!.key
+        time = 1
+        assertions.active.removeValue(forKey: displayID)
+
+        // 每 ~50s 開關 system：不得把 display 保底一直推走。
+        time = 50
+        controller.alsoPreventSystemSleep = true
+        #expect(assertions.active[displayID] == nil)
+
+        time = 90
+        controller.alsoPreventSystemSleep = false
+        #expect(assertions.released.contains(displayID))
+        #expect(
+            assertions.active.values.contains(kIOPMAssertionTypePreventUserIdleDisplaySleep)
+        )
+
+        assertions.resetCounts()
+        time = 100
+        controller.alsoPreventSystemSleep = true
+        // 剛在 t=90 重建的 display 不應因 system create 被再查。
+        #expect(assertions.isActiveCallCount == 0)
+        #expect(controller.isHolding)
+    }
+
+    @Test("P1R2: inactive drop logs released with old id/type/reason; recreate failure then recovery")
+    func inactiveDropLogsReleasedAndRecreateFailureRecovery() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-ka-p1r2-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sink = DiagnosticLog(directory: directory)
+        let log = ChorusLog(category: "display", sink: sink)
+        let assertions = FakeAssertions()
+        let center = NotificationCenter()
+        let controller = makeController(
+            assertions: assertions, log: log, workspaceNotifications: center
+        )
+        defer { controller.shutdown() }
+
+        controller.activate(.indefinite)
+        #expect(assertions.active[0] != nil)
+        assertions.active = [:]
+        assertions.failingTypes = [kIOPMAssertionTypePreventUserIdleDisplaySleep]
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        #expect(!controller.isHolding)
+        #expect(sink.flush(timeout: .seconds(5)))
+        var text = try String(contentsOf: sink.fileURL, encoding: .utf8)
+        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionReleased)"))
+        #expect(text.contains("id=0"))
+        #expect(text.contains("type=display"))
+        #expect(text.contains("reason=inactive"))
+        #expect(text.contains("trigger=wake"))
+        #expect(text.contains("result=failed") || text.contains("recreate"))
+        #expect(text.contains("previousId=0") || text.contains("id=0"))
+
+        assertions.failingTypes = []
+        controller.reevaluate()
+        #expect(controller.isHolding)
+        #expect(sink.flush(timeout: .seconds(5)))
+        text = try String(contentsOf: sink.fileURL, encoding: .utf8)
+        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionCreated)"))
+        #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionCreated).count - 1 >= 2)
     }
 
     // MARK: - P2 reevaluate throttle
