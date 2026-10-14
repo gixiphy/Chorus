@@ -255,6 +255,7 @@ final class KeepAwakeController {
     @ObservationIgnored private let reevaluationCoalesce: Duration
     @ObservationIgnored private var coalesceTask: Task<Void, Never>?
     @ObservationIgnored private var coalesceDeadline: ContinuousClock.Instant?
+    @ObservationIgnored private var coalesceGeneration: UInt64 = 0
     @ObservationIgnored private var lastInputSnapshot: ReevaluationInputSnapshot?
     @ObservationIgnored private var lastThrottleSummaryAt: Double?
     @ObservationIgnored private(set) var reevaluationStats = KeepAwakeReevaluationStats()
@@ -659,12 +660,17 @@ final class KeepAwakeController {
     private func handlePowerSourceChange() {
         // review #6：電源通知也標記待驗證。
         markAssertionsNeedVerify()
+        let snapshot = powerSource.snapshot
         let next = PowerFloorPolicy.evaluate(
-            snapshot: powerSource.snapshot,
+            snapshot: snapshot,
             floor: batteryFloor,
             previous: pauseReason
         )
-        if next.isTripped != pauseReason.isTripped {
+        let lidSafety = lidGuard.powerRequiresSafetyBypass(
+            snapshot,
+            existingFloor: batteryFloor
+        )
+        if next.isTripped != pauseReason.isTripped || lidSafety {
             requestReevaluation(reason: .power, urgency: .safety)
         } else {
             requestReevaluation(reason: .power, urgency: .normal)
@@ -680,8 +686,13 @@ final class KeepAwakeController {
             // 測試用零延遲：合併到下一個 MainActor 回合，同批仍只排一個 Task。
             coalesceDeadline = ContinuousClock.now
             guard coalesceTask == nil else { return }
+            coalesceGeneration &+= 1
+            let generation = coalesceGeneration
             coalesceTask = Task { @MainActor [weak self] in
-                guard let self, !self.shutDown else { return }
+                guard let self,
+                      !Task.isCancelled,
+                      !self.shutDown,
+                      self.coalesceGeneration == generation else { return }
                 self.coalesceTask = nil
                 self.coalesceDeadline = nil
                 self.performReevaluation(forceInputChange: false)
@@ -690,24 +701,32 @@ final class KeepAwakeController {
         }
         coalesceDeadline = ContinuousClock.now + delay
         guard coalesceTask == nil else { return }
+        coalesceGeneration &+= 1
+        let generation = coalesceGeneration
         coalesceTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                guard let self, !self.shutDown else { return }
+            while true {
+                guard let self,
+                      !Task.isCancelled,
+                      !self.shutDown,
+                      self.coalesceGeneration == generation else { return }
                 guard let deadline = self.coalesceDeadline else { break }
                 let remaining = ContinuousClock.now.duration(to: deadline)
                 if remaining <= .zero { break }
                 let slice = min(remaining, .milliseconds(50))
                 do { try await Task.sleep(for: slice) } catch { return }
             }
-            guard let self else { return }
+            guard let self,
+                  !Task.isCancelled,
+                  !self.shutDown,
+                  self.coalesceGeneration == generation else { return }
             self.coalesceTask = nil
             self.coalesceDeadline = nil
-            guard !Task.isCancelled, !self.shutDown else { return }
             self.performReevaluation(forceInputChange: false)
         }
     }
 
     private func cancelCoalescedReevaluation() {
+        coalesceGeneration &+= 1
         coalesceTask?.cancel()
         coalesceTask = nil
         coalesceDeadline = nil

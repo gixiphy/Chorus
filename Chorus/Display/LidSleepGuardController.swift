@@ -243,6 +243,39 @@ final class LidSleepGuardController {
         reevaluate()
     }
 
+    /// Lid policy 的解除條件不可等待上游 trailing coalesce。
+    func powerRequiresSafetyBypass(
+        _ power: PowerSnapshot,
+        existingFloor: KeepAwakeBatteryFloor
+    ) -> Bool {
+        guard settings.enabled else { return false }
+
+        switch power.thermal {
+        case .nominal, .fair:
+            break
+        case .serious, .critical:
+            return true
+        @unknown default:
+            return true
+        }
+
+        guard let onBattery = power.onBattery else { return true }
+        guard power.hasInternalBattery, onBattery else { return false }
+
+        var floor = max(
+            SettingsStore.approvedLidGuardSettings(settings).batteryFloorPercent,
+            30,
+            existingFloor.rawValue
+        )
+        #if DEBUG
+        if let debugBatteryFloorPercent {
+            floor = max(floor, debugBatteryFloorPercent, 30)
+        }
+        #endif
+        guard let percent = power.percent else { return true }
+        return percent < floor
+    }
+
     func pauseForOneHour() {
         #if DEBUG
         let duration = debugPauseDurationSeconds ?? pauseDurationSeconds()

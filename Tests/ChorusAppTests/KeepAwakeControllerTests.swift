@@ -57,6 +57,23 @@ struct KeepAwakeControllerTests {
         }
     }
 
+    private func diagnosticEventFields(_ text: String, event: String) -> [[String: String]] {
+        let marker = "event=\(event)"
+        return text.split(whereSeparator: { $0.isNewline }).compactMap { line in
+            guard let eventRange = line.range(of: marker) else { return nil }
+            let pairs: [(String, String)] = line[eventRange.lowerBound...]
+                .split(separator: " ")
+                .compactMap { token in
+                    guard let separator = token.firstIndex(of: "=") else { return nil }
+                    return (
+                        String(token[..<separator]),
+                        String(token[token.index(after: separator)...])
+                    )
+                }
+            return Dictionary(uniqueKeysWithValues: pairs)
+        }
+    }
+
     final class FakeNotifier: KeepAwakeNotifying {
         var paused: [PowerFloorState] = []
         func notifyPowerFloorPaused(_ state: PowerFloorState) { paused.append(state) }
@@ -108,7 +125,8 @@ struct KeepAwakeControllerTests {
         settings: SettingsStore,
         helper: FakeLidHelper = FakeLidHelper(),
         notifier: FakeNotifier,
-        lid: FakeLidObserver = FakeLidObserver()
+        lid: FakeLidObserver = FakeLidObserver(),
+        e2eNamedInstance: Bool = false
     ) -> LidSleepGuardController {
         LidSleepGuardController(
             settings: settings,
@@ -116,7 +134,7 @@ struct KeepAwakeControllerTests {
             lid: lid,
             notifier: notifier,
             now: { 1_000 },
-            e2eNamedInstance: false,
+            e2eNamedInstance: e2eNamedInstance,
             sessionStore: LidClosedSessionStore(suiteName: "ka-lid-\(UUID().uuidString)"),
             sleepDisabledProbe: { nil },
             heartbeatInterval: 60
@@ -134,7 +152,8 @@ struct KeepAwakeControllerTests {
         log: ChorusLog = ChorusLog.display,
         assertionVerifyInterval: Double = 60,
         workspaceNotifications: NotificationCenter = NotificationCenter(),
-        reevaluationCoalesce: Duration = .milliseconds(250)
+        reevaluationCoalesce: Duration = .milliseconds(250),
+        lidE2ENamedInstance: Bool = false
     ) -> KeepAwakeController {
         let settings = settings
             ?? SettingsStore(defaults: UserDefaults(suiteName: "keep-awake-\(UUID().uuidString)")!)
@@ -148,7 +167,12 @@ struct KeepAwakeControllerTests {
         return KeepAwakeController(
             settings: settings, displayManager: DisplayManager(settings: settings),
             agentActivity: monitor,
-            lidGuard: makeLidGuard(settings: settings, helper: helper, notifier: notifier),
+            lidGuard: makeLidGuard(
+                settings: settings,
+                helper: helper,
+                notifier: notifier,
+                e2eNamedInstance: lidE2ENamedInstance
+            ),
             powerSource: powerSource ?? FakePowerSource(),
             assertions: assertions,
             notifier: notifier,
@@ -991,6 +1015,41 @@ struct KeepAwakeControllerTests {
             workspaceNotifications: workspaceNotifications,
             reevaluationCoalesce: reevaluationCoalesce
         )
+    }
+
+    private func makeHoldingLidSafetyController(
+        initialPower: PowerSnapshot
+    ) async throws -> (KeepAwakeController, FakePowerSource, FakeLidHelper) {
+        let settings = SettingsStore(
+            defaults: UserDefaults(suiteName: "lid-safety-\(UUID().uuidString)")!
+        )
+        settings.keepAwakeBatteryFloor = .percent20
+        settings.keepAwakeLidGuard = LidSleepSettings(
+            enabled: true,
+            batteryFloorPercent: 30
+        )
+        let power = FakePowerSource()
+        power.snapshot = initialPower
+        let helper = FakeLidHelper()
+        let controller = makeMergedController(
+            settings: settings,
+            lidHelper: helper,
+            powerSource: power,
+            reevaluationCoalesce: .seconds(30)
+        )
+        controller.activate(.whileAgentsWorking)
+        _ = controller.sourceHub.leases.hold(id: "lid-safety", ttl: 600)
+
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !controller.lidGuard.wantsSleepDisabled, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        try #require(controller.lidGuard.wantsSleepDisabled)
+        while !helper.setCalls.contains(true), ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        try #require(helper.setCalls.contains(true))
+        return (controller, power, helper)
     }
 
     private func qualifyLoad(
@@ -2015,16 +2074,48 @@ struct KeepAwakeControllerTests {
         #expect(text.contains("type=display"))
         #expect(text.contains("reason=inactive"))
         #expect(text.contains("trigger=wake"))
-        #expect(text.contains("result=failed") || text.contains("recreate"))
-        #expect(text.contains("previousId=0") || text.contains("id=0"))
+        #expect(
+            diagnosticEventFields(text, event: KeepAwakeLogEvent.assertionReleased) == [
+                [
+                    "event": KeepAwakeLogEvent.assertionReleased,
+                    "id": "0",
+                    "reason": "inactive",
+                    "trigger": "wake",
+                    "type": "display",
+                ]
+            ]
+        )
+        #expect(
+            diagnosticEventFields(text, event: KeepAwakeLogEvent.assertionRecreated) == [
+                [
+                    "event": KeepAwakeLogEvent.assertionRecreated,
+                    "previousId": "0",
+                    "result": "failed",
+                    "trigger": "wake",
+                    "type": "display",
+                ]
+            ]
+        )
 
         assertions.failingTypes = []
         controller.reevaluate()
         #expect(controller.isHolding)
         #expect(sink.flush(timeout: .seconds(5)))
         text = try String(contentsOf: sink.fileURL, encoding: .utf8)
-        #expect(text.contains("event=\(KeepAwakeLogEvent.assertionCreated)"))
-        #expect(text.components(separatedBy: KeepAwakeLogEvent.assertionCreated).count - 1 >= 2)
+        #expect(
+            diagnosticEventFields(text, event: KeepAwakeLogEvent.assertionCreated) == [
+                [
+                    "event": KeepAwakeLogEvent.assertionCreated,
+                    "id": "0",
+                    "type": "display",
+                ],
+                [
+                    "event": KeepAwakeLogEvent.assertionCreated,
+                    "id": "1",
+                    "type": "display",
+                ],
+            ]
+        )
     }
 
     // MARK: - P2 reevaluate throttle
@@ -2172,6 +2263,164 @@ struct KeepAwakeControllerTests {
         #expect(controller.pauseReason.isTripped)
         #expect(!controller.isHolding)
         #expect(assertions.active.isEmpty)
+    }
+
+    @Test(
+        "P2R3: Lid 30% floor bypasses long coalesce and starts release",
+        .timeLimit(.minutes(1))
+    )
+    func lidBatteryFloorBypassesDebounce() async throws {
+        let (controller, power, helper) = try await makeHoldingLidSafetyController(
+            initialPower: PowerSnapshot(
+                hasInternalBattery: true,
+                onBattery: true,
+                percent: 35,
+                thermal: .nominal
+            )
+        )
+        defer { controller.shutdown() }
+
+        power.publish(
+            PowerSnapshot(
+                hasInternalBattery: true,
+                onBattery: true,
+                percent: 25,
+                thermal: .nominal
+            )
+        )
+
+        #expect(!controller.lidGuard.wantsSleepDisabled)
+        #expect(controller.lidGuard.phase == .blocked(.lowBattery(percent: 25, floor: 30)))
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !helper.setCalls.contains(false), ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(helper.setCalls.contains(false))
+    }
+
+    @Test(
+        "P2R3: Lid serious thermal bypasses long coalesce and starts release",
+        .timeLimit(.minutes(1))
+    )
+    func lidSeriousThermalBypassesDebounce() async throws {
+        let (controller, power, helper) = try await makeHoldingLidSafetyController(
+            initialPower: PowerSnapshot(
+                hasInternalBattery: true,
+                onBattery: true,
+                percent: 35,
+                thermal: .nominal
+            )
+        )
+        defer { controller.shutdown() }
+
+        power.publish(
+            PowerSnapshot(
+                hasInternalBattery: true,
+                onBattery: true,
+                percent: 35,
+                thermal: .serious
+            )
+        )
+
+        #expect(!controller.lidGuard.wantsSleepDisabled)
+        #expect(controller.lidGuard.phase == .blocked(.thermal))
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !helper.setCalls.contains(false), ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(helper.setCalls.contains(false))
+    }
+
+    @Test(
+        "P2R3: Lid unknown power bypasses long coalesce and starts release",
+        .timeLimit(.minutes(1))
+    )
+    func lidUnknownPowerBypassesDebounce() async throws {
+        let (controller, power, helper) = try await makeHoldingLidSafetyController(
+            initialPower: PowerSnapshot(
+                hasInternalBattery: true,
+                onBattery: true,
+                percent: 35,
+                thermal: .nominal
+            )
+        )
+        defer { controller.shutdown() }
+
+        power.publish(
+            PowerSnapshot(
+                hasInternalBattery: true,
+                onBattery: nil,
+                percent: 35,
+                thermal: .nominal
+            )
+        )
+
+        #expect(!controller.lidGuard.wantsSleepDisabled)
+        #expect(controller.lidGuard.phase == .blocked(.unknownPower))
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !helper.setCalls.contains(false), ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(helper.setCalls.contains(false))
+    }
+
+    @Test(
+        "P2R3: cancelled old coalesce task cannot clear or advance new deadline",
+        .timeLimit(.minutes(1))
+    )
+    func cancelledCoalesceTaskCannotOwnNewSchedule() async throws {
+        let controller = makeController(
+            assertions: FakeAssertions(),
+            reevaluationCoalesce: .seconds(1),
+            lidE2ENamedInstance: true
+        )
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        controller.lidGuard.onChange = nil
+        controller.resetReevaluationStatsForTesting()
+
+        controller.requestReevaluation(reason: .power, urgency: .normal)
+        controller.requestReevaluation(reason: .direct, urgency: .immediate)
+        let afterImmediate = controller.reevaluationStats.executed
+        controller.requestReevaluation(reason: .power, urgency: .normal)
+
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(controller.reevaluationStats.executed == afterImmediate)
+
+        try await Task.sleep(for: .seconds(1))
+        #expect(controller.reevaluationStats.executed == afterImmediate + 1)
+    }
+
+    @Test(
+        "P2R3: cancelled zero-delay coalesce task does not execute",
+        .timeLimit(.minutes(1))
+    )
+    func cancelledZeroDelayCoalesceTaskDoesNotExecute() async throws {
+        let controller = makeController(
+            assertions: FakeAssertions(),
+            reevaluationCoalesce: .zero,
+            lidE2ENamedInstance: true
+        )
+        defer { controller.shutdown() }
+        controller.activate(.indefinite)
+        controller.lidGuard.onChange = nil
+        controller.resetReevaluationStatsForTesting()
+
+        controller.requestReevaluation(reason: .power, urgency: .normal)
+        controller.requestReevaluation(reason: .direct, urgency: .immediate)
+        let afterImmediate = controller.reevaluationStats.executed
+        controller.requestReevaluation(reason: .power, urgency: .normal)
+
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(
+            controller.reevaluationStats.executed == afterImmediate + 1,
+            """
+            executed=\(controller.reevaluationStats.executed), afterImmediate=\(afterImmediate), \
+            reasons=\(controller.reevaluationStats.triggeredByReason)
+            """
+        )
     }
 
     @Test("P2: create failure error log throttle (review #7)")
