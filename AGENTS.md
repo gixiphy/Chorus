@@ -55,3 +55,28 @@
 4. 發現 spec 有錯或缺漏時，不要自行改 spec。寫進交接紀錄的「spec 問題」，由 Opus 改版，並更新 spec 檔頭的版本。
 5. 需要核准的事項（approvals §A）沒有核准前，只能在本機做到「可以驗證但不發布」為止。
 6. 研究結論（R01）如果改變 spec 的假設，例如 bundle id 或 JSON 欄位，由 Opus 更新 spec 之後，下游才能跟著改。
+
+## Code Review Rules
+
+### 1. Output only — never post by default
+- Review results go to the requester (Orca / Fi) as plain output only.
+- Do NOT post PR comments, inline comments, approvals, or "request changes", and do not run `gh pr comment` / `gh pr review`, unless Fi has explicitly approved posting for this specific review.
+- If no issues survive filtering, output: "No issues found. Checked for bugs and AGENTS.md compliance."
+
+### 2. Reference format
+- Every finding cites: `path/from/repo/root.ext:START-END @ <full 40-char commit SHA>`
+  - Example: `Sources/BLE/Manager.swift:42-48 @ 94506ff0d3bd9185f1752da36e968775021fb48f`
+- Include at least 1 line of context before and after the problem line(s).
+- Use the SHA of the reviewed head commit. Never use short SHAs, branch names, or unexpanded `$(git rev-parse HEAD)`.
+- A GitHub link is optional and only an extra. The local path:line + SHA is required.
+
+### 3. Do NOT report (false-positive list)
+1. Pre-existing issues that this change did not introduce.
+2. Things that look like bugs but are actually correct.
+3. Pedantic nitpicks a senior engineer would not raise.
+4. Issues a linter, type checker, or compiler would catch (assume CI/build runs them).
+5. General code-quality concerns (test coverage, docs, style), unless this file explicitly requires them.
+6. Issues that the code explicitly silences (e.g. lint-ignore comments, `#pragma clang diagnostic ignored`, `// swiftlint:disable`).
+7. Behavior changes that are likely intentional and tied to the purpose of the change.
+8. Real issues on lines the change did not modify.
+When unsure whether something is a real bug, leave it out, or mark it "unverified" for the verifier. Never present a guess as a finding.
