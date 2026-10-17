@@ -1204,3 +1204,255 @@ Release build → success；nm 無 testConnection／KeepingHandlers 符號
 ### 給下游
 - Claude＋Codex 雙審（D-2026-10-13／計畫 §7）後才能請 Fi 准 push／PR
 - 手動 M1–M3 需 Fi 執行 `launchctl bootout`（agent 不碰 sudo）
+
+---
+
+## P0（Cursor，2026-10-14，perf／idleblank）
+
+### 改了哪些檔案
+- `Chorus/Support/DiagnosticLog.swift`（`ChorusLog.event`、level 分流、`KeepAwakeLogEvent`）
+- `Tests/ChorusAppTests/DiagnosticLogTests.swift`
+- `docs/decisions.md`（D-2026-10-14；先前 commit）
+
+### 測試
+```
+swift test --package-path Packages/ChorusCore → 843 passed
+xcodebuild test -scheme Chorus -only-testing:ChorusAppTests/DiagnosticLogTests → 通過（見 review-w1-claude）
+```
+
+### 驗收條件
+- [x] notice／info／error 落地；debug 不落地
+- [x] KeepAwake 事件名常數（assertion／throttle／idle）
+- [ ] 實機 `log show` 可見性（P5／未確認）
+
+### 偏離／下游
+- 無。P1／P2 用 `KeepAwakeLogEvent` 與 debug 彙總。
+
+---
+
+## P1（Cursor，2026-10-14，perf／idleblank）
+
+### 改了哪些檔案
+- `Chorus/Display/KeepAwakeController.swift`（assertion 持有快取、喚醒／60s 保底重驗）
+- `Tests/ChorusAppTests/KeepAwakeControllerTests.swift`
+- review fix `f6c05a6`：event key 排序、released `type`、recreated `trigger`
+
+### 測試
+```
+xcodebuild test … KeepAwakeControllerTests／DiagnosticLogTests → 70 passed（f6c05a6）
+swift test --package-path Packages/ChorusCore → 843 passed
+```
+
+### 驗收條件
+- [x] 穩態 100× reevaluate 不查 `isActive`
+- [x] 喚醒／session／保底重驗與失敗重試、ID=0
+- [x] 只釋放本程序 assertion
+- [ ] M5 實機 sample／`pmset -g assertions`（P5）
+
+### 偏離／下游
+- major #1（高頻 Task 迴圈）交 P2；喚醒必須繞過 P2「輸入未變」捷徑（已在 P2 保留）。
+
+---
+
+## P2（Cursor，2026-10-14，perf／idleblank）
+
+### 改了哪些檔案
+- `Chorus/Display/KeepAwakeController.swift`
+- `Chorus/Display/KeepAwakeSourceHub.swift`
+- `Tests/ChorusAppTests/KeepAwakeControllerTests.swift`
+- `Tests/ChorusAppTests/KeepAwakeSourceHubTests.swift`
+- `docs/plans/keepawake-handoff.md`（本段）
+
+### 回授鏈（計數／程式推導）
+1. **主鏈（對應 M5 `completeTaskWithClosure`）**：`KeepAwakeController.performReevaluation` → `lidGuard.update`（`suppressOnChange=true`）→ Lid 內部若 `pendingReevaluate` 則 `Task { Lid.reevaluate() }` → 離開 update 後 `suppressOnChange=false` → `publish()` → `lidGuard.onChange` → 再進 controller reevaluate；舊實作再用 `pendingReevaluate` + `Task { reevaluate() }` 無界自激。
+2. **次鏈**：`hub.onBusyChanged`／`systemLoad.onDecisionChanged`／`powerSource.onChange` 在 reevaluate 期間重入 → 舊 `pendingReevaluate` Task 放大。
+3. **非主因**：`sourceHub.configure` 同設定已 idempotent；相同 busy／reports 的 `recompute` 本就不通知（P2 補 `notifyStats.suppressedIdentical`）。
+4. 風暴測試計數：`triggeredByReason["hub"]`／`["lid"]` 各 ≥100，但 `executed ≤ 5`（trailing coalesce + 輸入快照 no-op）。
+
+### 實作要點
+- 單一入口 `requestReevaluation(reason:urgency:)`：一般 callback **250ms trailing coalesce**；wake／tick／settings／busy 布林翻轉／power floor trip 為 immediate／safety。
+- 輸入快照相同且非 verify／duration 到期／awaiting create 重試 → 略過 assertion／lid／idle 副作用；UI `remainingSeconds` 仍更新。
+- review **#6**：`powerSource.onChange` → `markAssertionsNeedVerify()`。
+- review **#7**：`KeepAwakeCreateErrorThrottle`（60s／type，彙總 suppressed）。
+- review **#5**：本交接 P0／P1／P2 段落。
+- `makeController` 預設私有 `NotificationCenter`（review #4）。
+
+### 測試
+```
+swift test --package-path Packages/ChorusCore
+→ 843 passed
+
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -only-testing:ChorusAppTests/KeepAwakeControllerTests \
+  -only-testing:ChorusAppTests/KeepAwakeSourceHubTests
+→ 81 passed（含 P2 風暴／hub identical recompute）
+```
+
+### 驗收條件
+- [x] 100 相同一般回呼 → ≤5 次實際 `executed`
+- [x] 相同輸入不 create／release；wake 仍強制 verify
+- [x] power floor trip 不被 debounce 延後
+- [x] create failure log 節流單元測試
+- [x] shutdown 取消待排 coalesce
+- [x] 非同步測試 5s 截止／suite `.timeLimit(.minutes(1))`
+- [ ] M5 實機 5 分鐘 ps／sample（P5）
+
+### 偏離／給下游
+1. hub／load **布林翻轉**用 immediate（否則 lease hold 測試與 CLI hold 回應會看到過期 isHolding）；細節變更仍 coalesce。
+2. Lid 內部仍可能自排 Task；靠 controller 側 no-op 跳過 `lidGuard.update` 斷鏈。未改 `LidSleepGuardController.swift`（非 P2 檔案範圍）。
+3. 節流彙總 `keepawake.throttle.summary` 為 **debug**（每 60s），不落地檔案。
+
+### P1 R2（Codex 退回修正，2026-10-14）
+- display／system **各自** `last*AssertionVerifyAt`；新建另一類不得延後未檢查舊 ID。
+- 失效撤銷記 `assertion.released`（`reason=inactive`、`trigger`、舊 id／type）；重建失敗記 `assertion.recreated result=failed previousId=…`。
+- 測試：`perTypeVerifyDeadlineNotDelayedByOtherCreate`、`repeatedSystemToggleDoesNotStarveDisplayVerify`、`inactiveDropLogsReleasedAndRecreateFailureRecovery`。
+
+### P2/P3 回授斷鏈（2026-10-14）
+- `LidSleepGuardController.publish`：語意快照相同不通知；helperStatus／leftover／forced-off／錯誤欄位變更仍會 publish。
+- 測試：`identicalPolicyDoesNotRepublish`、`lidKeepAwakeFeedbackConverges`（MainActor 外 5s 截止）。
+- 不碰 PowerHelper／PowerHelperClient。
+
+---
+
+## P4（Cursor，2026-10-14，perf／idleblank）
+
+### 改了哪些檔案
+- `Packages/ChorusCore/Sources/ChorusCore/AgentIdleBlank.swift`（`IdleBlankSignal`／`AgentIdleBlankProtection`；只有全部 inactive 才 blank；無效 idle 保守）
+- `Packages/ChorusCore/Tests/ChorusCoreTests/AgentIdleBlankTests.swift`（真值表：媒體／全螢幕、遠端、foreign assertion、unknown、無效 idle、3/5/10/15）
+- `Chorus/Display/AgentIdleBlanker.swift`（注入保護讀取器；外部 assertion 僅接近門檻／快取失效時查；blank／restore notice）
+- `Chorus/Display/IdleActivityReaders.swift`（**新增**：CG idle ∩ HIDIdleTime 取 min；全失敗 → `.nan`）
+- `Chorus/Display/IdleBlankProtectionReaders.swift`（**新增**：前景全螢幕、遠端／螢幕共享 bundle＋`kCGSessionOnConsoleKey`、`IOPMCopyAssertionsByProcess` 排除本 PID）
+- `Tests/ChorusAppTests/AgentIdleBlankerTests.swift`
+- 本機已 `xcodegen generate`（**不**提交 `*.xcodeproj`）
+
+### 測試
+```
+swift test --package-path Packages/ChorusCore
+→ 851 tests in 120 suites passed
+
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -only-testing:ChorusAppTests/AgentIdleBlankerTests
+→ status: success，passed_tests: 9
+```
+
+### 驗收條件
+- [x] Core policy：media／fullscreen、remote、foreign assertion、unknown、無效 idle、3/5/10/15
+- [x] App fake：影片／全螢幕擋熄、遠端擋熄、restore 只走 `restoreIdleBlank`、遠距門檻才查 foreign assertion、狀態變更 invalidate
+- [x] 非同步測試 5s 截止／suite `.timeLimit(.minutes(1))`
+- [x] 預設仍關閉＋5 分鐘、保留 3 分鐘、不覆寫已存（未改 `KeepAwakeAgentIdleMinutes.default`／設定遷移）
+- [x] 不用私有 MediaRemote；不新增全域輸入監控權限前提
+- [ ] 實機：影片／Screen Sharing／Universal Control／螢幕共享超過門檻不熄（P5；不可用標「未確認」）
+- [ ] 開啟熄屏後 5 分鐘閒置 CPU 不因保護查詢顯著升高（P5）
+
+### 偏離／給下游
+1. Fi #2：媒體無法可靠判定 → **前景全螢幕即不熄**（誤保護成本：非媒體全螢幕也不熄）。
+2. Fi #4：遠端偵測以公開 `NSWorkspace` bundle id／名稱＋`CGSessionCopyCurrentDictionary` 的 on-console；Universal Control／Screen Sharing 實機覆蓋 **P5 未確認**。抓不到或來源 unknown → 不熄。（已由 P4 第 2 輪／D-2026-10-14b 移除）
+3. 外部 `PreventUserIdleDisplaySleep`：只在 idle ≥ threshold−60s（或快取空／失效）查 `IOPMCopyAssertionsByProcess`；TTL 60s；已熄屏不每 500ms 重打 powerd。
+4. Production `AgentIdleBlanker(displays:)` 接系統讀取器；測試 init 預設保護訊號 inactive（不影響既有 KeepAwakeControllerTests 注入）。
+5. 未改 `KeepAwakeController.swift`／`LidSleepGuardController.swift`／PowerHelper。
+
+### Spec 問題
+無（本 worktree 仍無 `docs/spec.md`；依計畫＋`docs/decisions.md` D-2026-10-14）。
+
+### P4 第 2 輪（F1，2026-10-14）
+
+#### 改了哪些檔案
+- `Chorus/Display/AgentIdleBlanker.swift`
+- `Chorus/Display/IdleBlankProtectionReaders.swift`
+- `Packages/ChorusCore/Sources/ChorusCore/AgentIdleBlank.swift`
+- `Packages/ChorusCore/Tests/ChorusCoreTests/AgentIdleBlankTests.swift`
+- `Tests/ChorusAppTests/AgentIdleBlankerTests.swift`
+- `docs/decisions.md`
+- `docs/plans/keepawake-handoff.md`
+
+#### 測試指令與結果
+```sh
+# RED：舊 test seam 注入 remote `.active`，重現 UC 行程 false-positive 不熄屏
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -only-testing:ChorusAppTests/AgentIdleBlankerTests \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
+  -maximum-test-execution-time-allowance 120
+# → `Universal Control process presence without a session does not block blank`
+#   在 `blankCalls == 1` 失敗；修正後以架構回歸鎖定 production 無 process/session 通道，
+#   該 suite 13 passed
+
+swift test --package-path Packages/ChorusCore
+# → 850 passed，0 failed
+
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
+  -maximum-test-execution-time-allowance 120
+# → 784 passed，0 failed（57.813s）
+```
+上述建置／測試指令均以 Perl `alarm 1800` 設外層硬逾時，並透過 xcsift 解析；Core／App exit 0、errors 0。
+
+#### 驗收條件
+- [x] 移除 `remoteSession()`、Universal Control／Screen Sharing／Continuity Capture 等行程清單與 `kCGSessionOnConsoleKey` 分支
+- [x] production 不保留任何未證實的遠端「一律不熄」訊號
+- [x] 純 `AgentIdleBlankPolicy.decide` 的可注入輸入只剩 idle、媒體／前景全螢幕與外部 display-sleep assertion
+- [x] UC false-positive 行為先紅；最終架構回歸鎖定三個 production 檔不得再有 UC／viewer process/session 保護通道
+- [x] 原有媒體／全螢幕、foreign assertion、unknown、無效 idle 測試維持綠燈
+- [x] 未改 PowerHelper、系統設定、簽章、pmset、Release 測試開關或 `*.xcodeproj`
+
+#### 偏離 spec／決策
+- 依 Fi 2026-10-14 15:36 決定，修訂同日 D-2026-10-14 #4：P4 不處理 UC，閒置熄屏不再有遠端會話保護分支；`docs/decisions.md` 已追加 D-2026-10-14b。
+- 本 worktree 仍無 `docs/spec.md`；未自行修改 spec。
+
+#### 給下游的注意事項
+- 遠端或螢幕共享輸入若未更新 CG／HID idle，可能被判定閒置而熄屏；這是 Fi 本輪明確接受的漏判。
+- 本輪沒有找到並保留任何「便宜且確實代表連線中」的公開遠端訊號，因此沒有可交 Claude 判定的遠端訊號證據。
+
+## 全分支審查修正（Cursor，第 1 輪）
+
+### 改了哪些檔案
+- `Chorus/Display/KeepAwakeController.swift`
+- `Chorus/Display/AgentIdleBlanker.swift`
+- `Tests/ChorusAppTests/KeepAwakeControllerTests.swift`
+- `Tests/ChorusAppTests/AgentIdleBlankerTests.swift`
+- `Tests/ChorusAppTests/KeepAwakeSourceHubTests.swift`
+- `docs/plans/keepawake-handoff.md`
+
+未改 `PowerHelper/`、`PowerHelperClient.swift`、特權 XPC／pmset 路徑、`project.yml` 或 `*.xcodeproj`。
+
+### RED／GREEN 與全套測試
+```sh
+# RED：F1 的 max-duration／pause-expiry tick、F2 的 active／unknown pre-blank、
+# F3 的 session／power trigger 均失敗；修正後目標套件通過。
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -only-testing:ChorusAppTests/KeepAwakeControllerTests \
+  -only-testing:ChorusAppTests/AgentIdleBlankerTests \
+  -only-testing:ChorusAppTests/KeepAwakeSourceHubTests \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
+  -maximum-test-execution-time-allowance 120 SWIFT_EMIT_LOC_STRINGS=NO
+# → 107 passed，0 failed
+
+swift test --package-path Packages/ChorusCore
+# → 850 passed，0 failed
+
+xcodebuild test -scheme Chorus -derivedDataPath /private/tmp/chorus-perf-dd \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
+  -maximum-test-execution-time-allowance 120 SWIFT_EMIT_LOC_STRINGS=NO
+# → 788 passed，0 failed（55.984s）
+```
+上述指令均有 Perl `alarm` 外層逾時並經 xcsift；最終 App 全套只有
+`CrashReportCollector.swift` 3 項既有 `nonisolated(unsafe)` warning。
+
+### 驗收條件
+- [x] F1：`.whileAgentsWorking` 的 `.tick` 強制越過 unchanged no-op；跨 3 小時 deadline 當輪 `wants=false` 並啟動 `set(false)`。
+- [x] F1：暫停到期、輸入不變時，tick 當輪恢復 `wants=true` 並啟動 `set(true)`。
+- [x] F1：deadline／pause 測試都先在上限前做 assertion verify，跨界 tick 的 `isActive` 呼叫仍為 0，未恢復逐 tick 查 powerd。
+- [x] F2：候選 `.blank` 且本輪未取得新鮮外部 assertion 時，熄屏前重查一次並重算；active／unknown 都不熄屏。
+- [x] F3：wake／session／power 分別保留有限 trigger，消費後清空；heartbeat 仍獨立。
+- [x] F4：移除 source tripwire 中過寬的 `remoteSession`／`runningApplications`，保留具體政策 token。
+- [x] F5／Claude m3：coalesce worker 睡到當輪 deadline，醒後重讀延長後 deadline；generation／取消 guard 與既有競態測試維持。
+- [x] Claude m6：`let s` 改為 `let stats`。
+- [x] Claude m7：指定 `clock` 改為 `let`。
+- [x] Claude m9：P4 第 1 輪舊遠端敘述標註已由第 2 輪／D-2026-10-14b 移除。
+- [ ] Claude m2：依本輪指示只記錄、不處理；`mediaOrFullscreen()` 的低門檻呼叫成本仍待後續量測／修正。
+- [ ] Claude m6 檔案／函式長度：依本輪指示只記錄、不拆檔。
+
+### 偏離 spec／給下游
+- 無 spec 修改；現有 worktree 仍無 `docs/spec.md`，依效能計畫、D-2026-10-14b 與兩份全分支審查執行。
+- F1 採審查建議的既有 5 秒 tick force，未新增計時架構。
+- m2 與 m6 長度問題刻意留待後續，不冒稱完成。
+- TCC 是否曾顯示對話框未確認；本輪未點擊、未自動化、未改 TCC。

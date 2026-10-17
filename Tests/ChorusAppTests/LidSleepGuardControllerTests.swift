@@ -2482,4 +2482,105 @@ struct LidSleepGuardControllerTests {
         #expect(client.availability == .requiresApproval)
         #expect(makeCount.withLock { $0 } == 0)
     }
+
+    @Test(
+        "P3: identical policy outcome does not republish onChange",
+        .timeLimit(.minutes(1))
+    )
+    func identicalPolicyDoesNotRepublish() async throws {
+        let (controller, _, lid, _) = makeController(heartbeat: 3_600)
+        defer { controller.shutdown() }
+        var pubs = 0
+        controller.onChange = { pubs += 1 }
+        let power = PowerSnapshot(
+            hasInternalBattery: false, onBattery: false, percent: nil, thermal: .nominal
+        )
+        let idle = KeepAwakeBusyState(isBusy: false, contributing: [], releaseAt: nil)
+        controller.update(
+            agentModeActive: false, busy: idle, power: power, existingFloor: .off
+        )
+
+        lid.publish(.open)
+        try await Task.sleep(for: .milliseconds(30))
+        let afterFirst = pubs
+
+        for _ in 0..<100 {
+            lid.publish(.open)
+        }
+
+        // 截止在 MainActor 外，避免熱迴圈佔滿主執行緒時逾時無法推進。
+        let deadline = ContinuousClock.now + .seconds(5)
+        var last = pubs
+        var stableRounds = 0
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(40))
+            let current = pubs
+            if current == last {
+                stableRounds += 1
+                if stableRounds >= 4 { break }
+            } else {
+                last = current
+                stableRounds = 0
+            }
+        }
+        #expect(ContinuousClock.now < deadline)
+        #expect(pubs - afterFirst <= 5)
+    }
+
+    @Test(
+        "Review W2: publish dedupe still delivers forced-off, recovery block and availability drops",
+        .timeLimit(.minutes(1))
+    )
+    func publishDedupeKeepsMeaningfulChanges() async throws {
+        let helper = FakeHelper()
+        let (controller, _, _, _) = makeController(helper: helper, heartbeat: 3_600)
+        defer { controller.shutdown() }
+        controller.update(
+            agentModeActive: true, busy: busyState(), power: acPower(), existingFloor: .percent20
+        )
+        let armDeadline = ContinuousClock.now + .seconds(5)
+        while !controller.isActuallyHoldingSleepDisabled, ContinuousClock.now < armDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(controller.isActuallyHoldingSleepDisabled)
+        var pubs = 0
+        controller.onChange = { pubs += 1 }
+
+        // Identical evidence: deduped.
+        await controller.refreshFromHelper()
+        await controller.refreshFromHelper()
+        let identical = pubs
+
+        // Helper forced-off (external pmset clear): must reach upstream.
+        helper.injectExternalInterference()
+        await controller.refreshFromHelper()
+        let forcedDeadline = ContinuousClock.now + .seconds(5)
+        while pubs == identical, ContinuousClock.now < forcedDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(pubs > identical)
+        #expect(!controller.isActuallyHoldingSleepDisabled)
+        #expect(controller.helperStatus?.lastForcedOffReason == "externalInterference")
+
+        // Recovery block flips: must reach upstream.
+        let beforeBlock = pubs
+        helper.recoveryBlocked = true
+        await controller.refreshFromHelper()
+        let blockDeadline = ContinuousClock.now + .seconds(5)
+        while pubs == beforeBlock, ContinuousClock.now < blockDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(pubs > beforeBlock)
+
+        // Helper connection drop: availability is part of the upstream snapshot.
+        let beforeDrop = pubs
+        helper.availability = .connecting
+        helper.onAvailabilityChange?()
+        let dropDeadline = ContinuousClock.now + .seconds(5)
+        while pubs == beforeDrop, ContinuousClock.now < dropDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(pubs > beforeDrop)
+        #expect(identical <= 1)
+    }
 }

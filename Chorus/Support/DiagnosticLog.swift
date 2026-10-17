@@ -241,6 +241,29 @@ struct ChorusLog: Sendable {
     func notice(_ message: @autoclosure () -> String) { emit(.notice, message()) }
     func error(_ message: @autoclosure () -> String) { emit(.error, message()) }
 
+    /// 結構化診斷事件。`debug` 只進 Unified Logging；其餘同時寫檔。
+    /// `fields` 不得含密鑰、XPC 原始資料或使用者內容。
+    func event(_ name: String, level: DiagnosticLog.Level, fields: [String: String] = [:]) {
+        emit(level, Self.formatEvent(name: name, fields: fields))
+    }
+
+    /// `event=<name> k=v …`；鍵依名稱排序，值內 CR／LF 改 `⏎`。
+    static func formatEvent(name: String, fields: [String: String]) -> String {
+        let flattenedFields = fields
+            .sorted { $0.key < $1.key }
+            .map { key, value in
+                let flat = value
+                    .replacingOccurrences(of: "\r\n", with: "⏎")
+                    .replacingOccurrences(of: "\n", with: "⏎")
+                    .replacingOccurrences(of: "\r", with: "⏎")
+                return "\(key)=\(flat)"
+            }
+        if flattenedFields.isEmpty {
+            return "event=\(name)"
+        }
+        return "event=\(name) \(flattenedFields.joined(separator: " "))"
+    }
+
     private func emit(_ level: DiagnosticLog.Level, _ text: String) {
         switch level {
         case .debug: logger.debug("\(text, privacy: .public)")
@@ -253,6 +276,17 @@ struct ChorusLog: Sendable {
         guard level != .debug else { return }
         sink.write(level: level, category: category, message: text)
     }
+}
+
+/// Keepawake 診斷事件名（P1／P2／P4 共用，避免拼寫漂移）。
+/// 正常路徑狀態轉換用 `notice`；高頻計數用 `debug` 或每 60 秒彙總。
+enum KeepAwakeLogEvent {
+    static let assertionCreated = "keepawake.assertion.created"
+    static let assertionReleased = "keepawake.assertion.released"
+    static let assertionRecreated = "keepawake.assertion.recreated"
+    static let throttleSummary = "keepawake.throttle.summary"
+    static let idleBlank = "keepawake.idle.blank"
+    static let idleRestore = "keepawake.idle.restore"
 }
 
 // MARK: - 各模組共用的 logger
