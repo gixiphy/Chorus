@@ -125,6 +125,7 @@ enum CLIProcessRunner {
         stdin stdinText: String?,
         timeout: Duration,
         extraEnvironment: [String: String] = [:],
+        session: AIMemoryMarker.Session? = nil,
         isComplete: (@Sendable (String) -> Bool)? = nil
     ) async throws -> Output {
         let process = Process()
@@ -135,6 +136,12 @@ enum CLIProcessRunner {
         )
         // 引擎自己聲明的變數蓋在白名單之上（goose 的 GOOSE_MODE 之類）
         environment.merge(extraEnvironment) { _, new in new }
+        if let session {
+            // 寫入失敗直接拋出，絕不啟動沒有標記的 session。
+            try AIMemoryMarker.write(to: session.directory, project: session.project)
+            process.currentDirectoryURL = session.directory
+            environment[AIMemoryMarker.originEnvironmentKey] = AIMemoryMarker.origin
+        }
         process.environment = environment
 
         let stdoutPipe = Pipe()
@@ -307,7 +314,7 @@ struct CLIAdviceProvider: LightingAdviceProvider {
         )
         return try await CLIAdviceExecution.perform(
             engine: engine, executable: executable,
-            basePrompt: basePrompt, run: run, as: LightingAdvice.self
+            basePrompt: basePrompt, run: run, project: "chorus-advisor", as: LightingAdvice.self
         )
     }
 }
@@ -328,10 +335,32 @@ enum CLIAdviceExecution {
         executable: URL,
         basePrompt: String,
         run: KnownCLIEngine.RunContext,
+        project: String,
         as type: T.Type
     ) async throws -> T {
+        var run = run
+        // 顧問建不出沙箱時，另建獨立 cwd；絕不在共用 temp 根目錄寫 marker。
+        let ownsSandbox = run.sandbox == nil
+        if ownsSandbox {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(project)-\(UUID().uuidString)", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700]
+                )
+            } catch {
+                throw AdviceError.engineNotFound(engineID: engine.id)
+            }
+            run.sandbox = directory
+        }
+        defer {
+            if ownsSandbox, let directory = run.sandbox {
+                try? FileManager.default.removeItem(at: directory)
+            }
+        }
         do {
-            return try await attempt(prompt: basePrompt, engine: engine, executable: executable, run: run, as: type)
+            return try await attempt(prompt: basePrompt, engine: engine, executable: executable, run: run, project: project, as: type)
         } catch let error as AdviceDecodeError {
             // CLI 自報的執行錯誤（如未認證）重試也不會好，直接映射
             if case let .cliReportedError(message) = error {
@@ -341,7 +370,7 @@ enum CLIAdviceExecution {
             do {
                 return try await attempt(
                     prompt: basePrompt + "\n\n" + AdvicePrompt.retryInstruction,
-                    engine: engine, executable: executable, run: run, as: type
+                    engine: engine, executable: executable, run: run, project: project, as: type
                 )
             } catch let retryError as AdviceDecodeError {
                 throw AdviceError.decodeFailed(raw: rawText(from: retryError))
@@ -367,6 +396,7 @@ enum CLIAdviceExecution {
         engine: KnownCLIEngine,
         executable: URL,
         run: KnownCLIEngine.RunContext,
+        project: String,
         as type: T.Type
     ) async throws -> T {
         let invocation = engine.invocation(prompt: prompt, run: run)
@@ -375,12 +405,16 @@ enum CLIAdviceExecution {
         let complete: @Sendable (String) -> Bool = { AdviceOutputCodec.looksLikeCompleteJSONObject($0) }
         let isComplete: (@Sendable (String) -> Bool)? = engine.codec.isSelfDelimitingJSON ? complete : nil
         do {
+            guard let directory = run.sandbox else {
+                throw AdviceError.engineNotFound(engineID: engine.id)
+            }
             output = try await CLIProcessRunner.run(
                 executable: executable,
                 arguments: invocation.arguments,
                 stdin: invocation.stdin,
                 timeout: run.timeout,
                 extraEnvironment: engine.extraEnvironment,
+                session: AIMemoryMarker.Session(directory: directory, project: project),
                 isComplete: isComplete
             )
         } catch let error as AdviceError {

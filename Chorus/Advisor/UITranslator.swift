@@ -541,7 +541,7 @@ struct CLIUITranslationBatchRunner: UITranslationBatchRunning {
         return try await CLIAdviceExecution.perform(
             engine: engine, executable: executable,
             basePrompt: UITranslationPrompt.prompt(items: items, targetLanguage: targetLanguage),
-            run: run, as: UITranslationBatch.self
+            run: run, project: "chorus-translate", as: UITranslationBatch.self
         )
     }
 }

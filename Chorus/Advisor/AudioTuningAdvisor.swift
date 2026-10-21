@@ -23,7 +23,7 @@ struct CLIAudioAdviceProvider: AudioAdviceProviding {
         return try await CLIAdviceExecution.perform(
             engine: engine, executable: executable,
             basePrompt: AudioAdvicePrompt.cliPrompt(context: context),
-            run: run, as: AudioTuningAdvice.self
+            run: run, project: "chorus-audio-advisor", as: AudioTuningAdvice.self
         )
     }
 }

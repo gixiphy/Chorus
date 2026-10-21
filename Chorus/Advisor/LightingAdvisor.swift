@@ -504,7 +504,7 @@ final class LightingAdvisor {
 
     /// 背景照 → 長邊 ≤1344px、JPEG q0.7 的暫存檔；分析完即刪（呼叫端 defer）。
     /// 本次分析的沙箱目錄。建不出來就回 nil——縮圖退回共用 temp 目錄，
-    /// 分析照常進行（只有需要 --add-dir 的引擎會因此讀不到圖並誠實報錯）。
+    /// CLI 層另建獨立 cwd 並寫入 ai-memory marker；建立或寫入失敗就不啟動。
     private nonisolated static func makeSandbox() -> URL? {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("chorus-advisor-\(UUID().uuidString)", isDirectory: true)
