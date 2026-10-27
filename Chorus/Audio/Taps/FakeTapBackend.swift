@@ -118,6 +118,7 @@ final class FakeTapBackend: TapBackend {
 
     /// 從 `events` 重播：自第一次 play 這個 bundle 起，靜音持有者（play +1、stop −1、
     /// silencer+ +1、silencer− −1）降到 0 的每個事件索引。空陣列＝從未解除靜音。
+    /// `since` 之前的事件只用來初始化持有者計數，不記 gap。
     func muteGaps(for bundleID: String, since index: Int = 0) -> [Int] {
         let playPrefix = "play:\(bundleID)@"
         let stopKey = "stop:\(bundleID)"
@@ -126,7 +127,7 @@ final class FakeTapBackend: TapBackend {
         var holders = 0
         var started = false
         var gaps: [Int] = []
-        for (i, event) in events.enumerated() where i >= index {
+        for (i, event) in events.enumerated() {
             if event.hasPrefix(playPrefix) {
                 holders += 1
                 started = true
@@ -140,7 +141,7 @@ final class FakeTapBackend: TapBackend {
             } else {
                 continue
             }
-            if started && holders == 0 {
+            if started && holders == 0 && i >= index {
                 gaps.append(i)
             }
         }

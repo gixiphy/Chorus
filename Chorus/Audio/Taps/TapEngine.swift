@@ -92,10 +92,42 @@ final class TapEngine {
     /// 測試把它調成 .zero；正式值對齊 driver 端「目標重新出現等 1.5 秒」。
     @ObservationIgnored var rebuildDelay: Duration = .seconds(1.5)
 
-    init(backend: any TapBackend, registry: AudioProcessRegistry, settings: SettingsStore) {
+    // MARK: - 來電接手（call-handoff）
+
+    @ObservationIgnored private let playback: any PlaybackControlling
+    @ObservationIgnored private var telephonyRates = TelephonyRateMemory<ContinuousClock.Instant>()
+    /// 上次「可聽見的 playthrough」建在哪個 UID。stopSession 不清它。
+    @ObservationIgnored private var homeOutputUIDs: [String: String] = [:]
+    /// mute guard 的唯一擁有者（武裝與 hold 共用）。
+    @ObservationIgnored private var muteGuards: [String: any TapSilencer] = [:]
+    /// 重新配置時建不起 guard、只好留下的過期 session；guard 建好後再收舊建新。
+    @ObservationIgnored private var staleSessions: Set<String> = []
+    @ObservationIgnored private var holds: [String: CallHandoffHold] = [:]
+    @ObservationIgnored private var followDeferrals: [String: ContinuousClock.Instant] = [:]
+    @ObservationIgnored private var handoffRecheckTask: Task<Void, Never>?
+    @ObservationIgnored private var handoffPlaybackTask: Task<Void, Never>?
+    @ObservationIgnored var currentInstant: @MainActor () -> ContinuousClock.Instant = { ContinuousClock.now }
+    @ObservationIgnored var handoffSettleDelay: Duration = .seconds(3)
+    @ObservationIgnored var pauseSettleDelay: Duration = .seconds(1)
+    @ObservationIgnored var playbackVerifyDelay: Duration = .seconds(2)
+
+    private struct CallHandoffHold {
+        let outputUID: String
+        var pause: HandoffPauseState = .pending
+        var pauseDue: ContinuousClock.Instant?
+        var verifyDue: ContinuousClock.Instant?
+    }
+
+    init(
+        backend: any TapBackend,
+        registry: AudioProcessRegistry,
+        settings: SettingsStore,
+        playback: (any PlaybackControlling)? = nil
+    ) {
         self.backend = backend
         self.registry = registry
         self.settings = settings
+        self.playback = playback ?? NullPlaybackController()
         backend.setDefaultOutputChangedHandler { [weak self] in
             self?.defaultOutputChanged()
         }
@@ -104,6 +136,45 @@ final class TapEngine {
         registry.onProcessesChanged = { [weak self] in
             self?.reconcileSessions()
         }
+    }
+
+    func heldOutputUID(bundleID: String) -> String? { holds[bundleID]?.outputUID }
+    func handoffPauseState(bundleID: String) -> HandoffPauseState? { holds[bundleID]?.pause }
+    func hasMuteGuard(bundleID: String) -> Bool { muteGuards[bundleID] != nil }
+    func nextHandoffPlaybackDue() -> ContinuousClock.Instant? {
+        var dues: [ContinuousClock.Instant] = []
+        for hold in holds.values {
+            if let pauseDue = hold.pauseDue { dues.append(pauseDue) }
+            if let verifyDue = hold.verifyDue { dues.append(verifyDue) }
+        }
+        return dues.min()
+    }
+
+    /// 確保這個 App 有 mute guard。已有就回 true；建立失敗回 false。
+    private func ensureMuteGuard(_ bundleID: String, members: [String]) -> Bool {
+        if muteGuards[bundleID] != nil { return true }
+        do {
+            muteGuards[bundleID] = try backend.startSilencer(
+                bundleID: bundleID, memberBundleIDs: members
+            )
+            return true
+        } catch {
+            log.error("來電接手靜音保護失敗：\(bundleID) \(error)；保留現有 tap")
+            scheduleRetry()
+            return false
+        }
+    }
+
+    /// 只有在 guard 確實存在時才收 playthrough。回傳是否收了。
+    private func stopSessionKeepingSilent(_ bundleID: String, members: [String]) -> Bool {
+        guard ensureMuteGuard(bundleID, members: members) else { return false }
+        stopSession(bundleID)
+        staleSessions.remove(bundleID)
+        return true
+    }
+
+    private func releaseMuteGuard(_ bundleID: String) {
+        muteGuards.removeValue(forKey: bundleID)?.stop()
     }
 
     /// App 啟動時呼叫：上次已啟用就直接重新探測（TCC 已給過的話
@@ -163,7 +234,18 @@ final class TapEngine {
     }
 
     func setOutputDevice(_ uid: String?, bundleID: String) {
+        // 來電接手等待中，使用者明確選了路由 → 結束等待、照新路由走、不自動播放。
+        let wasHeld = holds.removeValue(forKey: bundleID) != nil
+        homeOutputUIDs.removeValue(forKey: bundleID)
+        followDeferrals.removeValue(forKey: bundleID)
+        if wasHeld {
+            log.notice("來電接手等待結束：\(bundleID) 使用者改路由 → \(uid ?? "預設")，不自動播放")
+        }
         update(bundleID: bundleID) { $0.outputDeviceUID = uid }
+        // 新 session 建好（或新路由不需要 tap）之後才收 guard
+        releaseMuteGuard(bundleID)
+        staleSessions.remove(bundleID)
+        rescheduleHandoffPlayback()
     }
 
     /// 回到完全原生的路徑（清掉這個 App 的所有調整，tap 隨之消失）。
@@ -403,7 +485,10 @@ final class TapEngine {
         // 排除清單（完全不碰）。後者的 App 沒在跑就查不到行程——沒關係，
         // 它一啟動 onProcessesChanged 就會帶著新行程走回這裡重建。
         var excluded = registry.processObjectIDs(
-            bundleIDs: Set(sessions.keys).union(settings.excludedApps)
+            bundleIDs: Set(sessions.keys)
+                .union(holds.keys)
+                .union(muteGuards.keys)
+                .union(settings.excludedApps)
         )
         if let own = registry.ownProcessObjectID { excluded.append(own) }
 
@@ -423,8 +508,9 @@ final class TapEngine {
             globalOutputUID = target
             globalExclusions = excluded
             deviceTapUID = target
-            globalSession?.onDeviceReconfigured = { [weak self] _ in
+            globalSession?.onDeviceReconfigured = { [weak self] rate in
                 guard let self, self.globalSession != nil else { return }
+                self.recordRate(rate, outputUID: self.globalOutputUID)
                 self.log.notice("global session 的裝置重新配置 → \(self.rebuildDelay.components.seconds)s 後重建")
                 self.stopGlobalSession()
                 self.scheduleRebuild(after: self.rebuildDelay)
@@ -432,6 +518,7 @@ final class TapEngine {
             pushDeviceProcessing()
             rebuildRetries = 0
             globalError = nil
+            recordRate(globalSession?.nominalSampleRate, outputUID: target)
             log.notice("global session 建立：target=\(target) 排除 \(excluded.count) 個行程")
         } catch {
             log.error("global session 失敗（第 \(self.rebuildRetries + 1) 次）：target=\(target) \(String(describing: error))")
@@ -514,80 +601,124 @@ final class TapEngine {
         //（調整保留，取消排除即恢復）。
         let desired = Set(settings.appAudio.bundleIDsNeedingTap)
             .subtracting(settings.excludedApps)
-        // Array(...)：下面會改 sessions，不要邊走邊改字典的鍵視圖
-        for bundleID in Array(sessions.keys) where !desired.contains(bundleID) {
+        let tracked = Set(sessions.keys)
+            .union(holds.keys)
+            .union(homeOutputUIDs.keys)
+            .union(followDeferrals.keys)
+            .union(muteGuards.keys)
+            .union(staleSessions)
+        for bundleID in tracked where !desired.contains(bundleID) {
             stopSession(bundleID)
+            releaseMuteGuard(bundleID)
+            holds.removeValue(forKey: bundleID)
+            homeOutputUIDs.removeValue(forKey: bundleID)
+            followDeferrals.removeValue(forKey: bundleID)
+            staleSessions.remove(bundleID)
         }
 
         // 每次對帳重新算一次說明，不留上一輪的殘影
         var notice: String?
         var hadSessionFailure = false
         let available = Set(backend.outputDeviceUIDs())
+        let now = currentInstant()
 
         for bundleID in desired.sorted() {
             let entry = settings.appAudio[bundleID]
-            let outputUID: String?
-            if let routed = entry.outputDeviceUID {
-                if available.contains(routed) {
-                    outputUID = routed
-                } else {
-                    // 指定的裝置不在（耳機拔了）→ 退回預設但**不動設定**：
-                    // 插回去時 audioDevicesChanged 會把它接回原本的目標
-                    outputUID = backend.defaultOutputDeviceUID()
-                    notice = "「\(bundleID)」指定的輸出裝置目前不在，暫時改用系統預設"
-                }
-            } else {
-                outputUID = backend.defaultOutputDeviceUID()
-            }
-            guard let outputUID else {
-                notice = "找不到輸出裝置，無法接管 \(bundleID)"
-                continue
-            }
-            // aggregate 的 sub-device 綁在建立時、改不了——換裝置只能收舊建新
-            if let actual = sessionOutputUIDs[bundleID], actual != outputUID {
-                stopSession(bundleID)
-            }
-            // 新成員（helper）出現＝現有描述抓不到它的聲音，非重建不可；
-            // 成員消失不重建——描述留著，App 重啟由系統重綁
-            let members = Set(registry.memberBundleIDs(bundleID: bundleID))
-            if let covered = sessionMemberBundles[bundleID], !members.isSubset(of: covered) {
-                stopSession(bundleID)
-            }
-            if sessions[bundleID] == nil {
-                do {
-                    // initialGain 也要是有效值（含裝置級軟體音量）——
-                    // 否則建立瞬間會先響一段只套 App 增益的音量再滑下去
-                    sessions[bundleID] = try backend.startPlaythroughSession(
-                        bundleID: bundleID,
-                        memberBundleIDs: Array(members).sorted(),
-                        outputDeviceUID: outputUID,
-                        initialGain: effectiveGain(entry, onDeviceChain: outputUID == deviceTarget)
+            let membersList = registry.memberBundleIDs(bundleID: bundleID)
+            let members = Set(membersList)
+            let homeUID = homeOutputUIDs[bundleID]
+            let heldUID = holds[bundleID]?.outputUID
+            let homeTelephonyRecent = homeUID.map {
+                telephonyRates.isRecentTelephony(outputUID: $0, at: now)
+            } ?? false
+            // nil＝尚未開始延後 → 視為未到期，讓 decide 回 deferFollow 並由下面設期限
+            let deferralExpired = followDeferrals[bundleID].map { $0 <= now } ?? false
+            let decision = CallHandoffPolicy.decide(
+                heldUID: heldUID,
+                homeUID: homeUID,
+                followsDefault: entry.outputDeviceUID == nil,
+                defaultUID: backend.defaultOutputDeviceUID(),
+                available: available,
+                homeTelephonyRecent: homeTelephonyRecent,
+                deferralExpired: deferralExpired
+            )
+
+            switch decision {
+            case .enterHold(let uid):
+                if holds[bundleID] == nil {
+                    holds[bundleID] = CallHandoffHold(
+                        outputUID: uid,
+                        pause: .pending,
+                        pauseDue: now.advanced(by: pauseSettleDelay)
                     )
-                    sessions[bundleID].map { wireEffectLatch($0) }
-                    sessionOutputUIDs[bundleID] = outputUID
-                    sessionMemberBundles[bundleID] = members
-                    log.notice("per-app session 建立：\(bundleID) → \(outputUID) 成員 \(members.count) 個")
-                    // 裝置中途改取樣率（藍牙耳機切降噪）→ 這條 session 的
-                    // aggregate 格式已經過期。立刻收掉（別讓過期格式繼續出
-                    // 雜音），但**延遲重建**——鏈路還在重新協商時建 aggregate
-                    // 幾乎必失敗（AirPods 實測，2026-08-30）
-                    sessions[bundleID]?.onDeviceReconfigured = { [weak self] _ in
-                        guard let self, self.sessions[bundleID] != nil else { return }
-                        self.log.notice("per-app session 的裝置重新配置：\(bundleID) → 收掉、\(self.rebuildDelay.components.seconds)s 後重建")
-                        self.stopSession(bundleID)
-                        self.scheduleRebuild(after: self.rebuildDelay)
-                    }
-                } catch {
-                    // 單一 App 失敗不拖垮引擎：記錄並繼續，其他 session 與
-                    // 裝置音量／亮度／同步完全不受影響（DESIGN §6 降級表）
-                    log.error("per-app session 失敗：\(bundleID) → \(outputUID) \(String(describing: error))")
-                    notice = "無法接管 \(bundleID)：\(error)"
-                    hadSessionFailure = true
-                    scheduleRetry()
-                    continue
+                    log.notice("來電接手：\(bundleID) 原本 → \(uid)，靜音等原裝置回來")
                 }
+                if !stopSessionKeepingSilent(bundleID, members: membersList) {
+                    hadSessionFailure = true
+                }
+                followDeferrals.removeValue(forKey: bundleID)
+                rescheduleHandoffPlayback()
+            case .stayHeld:
+                if sessions[bundleID] != nil {
+                    if !stopSessionKeepingSilent(bundleID, members: membersList) {
+                        hadSessionFailure = true
+                    }
+                } else {
+                    _ = ensureMuteGuard(bundleID, members: membersList)
+                }
+            case .resume(let uid):
+                reconcilePlaythrough(
+                    bundleID: bundleID,
+                    entry: entry,
+                    members: members,
+                    membersList: membersList,
+                    preferredOutputUID: uid,
+                    available: available,
+                    notice: &notice,
+                    hadSessionFailure: &hadSessionFailure,
+                    finishingHold: true
+                )
+            case .deferFollow(let uid):
+                if followDeferrals[bundleID] == nil {
+                    followDeferrals[bundleID] = now.advanced(by: handoffSettleDelay)
+                    log.notice("預設輸出換了但 \(uid) 還在且剛出現語音取樣率：\(bundleID) 先留 \(handoffSettleDelay.components.seconds)s")
+                    rescheduleHandoffRecheck()
+                }
+                reconcilePlaythrough(
+                    bundleID: bundleID,
+                    entry: entry,
+                    members: members,
+                    membersList: membersList,
+                    preferredOutputUID: uid,
+                    available: available,
+                    notice: &notice,
+                    hadSessionFailure: &hadSessionFailure,
+                    finishingHold: false
+                )
+            case .normal:
+                followDeferrals.removeValue(forKey: bundleID)
+                reconcilePlaythrough(
+                    bundleID: bundleID,
+                    entry: entry,
+                    members: members,
+                    membersList: membersList,
+                    preferredOutputUID: nil,
+                    available: available,
+                    notice: &notice,
+                    hadSessionFailure: &hadSessionFailure,
+                    finishingHold: false
+                )
             }
-            pushSessionProcessing(bundleID)
+
+            // 解除武裝：沒有 hold、語音紀錄過期、而且在 home 上有活著的 playthrough
+            if muteGuards[bundleID] != nil,
+               holds[bundleID] == nil,
+               let home = homeOutputUIDs[bundleID],
+               !telephonyRates.isRecentTelephony(outputUID: home, at: now),
+               sessions[bundleID] != nil,
+               sessionOutputUIDs[bundleID] == home {
+                releaseMuteGuard(bundleID)
+            }
         }
         // @Observable 的同值寫入也會觸發 UI 失效——組成沒變就不動它
         let nowTapped = sessions.keys.sorted()
@@ -604,6 +735,231 @@ final class TapEngine {
         // 持續壞掉的無限重試。
         if !hadSessionFailure, deviceTarget == nil || globalSession != nil {
             rebuildRetries = 0
+        }
+    }
+
+    /// 計算目標 UID 並建立／遷移 playthrough。`preferredOutputUID` 非 nil 時
+    /// 強制建在該 UID（resume／deferFollow）；nil 時走今天的路由計算。
+    private func reconcilePlaythrough(
+        bundleID: String,
+        entry: AppAudioSetting,
+        members: Set<String>,
+        membersList: [String],
+        preferredOutputUID: String?,
+        available: Set<String>,
+        notice: inout String?,
+        hadSessionFailure: inout Bool,
+        finishingHold: Bool
+    ) {
+        let outputUID: String?
+        if let preferredOutputUID {
+            outputUID = preferredOutputUID
+        } else if let routed = entry.outputDeviceUID {
+            if available.contains(routed) {
+                outputUID = routed
+            } else {
+                // 指定的裝置不在（耳機拔了）→ 退回預設但**不動設定**
+                outputUID = backend.defaultOutputDeviceUID()
+                notice = "「\(bundleID)」指定的輸出裝置目前不在，暫時改用系統預設"
+            }
+        } else {
+            outputUID = backend.defaultOutputDeviceUID()
+        }
+        guard let outputUID else {
+            notice = "找不到輸出裝置，無法接管 \(bundleID)"
+            return
+        }
+
+        let home = homeOutputUIDs[bundleID]
+        let telephonyRecent = home.map {
+            telephonyRates.isRecentTelephony(outputUID: $0, at: currentInstant())
+        } ?? false
+
+        // stale：先建好 guard 再收舊、再建新
+        if staleSessions.contains(bundleID) {
+            guard stopSessionKeepingSilent(bundleID, members: membersList) else {
+                hadSessionFailure = true
+                return
+            }
+        }
+
+        // aggregate 的 sub-device 綁在建立時、改不了——換裝置只能收舊建新
+        if let actual = sessionOutputUIDs[bundleID], actual != outputUID {
+            if telephonyRecent {
+                guard stopSessionKeepingSilent(bundleID, members: membersList) else {
+                    hadSessionFailure = true
+                    scheduleRetry()
+                    return
+                }
+            } else {
+                stopSession(bundleID)
+            }
+        }
+        // 新成員（helper）出現＝現有描述抓不到它的聲音，非重建不可
+        if let covered = sessionMemberBundles[bundleID], !members.isSubset(of: covered) {
+            if telephonyRecent {
+                guard stopSessionKeepingSilent(bundleID, members: membersList) else {
+                    hadSessionFailure = true
+                    scheduleRetry()
+                    return
+                }
+            } else {
+                stopSession(bundleID)
+            }
+        }
+        if sessions[bundleID] == nil {
+            do {
+                sessions[bundleID] = try backend.startPlaythroughSession(
+                    bundleID: bundleID,
+                    memberBundleIDs: membersList.sorted(),
+                    outputDeviceUID: outputUID,
+                    initialGain: effectiveGain(entry, onDeviceChain: outputUID == deviceTarget)
+                )
+                sessions[bundleID].map { wireEffectLatch($0) }
+                sessionOutputUIDs[bundleID] = outputUID
+                sessionMemberBundles[bundleID] = members
+                homeOutputUIDs[bundleID] = outputUID
+                log.notice("per-app session 建立：\(bundleID) → \(outputUID) 成員 \(members.count) 個")
+                recordRate(sessions[bundleID]?.nominalSampleRate, outputUID: outputUID)
+                sessions[bundleID]?.onDeviceReconfigured = { [weak self] rate in
+                    guard let self, self.sessions[bundleID] != nil else { return }
+                    let uid = self.sessionOutputUIDs[bundleID]
+                    self.recordRate(rate, outputUID: uid)
+                    let telephony = uid.map {
+                        self.telephonyRates.isRecentTelephony(outputUID: $0, at: self.currentInstant())
+                    } ?? false
+                    if telephony {
+                        guard self.stopSessionKeepingSilent(
+                            bundleID, members: self.registry.memberBundleIDs(bundleID: bundleID)
+                        ) else {
+                            self.staleSessions.insert(bundleID)
+                            self.log.error("per-app session 的裝置重新配置：\(bundleID) 靜音保護建不起來 → 先留著舊 session")
+                            self.scheduleRetry()
+                            return
+                        }
+                    } else {
+                        self.stopSession(bundleID)
+                    }
+                    self.log.notice("per-app session 的裝置重新配置：\(bundleID) → 收掉、\(self.rebuildDelay.components.seconds)s 後重建")
+                    self.scheduleRebuild(after: self.rebuildDelay)
+                }
+                if finishingHold {
+                    finishHold(bundleID)
+                }
+            } catch {
+                log.error("per-app session 失敗：\(bundleID) → \(outputUID) \(String(describing: error))")
+                notice = "無法接管 \(bundleID)：\(error)"
+                hadSessionFailure = true
+                scheduleRetry()
+                return
+            }
+        } else if finishingHold {
+            finishHold(bundleID)
+        }
+        pushSessionProcessing(bundleID)
+    }
+
+    private func recordRate(_ rate: NominalSampleRate?, outputUID: String?) {
+        guard let rate, let outputUID else { return }
+        telephonyRates.record(rate, outputUID: outputUID, at: currentInstant())
+        guard rate.isTelephonyBand else { return }
+        log.notice("輸出 \(outputUID) 名義取樣率 \(Int(rate.hertz)) Hz（語音頻段）→ 武裝靜音保護")
+        for (bundleID, home) in homeOutputUIDs where home == outputUID {
+            _ = ensureMuteGuard(bundleID, members: registry.memberBundleIDs(bundleID: bundleID))
+        }
+        rescheduleHandoffRecheck()
+    }
+
+    private func finishHold(_ bundleID: String) {
+        guard var hold = holds.removeValue(forKey: bundleID) else { return }
+        registry.refresh()
+        let targetAudible = registry.isGroupAudible(bundleID: bundleID)
+        if hold.pause == .requested {
+            hold.pause = HandoffPlaybackPolicy.verify(.requested, targetAudible: targetAudible)
+        }
+        if HandoffPlaybackPolicy.shouldAutoPlay(
+            hold.pause,
+            canAddressNow: playback.canAddress(bundleID: bundleID),
+            targetAudible: targetAudible
+        ) {
+            let outcome = playback.send(.play, bundleID: bundleID)
+            log.notice("來電接手結束：\(bundleID) 接回 \(hold.outputUID)；自動播放 \(String(describing: outcome))")
+        } else {
+            log.notice("來電接手結束：\(bundleID) 接回 \(hold.outputUID)；不自動播放（\(String(describing: hold.pause))）")
+        }
+        rescheduleHandoffPlayback()
+    }
+
+    /// internal——測試直接呼叫。只處理已到期的項目。
+    func handoffPlaybackTick() {
+        let now = currentInstant()
+        registry.refresh()
+        for bundleID in holds.keys.sorted() {
+            guard var hold = holds[bundleID] else { continue }
+            let old = hold.pause
+            let targetAudible = registry.isGroupAudible(bundleID: bundleID)
+            switch hold.pause {
+            case .pending where hold.pauseDue.map({ $0 <= now }) ?? false:
+                hold.pauseDue = nil
+                if let skip = HandoffPlaybackPolicy.pauseGate(
+                    canAddress: playback.canAddress(bundleID: bundleID),
+                    targetAudible: targetAudible
+                ) {
+                    hold.pause = skip
+                } else {
+                    hold.pause = HandoffPlaybackPolicy.afterPauseSent(
+                        playback.send(.pause, bundleID: bundleID)
+                    )
+                    if hold.pause == .requested {
+                        hold.verifyDue = now.advanced(by: playbackVerifyDelay)
+                    }
+                }
+            case .requested where hold.verifyDue.map({ $0 <= now }) ?? false:
+                hold.verifyDue = nil
+                hold.pause = HandoffPlaybackPolicy.verify(.requested, targetAudible: targetAudible)
+            default:
+                break
+            }
+            if hold.pause != old {
+                log.notice("來電接手暫停：\(bundleID) \(String(describing: old)) → \(String(describing: hold.pause))")
+            }
+            holds[bundleID] = hold
+        }
+        rescheduleHandoffPlayback()
+    }
+
+    private func rescheduleHandoffPlayback() {
+        handoffPlaybackTask?.cancel()
+        guard let due = nextHandoffPlaybackDue() else {
+            handoffPlaybackTask = nil
+            return
+        }
+        let delay = currentInstant().duration(to: due)
+        handoffPlaybackTask = Task { [weak self] in
+            try? await Task.sleep(for: max(delay, .zero))
+            guard let self, !Task.isCancelled else { return }
+            self.handoffPlaybackTick()
+        }
+    }
+
+    private func rescheduleHandoffRecheck() {
+        handoffRecheckTask?.cancel()
+        var dues = Array(followDeferrals.values)
+        for (bundleID, _) in muteGuards {
+            if let home = homeOutputUIDs[bundleID],
+               let expiry = telephonyRates.expiry(outputUID: home) {
+                dues.append(expiry)
+            }
+        }
+        guard let due = dues.min() else {
+            handoffRecheckTask = nil
+            return
+        }
+        let delay = currentInstant().duration(to: due)
+        handoffRecheckTask = Task { [weak self] in
+            try? await Task.sleep(for: max(delay, .zero))
+            guard let self, !Task.isCancelled else { return }
+            self.reconcileSessions()
         }
     }
 
@@ -734,12 +1090,22 @@ final class TapEngine {
         rebuildTask?.cancel()
         rebuildTask = nil
         rebuildRetries = 0
+        handoffRecheckTask?.cancel()
+        handoffRecheckTask = nil
+        handoffPlaybackTask?.cancel()
+        handoffPlaybackTask = nil
         stopProbe()
         stopGlobalSession()
         for (_, session) in sessions { session.stop() }
         sessions = [:]
         sessionOutputUIDs = [:]
         sessionMemberBundles = [:]
+        for bundleID in Array(muteGuards.keys) { releaseMuteGuard(bundleID) }
+        holds = [:]
+        homeOutputUIDs = [:]
+        followDeferrals = [:]
+        staleSessions = []
+        telephonyRates = .init()
         tappedBundles = []
         sessionNotice = nil
         globalError = nil
