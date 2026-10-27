@@ -423,7 +423,7 @@ final class TapEngine {
             globalOutputUID = target
             globalExclusions = excluded
             deviceTapUID = target
-            globalSession?.onDeviceReconfigured = { [weak self] in
+            globalSession?.onDeviceReconfigured = { [weak self] _ in
                 guard let self, self.globalSession != nil else { return }
                 self.log.notice("global session 的裝置重新配置 → \(self.rebuildDelay.components.seconds)s 後重建")
                 self.stopGlobalSession()
@@ -571,7 +571,7 @@ final class TapEngine {
                     // aggregate 格式已經過期。立刻收掉（別讓過期格式繼續出
                     // 雜音），但**延遲重建**——鏈路還在重新協商時建 aggregate
                     // 幾乎必失敗（AirPods 實測，2026-08-30）
-                    sessions[bundleID]?.onDeviceReconfigured = { [weak self] in
+                    sessions[bundleID]?.onDeviceReconfigured = { [weak self] _ in
                         guard let self, self.sessions[bundleID] != nil else { return }
                         self.log.notice("per-app session 的裝置重新配置：\(bundleID) → 收掉、\(self.rebuildDelay.components.seconds)s 後重建")
                         self.stopSession(bundleID)
@@ -646,7 +646,7 @@ final class TapEngine {
             // 探測期間裝置換了格式（藍牙耳機切降噪／通透）：aggregate 的格式
             // 綁在建立時，不重建輕則卡在無聲、重則整輪誤判成權限被拒。
             // 只標 hold 不夠——格式過期的 probe 等 hold 過完照樣全零。
-            probeSession?.onDeviceReconfigured = { [weak self] in
+            probeSession?.onDeviceReconfigured = { [weak self] _ in
                 guard let self, self.state == .probing else { return }
                 self.log.notice("probe 的裝置重新配置 → \(self.rebuildDelay.components.seconds)s 後重新探測")
                 self.stopProbe()

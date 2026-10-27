@@ -206,6 +206,22 @@ final class CoreAudioTapBackend: TapBackend {
         }
     }
 
+    func startSilencer(bundleID: String, memberBundleIDs: [String]) throws -> any TapSilencer {
+        try rejectSelfTap(bundleID: bundleID, memberBundleIDs: memberBundleIDs)
+        let description = CATapDescription(stereoMixdownOfProcesses: [])
+        description.bundleIDs = memberBundleIDs.isEmpty ? [bundleID] : memberBundleIDs
+        description.isProcessRestoreEnabled = true
+        description.name = "Chorus call-handoff guard (\(bundleID))"
+        description.isPrivate = true
+        description.muteBehavior = .muted // 不靠讀取者：tap 在就靜音
+        var tapID = AudioObjectID(kAudioObjectUnknown)
+        let status = OperationMetrics.shared.measure("audio.tap.create") {
+            AudioHardwareCreateProcessTap(description, &tapID)
+        }
+        guard status == noErr else { throw TapBackendError.createTapFailed(status) }
+        return CoreAudioTapSilencer(tapID: tapID)
+    }
+
     // MARK: - session 組裝
 
     /// tap、aggregate、IOProc 的建立與啟動目前都在主執行緒上同步執行；
@@ -584,7 +600,9 @@ private final class CoreAudioTapSession: TapSession {
     /// 都帶動一輪推送。rate listener 觸發時清掉（該事件同時會讓擁有者
     /// 收舊建新這條 session，快取只是過渡期的正確性保險）。
     private var cachedSampleRate: Double?
-    var onDeviceReconfigured: (@MainActor () -> Void)?
+    /// 建立當下讀到的名義取樣率；重新配置後以 callback 帶進來的為準。
+    let nominalSampleRate: NominalSampleRate?
+    var onDeviceReconfigured: (@MainActor (NominalSampleRate?) -> Void)?
     private var rateListener: AudioObjectPropertyListenerBlock?
 
     init(
@@ -596,6 +614,14 @@ private final class CoreAudioTapSession: TapSession {
         self.tapID = tapID
         self.aggregateID = aggregateID
         self.procID = procID
+        // 名義取樣率只在邊界讀一次，之後以型別傳遞（來電接手）。
+        let hz = CoreAudioProperty.get(
+            aggregateID,
+            CoreAudioProperty.address(kAudioDevicePropertyNominalSampleRate),
+            as: Float64.self
+        ).flatMap { $0 > 0 ? $0 : nil } ?? EQSettings.referenceSampleRate
+        self.cachedSampleRate = hz
+        self.nominalSampleRate = NominalSampleRate(hertz: hz)
         listenForRateChanges()
     }
 
@@ -606,8 +632,10 @@ private final class CoreAudioTapSession: TapSession {
         var address = CoreAudioProperty.address(kAudioDevicePropertyNominalSampleRate)
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             MainActor.assumeIsolated {
-                self?.cachedSampleRate = nil
-                self?.onDeviceReconfigured?()
+                guard let self else { return }
+                self.cachedSampleRate = nil
+                let hz = self.deviceSampleRate()
+                self.onDeviceReconfigured?(NominalSampleRate(hertz: hz))
             }
         }
         rateListener = block
@@ -795,5 +823,24 @@ private final class CoreAudioTapSession: TapSession {
             _ = AudioHardwareDestroyProcessTap(tapID)
         }
         self.procID = nil
+    }
+}
+
+/// 來電接手靜音保護：只建 process tap（`.muted`），不建 aggregate、不開 IOProc。
+@MainActor
+private final class CoreAudioTapSilencer: TapSilencer {
+    private var tapID: AudioObjectID
+
+    init(tapID: AudioObjectID) {
+        self.tapID = tapID
+    }
+
+    func stop() {
+        guard tapID != AudioObjectID(kAudioObjectUnknown) else { return }
+        let id = tapID
+        tapID = AudioObjectID(kAudioObjectUnknown)
+        OperationMetrics.shared.measure("audio.tap.destroy") {
+            _ = AudioHardwareDestroyProcessTap(id)
+        }
     }
 }

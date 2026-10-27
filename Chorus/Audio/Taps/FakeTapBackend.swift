@@ -21,6 +21,17 @@ final class FakeTapBackend: TapBackend {
     /// 可路由的裝置。測試可增刪，模擬耳機插拔。
     var availableOutputUIDs: [String] = ["fake-output-uid", "fake-headphones"]
 
+    /// 沒設＝48000。
+    var nominalRates: [String: NominalSampleRate] = [:]
+    /// 依序記錄：「play:<bundle>@<uid>」「stop:<bundle>」「silencer+:<bundle>」「silencer-:<bundle>」
+    private(set) var events: [String] = []
+    private(set) var startedSilencers: [String] = []
+    private(set) var liveSilencers: [String: FakeTapSilencer] = [:]
+    /// > 0：下一次 startSilencer 丟錯並遞減。
+    var silencerFailuresRemaining = 0
+    /// 對這些 UID 建 playthrough 會丟錯。
+    var failingPlaythroughOutputs: Set<String> = []
+
     func defaultOutputDeviceUID() -> String? { defaultOutputUID }
     func outputDeviceUIDs() -> [String] { availableOutputUIDs }
 
@@ -33,7 +44,10 @@ final class FakeTapBackend: TapBackend {
         excludingProcessObjects: [AudioObjectID]
     ) throws -> any TapSession {
         startedSessions.append((.captureOnly, "probe"))
-        let session = FakeTapSession(kind: .captureOnly, backend: self)
+        let rate = nominalRates[outputDeviceUID] ?? NominalSampleRate(hertz: 48000)
+        let session = FakeTapSession(
+            kind: .captureOnly, backend: self, nominalSampleRate: rate, label: nil
+        )
         probeSession = session
         return session
     }
@@ -42,14 +56,22 @@ final class FakeTapBackend: TapBackend {
         bundleID: String, memberBundleIDs: [String], outputDeviceUID: String, initialGain: Float
     ) throws -> any TapSession {
         try rejectSelfTap(bundleID: bundleID, memberBundleIDs: memberBundleIDs)
+        if failingPlaythroughOutputs.contains(outputDeviceUID) {
+            throw TapBackendError.createAggregateFailed(-1)
+        }
         startedSessions.append((.playthrough, bundleID))
         startedOutputs.append(outputDeviceUID)
-        let session = FakeTapSession(kind: .playthrough, backend: self, initialGain: initialGain)
+        events.append("play:\(bundleID)@\(outputDeviceUID)")
+        let rate = nominalRates[outputDeviceUID] ?? NominalSampleRate(hertz: 48000)
+        let session = FakeTapSession(
+            kind: .playthrough, backend: self, initialGain: initialGain,
+            nominalSampleRate: rate, label: bundleID
+        )
         liveSessions[bundleID] = session
         return session
     }
 
-    /// 目前的裝置級全域 session（B6-4）與它建立時的排除清單。
+    /// 目前的裝置級調整 session（B6-4）與它建立時的排除清單。
     private(set) var globalSession: FakeTapSession?
     private(set) var globalExclusions: [AudioObjectID] = []
     private(set) var globalStartCount = 0
@@ -63,9 +85,77 @@ final class FakeTapBackend: TapBackend {
         startedOutputs.append(outputDeviceUID)
         globalExclusions = excludingProcessObjects
         globalStartCount += 1
-        let session = FakeTapSession(kind: .playthrough, backend: self, initialGain: initialGain)
+        let rate = nominalRates[outputDeviceUID] ?? NominalSampleRate(hertz: 48000)
+        let session = FakeTapSession(
+            kind: .playthrough, backend: self, initialGain: initialGain,
+            nominalSampleRate: rate, label: nil
+        )
         globalSession = session
         return session
+    }
+
+    func startSilencer(bundleID: String, memberBundleIDs: [String]) throws -> any TapSilencer {
+        try rejectSelfTap(bundleID: bundleID, memberBundleIDs: memberBundleIDs)
+        if silencerFailuresRemaining > 0 {
+            silencerFailuresRemaining -= 1
+            throw TapBackendError.createTapFailed(-1)
+        }
+        startedSilencers.append(bundleID)
+        events.append("silencer+:\(bundleID)")
+        let silencer = FakeTapSilencer(bundleID: bundleID, backend: self)
+        liveSilencers[bundleID] = silencer
+        return silencer
+    }
+
+    /// 模擬來源的原生路徑：這個 bundle 目前有沒有被任何 tap 靜音（活著的 playthrough
+    /// 或活著的 silencer）。沒有 → 原生輸出就是 `defaultOutputUID`；有 → nil。
+    func sourceOutput(for bundleID: String) -> String? {
+        let playthroughAlive = liveSessions[bundleID].map { !$0.stopped } ?? false
+        let silencerAlive = liveSilencers[bundleID].map { !$0.stopped } ?? false
+        if playthroughAlive || silencerAlive { return nil }
+        return defaultOutputUID
+    }
+
+    /// 從 `events` 重播：自第一次 play 這個 bundle 起，靜音持有者（play +1、stop −1、
+    /// silencer+ +1、silencer− −1）降到 0 的每個事件索引。空陣列＝從未解除靜音。
+    func muteGaps(for bundleID: String, since index: Int = 0) -> [Int] {
+        let playPrefix = "play:\(bundleID)@"
+        let stopKey = "stop:\(bundleID)"
+        let silencerPlus = "silencer+:\(bundleID)"
+        let silencerMinus = "silencer-:\(bundleID)"
+        var holders = 0
+        var started = false
+        var gaps: [Int] = []
+        for (i, event) in events.enumerated() where i >= index {
+            if event.hasPrefix(playPrefix) {
+                holders += 1
+                started = true
+            } else if event == stopKey {
+                holders -= 1
+            } else if event == silencerPlus {
+                holders += 1
+                started = true
+            } else if event == silencerMinus {
+                holders -= 1
+            } else {
+                continue
+            }
+            if started && holders == 0 {
+                gaps.append(i)
+            }
+        }
+        return gaps
+    }
+
+    fileprivate func recordStop(label: String) {
+        events.append("stop:\(label)")
+    }
+
+    fileprivate func recordSilencerStop(bundleID: String) {
+        events.append("silencer-:\(bundleID)")
+        if liveSilencers[bundleID]?.stopped == true {
+            liveSilencers.removeValue(forKey: bundleID)
+        }
     }
 
     private var outputChangedHandler: (@MainActor () -> Void)?
@@ -86,11 +176,21 @@ final class FakeTapSession: TapSession {
     /// session 建立時的增益。與 `lastGain` 分開記，才驗得出「起步就在
     /// 正確的值上」而不是「建完再滑過去」。
     let initialGain: Float
+    let nominalSampleRate: NominalSampleRate?
+    private let label: String?
 
-    init(kind: TapSessionKind, backend: FakeTapBackend, initialGain: Float = 1) {
+    init(
+        kind: TapSessionKind,
+        backend: FakeTapBackend,
+        initialGain: Float = 1,
+        nominalSampleRate: NominalSampleRate? = NominalSampleRate(hertz: 48000),
+        label: String? = nil
+    ) {
         self.kind = kind
         self.backend = backend
         self.initialGain = initialGain
+        self.nominalSampleRate = nominalSampleRate
+        self.label = label
         lastGain = initialGain
     }
 
@@ -106,10 +206,13 @@ final class FakeTapSession: TapSession {
 
     private(set) var lastEQ: EQSettings?
     private(set) var lastAppEQ: EQSettings?
-    var onDeviceReconfigured: (@MainActor () -> Void)?
+    var onDeviceReconfigured: (@MainActor (NominalSampleRate?) -> Void)?
 
     /// 測試鉤：模擬輸出裝置中途重新配置（藍牙耳機切降噪模式）。
-    func simulateDeviceReconfigured() { onDeviceReconfigured?() }
+    /// 保留原本無參數的呼叫方式；也可傳入新的名義取樣率。
+    func simulateDeviceReconfigured(to rate: NominalSampleRate? = nil) {
+        onDeviceReconfigured?(rate)
+    }
 
     private(set) var lastBalance: Float = 0
     private(set) var lastDeviceEffects: [AUEffectEntry] = []
@@ -144,6 +247,30 @@ final class FakeTapSession: TapSession {
         return active
     }
 
-    func stop() { stopped = true }
+    func stop() {
+        guard !stopped else { return }
+        stopped = true
+        if let label {
+            backend?.recordStop(label: label)
+        }
+    }
+}
+
+@MainActor
+final class FakeTapSilencer: TapSilencer {
+    private let bundleID: String
+    private weak var backend: FakeTapBackend?
+    private(set) var stopped = false
+
+    init(bundleID: String, backend: FakeTapBackend) {
+        self.bundleID = bundleID
+        self.backend = backend
+    }
+
+    func stop() {
+        guard !stopped else { return }
+        stopped = true
+        backend?.recordSilencerStop(bundleID: bundleID)
+    }
 }
 #endif

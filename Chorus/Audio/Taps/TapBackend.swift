@@ -38,10 +38,14 @@ struct TapSessionStats: Sendable, Equatable {
 protocol TapSession: AnyObject {
     var kind: TapSessionKind { get }
     var stats: TapSessionStats { get }
+    /// 建立當下讀到的名義取樣率（HAL 只在邊界讀一次）。重新配置後以
+    /// `onDeviceReconfigured` 帶進來的值為準，本屬性不會跟著變。
+    var nominalSampleRate: NominalSampleRate? { get }
     /// 輸出裝置中途重新配置（藍牙耳機切降噪／通透會改取樣率）時觸發。
     /// aggregate 的格式綁在建立時——擁有者收到後應**收舊建新**，
     /// 否則輕則雜音、重則卡在無聲（AirPods 實測，2026-08-30）。
-    var onDeviceReconfigured: (@MainActor () -> Void)? { get set }
+    /// 參數是重新配置後讀到的名義取樣率；讀不到時為 nil。
+    var onDeviceReconfigured: (@MainActor (NominalSampleRate?) -> Void)? { get set }
     func setGain(_ gain: Float)
     func setMuted(_ muted: Bool)
     /// 裝置級左右平衡（−1…+1，0＝置中）。只衰減不增益（BalanceLaw）。
@@ -67,6 +71,12 @@ protocol TapSession: AnyObject {
     /// **實例屬於 render 鏈**：換鏈後舊指標一秒內失效，取用端要在
     /// 鏈內容變動時關掉面板、重新取用。
     func effectUnit(layer: AUEffectLayer, id: UUID) -> AudioUnit?
+    func stop()
+}
+
+/// 讓一個 App 完全無聲的 tap：不寫回任何輸出。stop() 冪等；擁有者（TapEngine）負責收。
+@MainActor
+protocol TapSilencer: AnyObject {
     func stop()
 }
 
@@ -112,6 +122,8 @@ protocol TapBackend: AnyObject {
     ) throws -> any TapSession
     /// 預設輸出裝置變更（session 要搬家）。
     func setDefaultOutputChangedHandler(_ handler: @escaping @MainActor () -> Void)
+    /// 只靜音、不寫回。**不得**建 aggregate 到任何輸出裝置（D-2026-10-27）。
+    func startSilencer(bundleID: String, memberBundleIDs: [String]) throws -> any TapSilencer
 }
 
 extension TapBackend {
