@@ -98,8 +98,13 @@ final class TapEngine {
     @ObservationIgnored private var telephonyRates = TelephonyRateMemory<ContinuousClock.Instant>()
     /// 上次「可聽見的 playthrough」建在哪個 UID。stopSession 不清它。
     @ObservationIgnored private var homeOutputUIDs: [String: String] = [:]
+    private struct MuteGuard {
+        let silencer: any TapSilencer
+        /// 建立時寫進 tap 描述的 bundle（root＋helper）。CoreAudio 只捕捉這些。
+        let members: Set<String>
+    }
     /// mute guard 的唯一擁有者（武裝與 hold 共用）。
-    @ObservationIgnored private var muteGuards: [String: any TapSilencer] = [:]
+    @ObservationIgnored private var muteGuards: [String: MuteGuard] = [:]
     /// 重新配置時建不起 guard、只好留下的過期 session；guard 建好後再收舊建新。
     @ObservationIgnored private var staleSessions: Set<String> = []
     @ObservationIgnored private var holds: [String: CallHandoffHold] = [:]
@@ -150,13 +155,23 @@ final class TapEngine {
         return dues.min()
     }
 
-    /// 確保這個 App 有 mute guard。已有就回 true；建立失敗回 false。
+    /// 確保這個 App 有涵蓋 `members` 的 mute guard。已涵蓋就回 true；
+    /// 成員多了 → 先建新的、成功後才收舊的（中間不能有空窗）；建立失敗回 false，舊的照留。
     private func ensureMuteGuard(_ bundleID: String, members: [String]) -> Bool {
-        if muteGuards[bundleID] != nil { return true }
+        let existing = muteGuards[bundleID]
+        let wanted = Set(members).union([bundleID])
+        if let existing, wanted.isSubset(of: existing.members) { return true }
+        // 不縮小涵蓋：暫時消失的 helper 回來時也要已經在 guard 裡
+        let covered = wanted.union(existing?.members ?? [])
         do {
-            muteGuards[bundleID] = try backend.startSilencer(
-                bundleID: bundleID, memberBundleIDs: members
+            let silencer = try backend.startSilencer(
+                bundleID: bundleID, memberBundleIDs: covered.sorted()
             )
+            muteGuards[bundleID] = MuteGuard(silencer: silencer, members: covered)
+            if let existing {
+                existing.silencer.stop()
+                log.notice("來電接手靜音保護換新：\(bundleID) 成員 \(existing.members.count) → \(covered.count) 個")
+            }
             return true
         } catch {
             log.error("來電接手靜音保護失敗：\(bundleID) \(error)；保留現有 tap")
@@ -174,7 +189,7 @@ final class TapEngine {
     }
 
     private func releaseMuteGuard(_ bundleID: String) {
-        muteGuards.removeValue(forKey: bundleID)?.stop()
+        muteGuards.removeValue(forKey: bundleID)?.silencer.stop()
     }
 
     /// App 啟動時呼叫：上次已啟用就直接重新探測（TCC 已給過的話

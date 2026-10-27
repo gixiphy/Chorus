@@ -9,6 +9,7 @@ import Testing
 @Suite("Call handoff hold")
 struct CallHandoffHoldTests {
     private let music = "com.apple.Music"
+    private let musicHelper = "com.apple.Music.helper"
     private let safari = "com.apple.Safari"
     private let screen = "ChorusAudioDevice_UID"
     private let airpods = "94-16-25-48-CC-A9:output"
@@ -125,6 +126,15 @@ struct CallHandoffHoldTests {
         }
         if defaultToAirpods { h.backend.defaultOutputUID = airpods }
         h.engine.audioDevicesChanged()
+    }
+
+    private func addMusicHelper(_ h: Harness) {
+        var entries = h.registry.processes
+        entries.append(.init(
+            objectID: 1003, pid: 2003, bundleID: musicHelper,
+            name: "Music Helper", isAudible: true, kind: .other
+        ))
+        h.registry.injectFake(entries) // 會觸發 onProcessesChanged → reconcileSessions
     }
 
     // MARK: - Hold & silence
@@ -678,5 +688,108 @@ struct CallHandoffHoldTests {
         h.clock.advance(by: .milliseconds(500)); h.engine.handoffPlaybackTick()
         h.clock.advance(by: .seconds(1) + .milliseconds(500)); h.engine.handoffPlaybackTick()
         #expect(h.engine.nextHandoffPlaybackDue() == nil)
+    }
+
+    // MARK: - Mute-guard refresh (helper join)
+
+    @Test("H17 hold 中新增 helper：新成員也被靜音，中間沒有空窗")
+    func h17() {
+        let h = makeHarness()
+        let mark = reproduce1440(h)
+        takeAway(h, defaultFirst: false)
+        #expect(h.engine.heldOutputUID(bundleID: music) == airpods)
+        #expect(h.engine.hasMuteGuard(bundleID: music))
+        #expect(h.backend.silencedMembers(for: music) == [music])
+        #expect(!h.engine.tappedBundles.contains(music))
+
+        let before = h.backend.events.count
+        let commandsBefore = h.playback?.commands.count
+        addMusicHelper(h)
+
+        #expect(h.backend.silencedMembers(for: music) == [music, musicHelper])
+        #expect(Array(h.backend.events[before...]) == ["silencer+:\(music)", "silencer-:\(music)"])
+        #expect(h.backend.muteGaps(for: music, since: mark).isEmpty)
+        #expect(h.backend.startedSilencers.count == 2)
+        #expect(h.backend.allSilencers.filter { !$0.stopped }.count == 1)
+        #expect(h.engine.heldOutputUID(bundleID: music) == airpods)
+        #expect(!h.backend.startedOutputs.contains(screen))
+        #expect(!h.backend.startedOutputs.contains(builtIn))
+        #expect(h.playback?.commands.count == commandsBefore)
+        #expect(h.engine.setting(for: music).outputDeviceUID == nil)
+
+        h.engine.audioDevicesChanged()
+        #expect(h.backend.startedSilencers.count == 2)
+    }
+
+    @Test("H17b 換新 guard 失敗：舊 guard 不拆，下一輪補上")
+    func h17b() {
+        let h = makeHarness()
+        let mark = reproduce1440(h)
+        takeAway(h, defaultFirst: false)
+        #expect(h.engine.heldOutputUID(bundleID: music) == airpods)
+        #expect(h.engine.hasMuteGuard(bundleID: music))
+        #expect(h.backend.silencedMembers(for: music) == [music])
+        #expect(!h.engine.tappedBundles.contains(music))
+
+        h.backend.silencerFailuresRemaining = 1
+        let before = h.backend.events.count
+        addMusicHelper(h)
+
+        #expect(!Array(h.backend.events[before...]).contains("silencer-:\(music)"))
+        #expect(h.engine.hasMuteGuard(bundleID: music))
+        #expect(h.backend.silencedMembers(for: music) == [music])
+        #expect(h.backend.muteGaps(for: music, since: mark).isEmpty)
+        #expect(h.engine.heldOutputUID(bundleID: music) == airpods)
+
+        h.engine.audioDevicesChanged()
+        #expect(h.backend.silencedMembers(for: music) == [music, musicHelper])
+        #expect(h.backend.muteGaps(for: music, since: mark).isEmpty)
+    }
+
+    @Test("H17c helper 消失後不縮小、不重建")
+    func h17c() {
+        let h = makeHarness()
+        let mark = reproduce1440(h)
+        takeAway(h, defaultFirst: false)
+        addMusicHelper(h)
+        #expect(h.backend.silencedMembers(for: music) == [music, musicHelper])
+        let silencersBefore = h.backend.startedSilencers.count
+
+        h.registry.injectFake([
+            .init(objectID: 1001, pid: 2001, bundleID: music, name: "Music", isAudible: true),
+            .init(objectID: 1002, pid: 2002, bundleID: safari, name: "Safari", isAudible: true),
+        ])
+
+        #expect(h.backend.startedSilencers.count == silencersBefore)
+        #expect(h.backend.silencedMembers(for: music).contains(musicHelper))
+        #expect(h.backend.muteGaps(for: music, since: mark).isEmpty)
+    }
+
+    @Test("H17d 武裝中（還沒 hold）出現 helper：重建 playthrough 前 guard 已涵蓋 helper")
+    func h17d() {
+        let h = makeHarness()
+        h.engine.setGain(0.5, bundleID: music)
+        h.backend.nominalRates[airpods] = rate(24000)
+        h.backend.liveSessions[music]?.simulateDeviceReconfigured(to: rate(24000))
+        h.engine.audioDevicesChanged()
+
+        #expect(h.engine.hasMuteGuard(bundleID: music))
+        #expect(h.backend.liveSessions[music]?.stopped == false)
+        #expect(h.engine.heldOutputUID(bundleID: music) == nil)
+
+        let mark = h.backend.events.count
+        addMusicHelper(h)
+
+        let slice = Array(h.backend.events[mark...])
+        let silencerPlus = slice.firstIndex(of: "silencer+:\(music)")
+        let stop = slice.firstIndex(of: "stop:\(music)")
+        #expect(silencerPlus != nil)
+        #expect(stop != nil)
+        if let silencerPlus, let stop {
+            #expect(silencerPlus < stop)
+        }
+        #expect(h.backend.silencedMembers(for: music).contains(musicHelper))
+        #expect(h.backend.muteGaps(for: music, since: mark).isEmpty)
+        #expect(h.backend.startedOutputs.last == airpods)
     }
 }

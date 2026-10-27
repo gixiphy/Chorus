@@ -27,6 +27,8 @@ final class FakeTapBackend: TapBackend {
     private(set) var events: [String] = []
     private(set) var startedSilencers: [String] = []
     private(set) var liveSilencers: [String: FakeTapSilencer] = [:]
+    /// 每一個建過的 silencer（依建立順序，含已停的）。
+    private(set) var allSilencers: [FakeTapSilencer] = []
     /// > 0：下一次 startSilencer 丟錯並遞減。
     var silencerFailuresRemaining = 0
     /// 對這些 UID 建 playthrough 會丟錯。
@@ -102,9 +104,20 @@ final class FakeTapBackend: TapBackend {
         }
         startedSilencers.append(bundleID)
         events.append("silencer+:\(bundleID)")
-        let silencer = FakeTapSilencer(bundleID: bundleID, backend: self)
+        let members = memberBundleIDs.isEmpty ? [bundleID] : memberBundleIDs
+        let silencer = FakeTapSilencer(
+            bundleID: bundleID, memberBundleIDs: members, backend: self
+        )
         liveSilencers[bundleID] = silencer
+        allSilencers.append(silencer)
         return silencer
+    }
+
+    /// 目前活著的 silencer 合起來靜音了這個 App 的哪些成員。
+    func silencedMembers(for bundleID: String) -> Set<String> {
+        allSilencers
+            .filter { $0.bundleID == bundleID && !$0.stopped }
+            .reduce(into: Set<String>()) { $0.formUnion($1.memberBundleIDs) }
     }
 
     /// 模擬來源的原生路徑：這個 bundle 目前有沒有被任何 tap 靜音（活著的 playthrough
@@ -259,12 +272,14 @@ final class FakeTapSession: TapSession {
 
 @MainActor
 final class FakeTapSilencer: TapSilencer {
-    private let bundleID: String
+    let bundleID: String
+    let memberBundleIDs: [String]
     private weak var backend: FakeTapBackend?
     private(set) var stopped = false
 
-    init(bundleID: String, backend: FakeTapBackend) {
+    init(bundleID: String, memberBundleIDs: [String], backend: FakeTapBackend) {
         self.bundleID = bundleID
+        self.memberBundleIDs = memberBundleIDs
         self.backend = backend
     }
 
