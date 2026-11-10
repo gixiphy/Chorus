@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(os)
 import os
+#else
+import Synchronization
+#endif
 
 /// 一張送進分析的照片與它的照明情境標註。
 /// 標註是使用者手寫的（例：「夜晚，只開掛燈」）；空字串表示未標註。
@@ -18,7 +22,11 @@ public struct LabeledPhoto: Sendable, Equatable {
 /// 顧問回覆要用的語言。**跟著 App 目前的介面語言走**：介面切到英文，
 /// 模型就用英文寫 summary／reason／warnings；prompt 本體一律是英文。
 public enum AdviceLanguage {
+    #if canImport(os)
     private static let overrideBox = OSAllocatedUnfairLock<String?>(initialState: nil)
+    #else
+    private static let overrideBox = Mutex<String?>(nil)
+    #endif
 
     /// App 端安裝的使用者自翻介面語言（DESIGN-20260902-user-cli-translation）。
     /// 那條路不經 `Bundle.main.preferredLocalizations`，所以要在這裡另外告知；
