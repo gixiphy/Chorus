@@ -106,6 +106,8 @@ public enum StatusOutputGlyph: Sendable, Equatable, Hashable {
     case airPodsPro
     case airPodsMax
     case headphones
+    /// Mac 內建耳麥孔（「外接耳機」）。
+    case earPods
     case airPlay
     /// 一般喇叭、USB 介面、虛擬裝置：畫 renderer 自己的喇叭，聲波隨音量亮起。
     case speaker
@@ -120,6 +122,7 @@ public enum StatusOutputGlyph: Sendable, Equatable, Hashable {
         case .airPodsPro: "airpodspro"
         case .airPodsMax: "airpodsmax"
         case .headphones: "headphones"
+        case .earPods: "earpods"
         case .airPlay: "airplayaudio"
         case .speaker: nil
         }
@@ -129,6 +132,8 @@ public enum StatusOutputGlyph: Sendable, Equatable, Hashable {
         let lowered = name.lowercased()
         switch transport {
         case .builtIn:
+            // 耳麥孔與喇叭是兩台 Built-in 裝置：「外接耳機」／「External Headphones」
+            if lowered.contains("headphone") || lowered.contains("耳機") { return .earPods }
             // 「MacBook Pro的揚聲器」／「MacBook Air Speakers」——名字裡就有機型
             return lowered.contains("macbook") ? .laptop : .desktop
         case .display:

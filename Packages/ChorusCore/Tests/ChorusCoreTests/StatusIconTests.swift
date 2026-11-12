@@ -109,6 +109,20 @@ struct StatusOutputGlyphTests {
         #expect(StatusOutputGlyph.classify(transport: .builtIn, name: "iMac 揚聲器") == .desktop)
     }
 
+    @Test("內建耳麥孔畫有線耳機，不再畫成桌機")
+    func builtInHeadphoneJack() {
+        #expect(StatusOutputGlyph.classify(transport: .builtIn, name: "外接耳機") == .earPods)
+        #expect(StatusOutputGlyph.classify(transport: .builtIn, name: "External Headphones") == .earPods)
+        #expect(StatusOutputGlyph.classify(transport: .builtIn, name: "外接耳機").symbolName == "earpods")
+        #expect(StatusOutputGlyph.classify(transport: .builtIn, name: "External Headphones").symbolName == "earpods")
+        // 同一台 Mac 的喇叭、桌機、藍牙耳機都不受影響
+        #expect(StatusOutputGlyph.classify(transport: .builtIn, name: "MacBook Pro的揚聲器").symbolName == "laptopcomputer")
+        #expect(StatusOutputGlyph.classify(transport: .builtIn, name: "iMac 揚聲器") == .desktop)
+        #expect(StatusOutputGlyph.classify(transport: .bluetooth, name: "WH-1000XM5").symbolName == "headphones")
+        // 只有 Built-in 才算耳麥孔：名字有 Headphones 的 USB 介面仍是手繪喇叭
+        #expect(StatusOutputGlyph.classify(transport: .other, name: "USB Headphones") == .speaker)
+    }
+
     @Test("HDMI／DisplayPort 畫螢幕；AirPlay 畫 AirPlay")
     func wired() {
         #expect(StatusOutputGlyph.classify(transport: .display, name: "ASUS VS207") == .display)
